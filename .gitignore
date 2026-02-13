@@ -1,0 +1,37 @@
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+build/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.hmap
+*.ipa
+
+# Swift Package Manager
+.build/
+Packages/
+Package.resolved
+.swiftpm/
+
+# CocoaPods
+Pods/
+
+# Secrets / Config
+ios/VoiceIDE/VoiceIDE/App/Secrets.xcconfig
+ios/VoiceIDE/VoiceIDE/App/Secrets.plist
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
