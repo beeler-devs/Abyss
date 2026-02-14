@@ -49,4 +49,49 @@ enum Config {
     static var isAPIKeyConfigured: Bool {
         elevenLabsAPIKey != nil
     }
+
+    // MARK: - Backend (Phase 2)
+
+    /// WebSocket URL for the cloud conductor backend.
+    /// Configure in Secrets.plist with key BACKEND_WS_URL, or set env var.
+    /// Example: wss://abc123.execute-api.us-east-1.amazonaws.com/prod
+    static var backendWebSocketURL: String {
+        // 1. Check Secrets.plist
+        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+           let dict = NSDictionary(contentsOfFile: path),
+           let url = dict["BACKEND_WS_URL"] as? String,
+           !url.isEmpty {
+            return url
+        }
+
+        // 2. Check environment variable
+        if let url = ProcessInfo.processInfo.environment["BACKEND_WS_URL"],
+           !url.isEmpty {
+            return url
+        }
+
+        // 3. Default placeholder (must be configured for Phase 2 to work)
+        return "wss://CONFIGURE-ME.execute-api.us-east-1.amazonaws.com/prod"
+    }
+
+    /// Whether the backend URL is configured (not the placeholder).
+    static var isBackendConfigured: Bool {
+        !backendWebSocketURL.contains("CONFIGURE-ME")
+    }
+
+    /// Whether to use the cloud conductor (Phase 2) or local stub (Phase 1).
+    /// Set USE_CLOUD_CONDUCTOR=true in Secrets.plist or env to enable.
+    static var useCloudConductor: Bool {
+        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+           let dict = NSDictionary(contentsOfFile: path),
+           let value = dict["USE_CLOUD_CONDUCTOR"] as? String {
+            return value.lowercased() == "true" || value == "1"
+        }
+
+        if let value = ProcessInfo.processInfo.environment["USE_CLOUD_CONDUCTOR"] {
+            return value.lowercased() == "true" || value == "1"
+        }
+
+        return false
+    }
 }

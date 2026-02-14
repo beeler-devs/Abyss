@@ -56,20 +56,64 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                 }
 
+                Section("Cloud Conductor (Phase 2)") {
+                    HStack {
+                        Text("Backend")
+                        Spacer()
+                        if Config.useCloudConductor {
+                            if Config.isBackendConfigured {
+                                Label("Connected", systemImage: "cloud.fill")
+                                    .font(.caption)
+                                    .foregroundStyle(.green)
+                            } else {
+                                Label("URL Not Set", systemImage: "cloud.slash")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                            }
+                        } else {
+                            Label("Local Stub", systemImage: "desktopcomputer")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if Config.useCloudConductor && Config.isBackendConfigured {
+                        LabeledContent("WS URL") {
+                            Text(Config.backendWebSocketURL)
+                                .font(.system(.caption2, design: .monospaced))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                    }
+                }
+
                 Section("About") {
-                    LabeledContent("Version", value: "Phase 1")
+                    LabeledContent("Version", value: "Phase 2")
                     LabeledContent("Architecture", value: "Tool-Calling")
+                    LabeledContent("Conductor", value: Config.useCloudConductor ? "Cloud (Bedrock)" : "Local Stub")
                     LabeledContent("STT Engine", value: "WhisperKit")
                     LabeledContent("TTS Engine", value: "ElevenLabs")
                 }
 
-                if !Config.isAPIKeyConfigured {
+                if !Config.isAPIKeyConfigured || (Config.useCloudConductor && !Config.isBackendConfigured) {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Setup Required", systemImage: "info.circle")
                                 .font(.subheadline.bold())
 
-                            Text("Create a file at ios/VoiceIDE/VoiceIDE/App/Secrets.plist with your ELEVENLABS_API_KEY. See README for details.")
+                            if !Config.isAPIKeyConfigured {
+                                Text("Add ELEVENLABS_API_KEY to Secrets.plist for TTS.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if Config.useCloudConductor && !Config.isBackendConfigured {
+                                Text("Add BACKEND_WS_URL to Secrets.plist for the cloud conductor.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Text("See README for details.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

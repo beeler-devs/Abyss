@@ -4,6 +4,10 @@ import Combine
 
 /// Central ViewModel owning all state. The single point of coordination.
 /// UI emits intents -> ViewModel translates to tool calls -> ToolRouter executes.
+///
+/// Phase 2: When Config.useCloudConductor is true, uses WebSocketConductorClient
+/// instead of LocalConductorStub. Inbound events from the server are dispatched
+/// through the same ToolRouter, preserving the same event/tool protocol.
 @MainActor
 final class ConversationViewModel: ObservableObject {
     // MARK: - Published State
@@ -27,7 +31,15 @@ final class ConversationViewModel: ObservableObject {
 
     private var toolRegistry: ToolRegistry!
     private var toolRouter: ToolRouter!
+
+    // Phase 1: batch-mode conductor (LocalConductorStub)
     private var conductor: Conductor = LocalConductorStub()
+
+    // Phase 2: streaming conductor (WebSocketConductorClient)
+    private var conductorClient: ConductorClient?
+    private var useCloudConductor: Bool = false
+    private var sessionId: String = UUID().uuidString
+    private var inboundEventTask: Task<Void, Never>?
 
     // Services (var to allow injection in test init)
     private var transcriber: SpeechTranscriber
@@ -47,17 +59,43 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem()
         observeStores()
-        startSession()
+
+        // Decide conductor mode
+        if Config.useCloudConductor && Config.isBackendConfigured {
+            useCloudConductor = true
+            let client = WebSocketConductorClient()
+            self.conductorClient = client
+            startCloudSession(client: client)
+        } else {
+            useCloudConductor = false
+            startSession()
+        }
     }
 
-    /// Initializer for testing with injectable dependencies.
+    /// Initializer for testing with injectable dependencies (Phase 1 mode).
     init(conductor: Conductor, transcriber: SpeechTranscriber, tts: TextToSpeech) {
         self.conductor = conductor
         self.transcriber = transcriber
         self.tts = tts
+        self.useCloudConductor = false
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
+    }
+
+    /// Initializer for testing with a ConductorClient (Phase 2 mode).
+    init(conductorClient: ConductorClient, transcriber: SpeechTranscriber, tts: TextToSpeech) {
+        self.conductorClient = conductorClient
+        self.transcriber = transcriber
+        self.tts = tts
+        self.useCloudConductor = true
+
+        setupToolSystem(transcriber: transcriber, tts: tts)
+        observeStores()
+    }
+
+    deinit {
+        inboundEventTask?.cancel()
     }
 
     private func setupToolSystem(transcriber: SpeechTranscriber? = nil, tts: TextToSpeech? = nil) {
@@ -93,12 +131,78 @@ final class ConversationViewModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // MARK: - Session
+    // MARK: - Session (Phase 1)
 
     private func startSession() {
         Task {
             let events = await conductor.handleSessionStart()
             await toolRouter.processEvents(events)
+        }
+    }
+
+    // MARK: - Session (Phase 2: Cloud Conductor)
+
+    private func startCloudSession(client: ConductorClient) {
+        Task {
+            do {
+                try await client.connect(sessionId: sessionId)
+
+                // Send session.start event
+                let sessionEvent = Event.sessionStart(sessionId: sessionId)
+                eventBus.emit(sessionEvent)
+                try await client.send(event: sessionEvent)
+
+                // Start listening for inbound events from the server
+                startInboundEventLoop(client: client)
+            } catch {
+                eventBus.emit(Event.error(code: "ws_connect_failed", message: error.localizedDescription))
+                // Fall back to local conductor
+                useCloudConductor = false
+                startSession()
+            }
+        }
+    }
+
+    private func startInboundEventLoop(client: ConductorClient) {
+        inboundEventTask = Task { [weak self] in
+            for await event in client.inboundEvents {
+                guard let self, !Task.isCancelled else { break }
+                await self.handleInboundEvent(event)
+            }
+        }
+    }
+
+    /// Handle an event received from the cloud conductor.
+    /// Internal (not private) so tests can call it directly.
+    func handleInboundEvent(_ event: Event) async {
+        switch event.kind {
+        case .toolCall(let tc):
+            // Server requests tool execution — dispatch via ToolRouter
+            eventBus.emit(event)
+            let resultEvent = await toolRouter.dispatch(tc)
+
+            // Send tool.result back to server
+            if let client = conductorClient {
+                try? await client.send(event: resultEvent)
+            }
+
+        case .assistantSpeechPartial:
+            // Stream speech partial to UI (display only, no tool call)
+            eventBus.emit(event)
+
+        case .assistantSpeechFinal:
+            // Finalize speech text in UI
+            eventBus.emit(event)
+
+        case .error(let errInfo):
+            // Surface server errors
+            eventBus.emit(event)
+            errorMessage = errInfo.message
+            showError = true
+
+        default:
+            // Emit all other events to the timeline
+            eventBus.emit(event)
         }
     }
 
@@ -211,11 +315,25 @@ final class ConversationViewModel: ObservableObject {
         }
 
         // Emit final transcript event
-        eventBus.emit(Event.transcriptFinal(finalTranscript))
+        let transcriptEvent = Event.transcriptFinal(finalTranscript)
+        eventBus.emit(transcriptEvent)
 
-        // Send to conductor
-        let conductorEvents = await conductor.handleTranscript(finalTranscript)
-        await toolRouter.processEvents(conductorEvents)
+        // Route to the appropriate conductor
+        if useCloudConductor, let client = conductorClient, client.isConnected {
+            // Phase 2: send transcript.final to cloud conductor
+            do {
+                try await client.send(event: transcriptEvent)
+            } catch {
+                eventBus.emit(Event.error(code: "ws_send_failed", message: error.localizedDescription))
+                // Fall back to local conductor
+                let conductorEvents = await conductor.handleTranscript(finalTranscript)
+                await toolRouter.processEvents(conductorEvents)
+            }
+        } else {
+            // Phase 1: local conductor
+            let conductorEvents = await conductor.handleTranscript(finalTranscript)
+            await toolRouter.processEvents(conductorEvents)
+        }
 
         partialTranscript = ""
     }
@@ -232,7 +350,13 @@ final class ConversationViewModel: ObservableObject {
             await toolRouter.dispatch(tc)
         }
 
-        // 2. Start listening
+        // 2. Optionally notify server about barge-in
+        if useCloudConductor, let client = conductorClient, client.isConnected {
+            let interruptEvent = Event.error(code: "audio.output.interrupted", message: "User barged in")
+            try? await client.send(event: interruptEvent)
+        }
+
+        // 3. Start listening
         await startListening()
     }
 

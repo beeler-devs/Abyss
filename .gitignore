@@ -37,3 +37,15 @@ secrets.plist
 # Environment
 .env
 .env.local
+
+# Node.js (backend + infra)
+node_modules/
+dist/
+coverage/
+
+# CDK
+cdk.out/
+cdk.context.json
+
+# Lambda artifacts
+function.zip

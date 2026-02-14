@@ -8,7 +8,7 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // API key warning banner
+                // Warning banners
                 if !Config.isAPIKeyConfigured {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
@@ -20,6 +20,20 @@ struct ContentView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 8)
                     .background(Color.yellow.opacity(0.15))
+                }
+
+                // Phase 2: Cloud conductor status
+                if Config.useCloudConductor {
+                    HStack {
+                        Image(systemName: Config.isBackendConfigured ? "cloud.fill" : "cloud.slash")
+                            .foregroundStyle(Config.isBackendConfigured ? .green : .orange)
+                        Text(Config.isBackendConfigured ? "Cloud Conductor" : "Backend URL not configured")
+                            .font(.caption)
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+                    .background(Config.isBackendConfigured ? Color.green.opacity(0.1) : Color.orange.opacity(0.1))
                 }
 
                 // State indicator
