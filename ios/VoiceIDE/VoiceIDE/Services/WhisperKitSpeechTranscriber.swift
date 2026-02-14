@@ -22,6 +22,10 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     #if canImport(WhisperKit)
     private var whisperKit: WhisperKit?
     private var audioBuffers: [Float] = []
+    private var inputSampleRate: Double = 16000
+    private let targetSampleRate: Double = 16000
+    private var lastPartialTime: Date = .distantPast
+    private let partialInterval: TimeInterval = 3.0 // Run partials every 3 seconds
     #endif
 
     var partials: AsyncStream<String> {
@@ -45,7 +49,15 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         #if canImport(WhisperKit)
         // Initialize WhisperKit if needed
         if whisperKit == nil {
-            whisperKit = try await WhisperKit(model: "base.en")
+            print("📱 Initializing WhisperKit with base.en model...")
+            do {
+                whisperKit = try await WhisperKit(model: "base.en")
+                print("✅ WhisperKit loaded successfully")
+            } catch {
+                print("❌ WhisperKit initialization failed: \(error)")
+                print("⚠️ Continuing without transcription - audio will be captured but not transcribed")
+                // Continue anyway - we can still capture audio
+            }
         }
         audioBuffers = []
         #endif
@@ -64,6 +76,16 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         let inputNode = engine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
+        #if canImport(WhisperKit)
+        inputSampleRate = format.sampleRate
+        print("🎤 Audio engine started. Sample rate: \(inputSampleRate) Hz")
+        // Emit immediate feedback so user sees the mic is working
+        partialContinuation?.yield("Listening…")
+        #else
+        // Without WhisperKit, still show feedback
+        partialContinuation?.yield("Listening… (no transcription)")
+        #endif
+
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self else { return }
             let channelData = buffer.floatChannelData?[0]
@@ -75,9 +97,19 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
                 self.lock.withLock {
                     self.audioBuffers.append(contentsOf: samples)
                 }
-                // Periodically run transcription for partials
-                Task { @Sendable in
-                    await self.transcribePartial()
+                // Throttled: only run transcription every N seconds to avoid overwhelming WhisperKit
+                let now = Date()
+                let shouldTranscribe = self.lock.withLock {
+                    if now.timeIntervalSince(self.lastPartialTime) >= self.partialInterval {
+                        self.lastPartialTime = now
+                        return true
+                    }
+                    return false
+                }
+                if shouldTranscribe {
+                    Task { @Sendable in
+                        await self.transcribePartial()
+                    }
                 }
                 #else
                 // Without WhisperKit, emit buffer level as placeholder
@@ -95,20 +127,48 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     }
 
     #if canImport(WhisperKit)
+    /// Resample to 16kHz for WhisperKit (iPhone often captures at 48kHz).
+    private func resampleTo16k(_ samples: [Float], sourceRate: Double) -> [Float] {
+        guard sourceRate != targetSampleRate, sourceRate > 0 else { return samples }
+        let ratio = sourceRate / targetSampleRate
+        let targetCount = Int(Double(samples.count) / ratio)
+        guard targetCount > 0 else { return [] }
+        var out = [Float](repeating: 0, count: targetCount)
+        for i in 0..<targetCount {
+            let srcIndex = Double(i) * ratio
+            let idx = Int(srcIndex)
+            if idx + 1 < samples.count {
+                let t = Float(srcIndex - Double(idx))
+                out[i] = samples[idx] * (1 - t) + samples[idx + 1] * t
+            } else {
+                out[i] = samples[min(idx, samples.count - 1)]
+            }
+        }
+        return out
+    }
+
     private func transcribePartial() async {
         guard let wk = whisperKit else { return }
         let samples: [Float] = lock.withLock { audioBuffers }
-        guard samples.count > 16000 else { return } // Need at least ~1s of audio
+        // Need at least ~2s of audio at input rate for reliable transcription
+        let minSamplesAtInputRate = Int(inputSampleRate * 2.0)
+        guard samples.count > minSamplesAtInputRate else { return }
+
+        let forWhisper = resampleTo16k(samples, sourceRate: inputSampleRate)
+        guard forWhisper.count > 16000 else { return }
 
         do {
-            let results = try await wk.transcribe(audioArray: samples)
+            let results = try await wk.transcribe(audioArray: forWhisper)
             if let text = results.first?.text, !text.isEmpty {
                 let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                lock.withLock { accumulatedText = trimmed }
-                partialContinuation?.yield(trimmed)
+                // Skip empty or meaningless outputs
+                if trimmed.count > 1 && trimmed != "Listening…" {
+                    lock.withLock { accumulatedText = trimmed }
+                    partialContinuation?.yield(trimmed)
+                }
             }
         } catch {
-            // Partial transcription errors are non-fatal
+            // Partial errors are non-fatal, skip logging to reduce console spam
         }
     }
     #endif
@@ -123,18 +183,41 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
 
         #if canImport(WhisperKit)
-        // Final transcription pass on all accumulated audio
+        // Final transcription pass on all accumulated audio (resampled to 16kHz)
         let samples: [Float] = lock.withLock { audioBuffers }
+        print("🎙️ Final transcription: \(samples.count) samples at \(inputSampleRate)Hz")
+        
+        // If we have no samples, the audio engine never captured anything
+        if samples.isEmpty {
+            print("⚠️ No audio captured - microphone may not be working or app didn't have permission")
+            return "[No audio captured]"
+        }
+        
         if let wk = whisperKit, samples.count > 1600 {
-            do {
-                let results = try await wk.transcribe(audioArray: samples)
-                if let text = results.first?.text, !text.isEmpty {
-                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    lock.withLock { accumulatedText = trimmed }
+            let forWhisper = resampleTo16k(samples, sourceRate: inputSampleRate)
+            print("📊 Resampled to: \(forWhisper.count) samples at 16kHz")
+            if forWhisper.count > 1600 {
+                do {
+                    let results = try await wk.transcribe(audioArray: forWhisper)
+                    if let text = results.first?.text, !text.isEmpty {
+                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        print("✅ Transcribed: \"\(trimmed)\"")
+                        lock.withLock { accumulatedText = trimmed }
+                    } else {
+                        print("⚠️ WhisperKit returned empty result")
+                    }
+                } catch {
+                    print("❌ Final transcription failed: \(error.localizedDescription)")
+                    // Use whatever partial we had, or return indication we heard audio
+                    if lock.withLock({ accumulatedText }).isEmpty {
+                        return "[Audio recorded but transcription failed]"
+                    }
                 }
-            } catch {
-                // Use whatever partial we had
             }
+        } else if whisperKit == nil {
+            // WhisperKit failed to load, but we still captured audio
+            print("⚠️ WhisperKit not available - returning sample count")
+            return "[Audio recorded: \(samples.count) samples, but WhisperKit unavailable for transcription]"
         }
         #endif
 

@@ -25,6 +25,8 @@ Pods/
 # Secrets / Config
 ios/VoiceIDE/VoiceIDE/App/Secrets.xcconfig
 ios/VoiceIDE/VoiceIDE/App/Secrets.plist
+Secrets.plist
+secrets.plist
 
 # macOS
 .DS_Store
