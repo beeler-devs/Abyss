@@ -73,27 +73,22 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
             throw TTSError.httpError(httpResponse.statusCode)
         }
 
-        // Collect streaming audio data
+        // Collect ALL streaming audio data before playing
         var audioData = Data()
         for try await byte in bytes {
             guard isSpeaking else { break } // Stopped externally
             audioData.append(byte)
-
-            // Start playback once we have a reasonable chunk (~8KB)
-            if audioData.count > 8192 && audioPlayer == nil {
-                try startPlayback(data: audioData)
-            }
         }
 
-        // Play any remaining data if we haven't started yet (short responses)
-        if audioPlayer == nil && !audioData.isEmpty && isSpeaking {
+        // Now play the complete audio
+        if !audioData.isEmpty && isSpeaking {
             try startPlayback(data: audioData)
-        }
-
-        // Wait for playback to finish
-        if let player = lock.withLock({ audioPlayer }) {
-            while player.isPlaying && isSpeaking {
-                try await Task.sleep(nanoseconds: 50_000_000) // 50ms poll
+            
+            // Wait for playback to finish
+            if let player = lock.withLock({ audioPlayer }) {
+                while player.isPlaying && isSpeaking {
+                    try await Task.sleep(nanoseconds: 50_000_000) // 50ms poll
+                }
             }
         }
 
