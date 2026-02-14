@@ -1,0 +1,466 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		7A85AD292F402BF30013064D /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = 7A85AD282F402BF30013064D /* Secrets.plist */; };
+		A10000000000000100000001 /* VoiceIDEApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000001 /* VoiceIDEApp.swift */; };
+		A10000000000000100000002 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000002 /* Config.swift */; };
+		A10000000000000100000003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000003 /* ContentView.swift */; };
+		A10000000000000100000004 /* MicButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000004 /* MicButton.swift */; };
+		A10000000000000100000005 /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000005 /* TranscriptView.swift */; };
+		A10000000000000100000006 /* EventTimelineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000006 /* EventTimelineView.swift */; };
+		A10000000000000100000007 /* StateIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000007 /* StateIndicator.swift */; };
+		A10000000000000100000008 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000008 /* SettingsView.swift */; };
+		A10000000000000100000009 /* ConversationViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000009 /* ConversationViewModel.swift */; };
+		A1000000000000010000000A /* Event.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000000A /* Event.swift */; };
+		A1000000000000010000000B /* EventBus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000000B /* EventBus.swift */; };
+		A1000000000000010000000C /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000000C /* AppState.swift */; };
+		A1000000000000010000000D /* ConversationMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000000D /* ConversationMessage.swift */; };
+		A1000000000000010000000E /* ToolProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000000E /* ToolProtocol.swift */; };
+		A1000000000000010000000F /* ToolRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000000F /* ToolRegistry.swift */; };
+		A10000000000000100000010 /* ToolRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000010 /* ToolRouter.swift */; };
+		A10000000000000100000011 /* STTStartTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000011 /* STTStartTool.swift */; };
+		A10000000000000100000012 /* STTStopTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000012 /* STTStopTool.swift */; };
+		A10000000000000100000013 /* TTSSpeakTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000013 /* TTSSpeakTool.swift */; };
+		A10000000000000100000014 /* TTSStopTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000014 /* TTSStopTool.swift */; };
+		A10000000000000100000015 /* ConvoAppendMessageTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000015 /* ConvoAppendMessageTool.swift */; };
+		A10000000000000100000016 /* ConvoSetStateTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000016 /* ConvoSetStateTool.swift */; };
+		A10000000000000100000017 /* SpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000017 /* SpeechTranscriber.swift */; };
+		A10000000000000100000018 /* TextToSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000018 /* TextToSpeech.swift */; };
+		A10000000000000100000019 /* ElevenLabsTTS.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000019 /* ElevenLabsTTS.swift */; };
+		A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */; };
+		A1000000000000010000001B /* ConductorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001B /* ConductorProtocol.swift */; };
+		A1000000000000010000001C /* LocalConductorStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001C /* LocalConductorStub.swift */; };
+		A1000000000000010000001D /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000100000001 /* WhisperKit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		7A85AD282F402BF30013064D /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
+		A20000000000000100000001 /* VoiceIDEApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceIDEApp.swift; sourceTree = "<group>"; };
+		A20000000000000100000002 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		A20000000000000100000003 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20000000000000100000004 /* MicButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicButton.swift; sourceTree = "<group>"; };
+		A20000000000000100000005 /* TranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
+		A20000000000000100000006 /* EventTimelineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventTimelineView.swift; sourceTree = "<group>"; };
+		A20000000000000100000007 /* StateIndicator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StateIndicator.swift; sourceTree = "<group>"; };
+		A20000000000000100000008 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		A20000000000000100000009 /* ConversationViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationViewModel.swift; sourceTree = "<group>"; };
+		A2000000000000010000000A /* Event.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Event.swift; sourceTree = "<group>"; };
+		A2000000000000010000000B /* EventBus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventBus.swift; sourceTree = "<group>"; };
+		A2000000000000010000000C /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		A2000000000000010000000D /* ConversationMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationMessage.swift; sourceTree = "<group>"; };
+		A2000000000000010000000E /* ToolProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolProtocol.swift; sourceTree = "<group>"; };
+		A2000000000000010000000F /* ToolRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRegistry.swift; sourceTree = "<group>"; };
+		A20000000000000100000010 /* ToolRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRouter.swift; sourceTree = "<group>"; };
+		A20000000000000100000011 /* STTStartTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTStartTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000012 /* STTStopTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = STTStopTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000013 /* TTSSpeakTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSSpeakTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000014 /* TTSStopTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TTSStopTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000015 /* ConvoAppendMessageTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvoAppendMessageTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000016 /* ConvoSetStateTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvoSetStateTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000017 /* SpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechTranscriber.swift; sourceTree = "<group>"; };
+		A20000000000000100000018 /* TextToSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextToSpeech.swift; sourceTree = "<group>"; };
+		A20000000000000100000019 /* ElevenLabsTTS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElevenLabsTTS.swift; sourceTree = "<group>"; };
+		A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitSpeechTranscriber.swift; sourceTree = "<group>"; };
+		A2000000000000010000001B /* ConductorProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConductorProtocol.swift; sourceTree = "<group>"; };
+		A2000000000000010000001C /* LocalConductorStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorStub.swift; sourceTree = "<group>"; };
+		A20000000000000200000001 /* VoiceIDE.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VoiceIDE.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A40000000000000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A1000000000000010000001D /* WhisperKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A50000000000000100000001 = {
+			isa = PBXGroup;
+			children = (
+				7A85AD282F402BF30013064D /* Secrets.plist */,
+				A50000000000000100000002 /* VoiceIDE */,
+				A50000000000000300000001 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A50000000000000100000002 /* VoiceIDE */ = {
+			isa = PBXGroup;
+			children = (
+				A50000000000000100000003 /* App */,
+				A50000000000000100000004 /* Models */,
+				A50000000000000100000005 /* Views */,
+				A50000000000000100000006 /* ViewModels */,
+				A50000000000000100000007 /* Tools */,
+				A50000000000000100000008 /* Services */,
+				A50000000000000100000009 /* Conductor */,
+				A5000000000000010000000A /* Info.plist */,
+			);
+			path = VoiceIDE;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000003 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000001 /* VoiceIDEApp.swift */,
+				A20000000000000100000002 /* Config.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000004 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000010000000A /* Event.swift */,
+				A2000000000000010000000B /* EventBus.swift */,
+				A2000000000000010000000C /* AppState.swift */,
+				A2000000000000010000000D /* ConversationMessage.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000003 /* ContentView.swift */,
+				A20000000000000100000004 /* MicButton.swift */,
+				A20000000000000100000005 /* TranscriptView.swift */,
+				A20000000000000100000006 /* EventTimelineView.swift */,
+				A20000000000000100000007 /* StateIndicator.swift */,
+				A20000000000000100000008 /* SettingsView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000006 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000009 /* ConversationViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000007 /* Tools */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000010000000E /* ToolProtocol.swift */,
+				A2000000000000010000000F /* ToolRegistry.swift */,
+				A20000000000000100000010 /* ToolRouter.swift */,
+				A5000000000000010000000B /* Audio */,
+				A5000000000000010000000C /* Conversation */,
+			);
+			path = Tools;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000008 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000017 /* SpeechTranscriber.swift */,
+				A20000000000000100000018 /* TextToSpeech.swift */,
+				A20000000000000100000019 /* ElevenLabsTTS.swift */,
+				A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		A50000000000000100000009 /* Conductor */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000010000001B /* ConductorProtocol.swift */,
+				A2000000000000010000001C /* LocalConductorStub.swift */,
+			);
+			path = Conductor;
+			sourceTree = "<group>";
+		};
+		A5000000000000010000000A /* Info.plist */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Info.plist;
+			sourceTree = "<group>";
+		};
+		A5000000000000010000000B /* Audio */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000011 /* STTStartTool.swift */,
+				A20000000000000100000012 /* STTStopTool.swift */,
+				A20000000000000100000013 /* TTSSpeakTool.swift */,
+				A20000000000000100000014 /* TTSStopTool.swift */,
+			);
+			path = Audio;
+			sourceTree = "<group>";
+		};
+		A5000000000000010000000C /* Conversation */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000015 /* ConvoAppendMessageTool.swift */,
+				A20000000000000100000016 /* ConvoSetStateTool.swift */,
+			);
+			path = Conversation;
+			sourceTree = "<group>";
+		};
+		A50000000000000300000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000200000001 /* VoiceIDE.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A60000000000000100000001 /* VoiceIDE */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A80000000000000100000002 /* Build configuration list for PBXNativeTarget "VoiceIDE" */;
+			buildPhases = (
+				A70000000000000100000001 /* Sources */,
+				A40000000000000100000001 /* Frameworks */,
+				A70000000000000100000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VoiceIDE;
+			packageProductDependencies = (
+				A30000000000000100000001 /* WhisperKit */,
+			);
+			productName = VoiceIDE;
+			productReference = A20000000000000200000001 /* VoiceIDE.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A90000000000000100000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 1500;
+			};
+			buildConfigurationList = A80000000000000100000001 /* Build configuration list for PBXProject "VoiceIDE" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A50000000000000100000001;
+			packageReferences = (
+				A30000000000000200000001 /* XCRemoteSwiftPackageReference "WhisperKit" */,
+			);
+			productRefGroup = A50000000000000300000001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A60000000000000100000001 /* VoiceIDE */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A70000000000000100000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A85AD292F402BF30013064D /* Secrets.plist in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A70000000000000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10000000000000100000001 /* VoiceIDEApp.swift in Sources */,
+				A10000000000000100000002 /* Config.swift in Sources */,
+				A10000000000000100000003 /* ContentView.swift in Sources */,
+				A10000000000000100000004 /* MicButton.swift in Sources */,
+				A10000000000000100000005 /* TranscriptView.swift in Sources */,
+				A10000000000000100000006 /* EventTimelineView.swift in Sources */,
+				A10000000000000100000007 /* StateIndicator.swift in Sources */,
+				A10000000000000100000008 /* SettingsView.swift in Sources */,
+				A10000000000000100000009 /* ConversationViewModel.swift in Sources */,
+				A1000000000000010000000A /* Event.swift in Sources */,
+				A1000000000000010000000B /* EventBus.swift in Sources */,
+				A1000000000000010000000C /* AppState.swift in Sources */,
+				A1000000000000010000000D /* ConversationMessage.swift in Sources */,
+				A1000000000000010000000E /* ToolProtocol.swift in Sources */,
+				A1000000000000010000000F /* ToolRegistry.swift in Sources */,
+				A10000000000000100000010 /* ToolRouter.swift in Sources */,
+				A10000000000000100000011 /* STTStartTool.swift in Sources */,
+				A10000000000000100000012 /* STTStopTool.swift in Sources */,
+				A10000000000000100000013 /* TTSSpeakTool.swift in Sources */,
+				A10000000000000100000014 /* TTSStopTool.swift in Sources */,
+				A10000000000000100000015 /* ConvoAppendMessageTool.swift in Sources */,
+				A10000000000000100000016 /* ConvoSetStateTool.swift in Sources */,
+				A10000000000000100000017 /* SpeechTranscriber.swift in Sources */,
+				A10000000000000100000018 /* TextToSpeech.swift in Sources */,
+				A10000000000000100000019 /* ElevenLabsTTS.swift in Sources */,
+				A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */,
+				A1000000000000010000001B /* ConductorProtocol.swift in Sources */,
+				A1000000000000010000001C /* LocalConductorStub.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		AA0000000000000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_MODE = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		AA0000000000000100000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_MODE = NO;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		AA0000000000000100000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = VoiceIDE/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voiceide.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		AA0000000000000100000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = VoiceIDE/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.voiceide.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A80000000000000100000001 /* Build configuration list for PBXProject "VoiceIDE" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000100000001 /* Debug */,
+				AA0000000000000100000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A80000000000000100000002 /* Build configuration list for PBXNativeTarget "VoiceIDE" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA0000000000000100000003 /* Debug */,
+				AA0000000000000100000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		A30000000000000200000001 /* XCRemoteSwiftPackageReference "WhisperKit" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/argmaxinc/WhisperKit.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A30000000000000100000001 /* WhisperKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A30000000000000200000001 /* XCRemoteSwiftPackageReference "WhisperKit" */;
+			productName = WhisperKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A90000000000000100000001 /* Project object */;
+}
