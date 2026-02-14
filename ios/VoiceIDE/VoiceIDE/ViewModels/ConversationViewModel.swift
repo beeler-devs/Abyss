@@ -201,9 +201,13 @@ final class ConversationViewModel: ObservableObject {
             }
         }
 
-        // Use partial if final is empty
+        // Use partial if final is empty, but skip placeholder text
         if finalTranscript.isEmpty {
-            finalTranscript = partialTranscript
+            let trimmed = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Don't use the "Listening…" placeholder as actual speech
+            if trimmed != "Listening…" && !trimmed.isEmpty {
+                finalTranscript = trimmed
+            }
         }
 
         // Emit final transcript event
