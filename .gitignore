@@ -1,6 +1,6 @@
 # Xcode
-# *.xcodeproj/
-# *.xcworkspace/
+*.xcodeproj/
+*.xcworkspace/
 build/
 DerivedData/
 *.pbxuser
