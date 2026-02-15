@@ -200,16 +200,16 @@ struct LocalConductorStub: Conductor {
         let mentionsAgent = lowered.contains("agent")
         guard hasSpawnVerb, mentionsAgent else { return nil }
 
-        guard let repositoryURL = firstGitHubRepositoryURL(in: transcript) else { return nil }
+        guard let repositoryMatch = firstGitHubRepositoryURL(in: transcript) else { return nil }
 
         let autoCreatePR = lowered.contains("pull request")
             || lowered.contains("create pr")
             || lowered.contains("open pr")
 
-        let prompt = extractPrompt(from: transcript, repositoryURL: repositoryURL)
+        let prompt = extractPrompt(from: transcript, repositoryURL: repositoryMatch.raw)
 
         return AgentSpawnIntent(
-            repositoryURL: repositoryURL,
+            repositoryURL: repositoryMatch.normalized,
             prompt: prompt,
             autoCreatePR: autoCreatePR
         )
@@ -242,15 +242,20 @@ struct LocalConductorStub: Conductor {
         return "Review the repository and complete the requested work."
     }
 
-    private func firstGitHubRepositoryURL(in transcript: String) -> String? {
-        let pattern = #"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"#
+    private func firstGitHubRepositoryURL(in transcript: String) -> (raw: String, normalized: String)? {
+        let pattern = #"(?<![A-Za-z0-9.-])(?:https?://)?github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(transcript.startIndex..<transcript.endIndex, in: transcript)
         guard let match = regex.firstMatch(in: transcript, options: [], range: range),
               let matchRange = Range(match.range, in: transcript) else {
             return nil
         }
-        return String(transcript[matchRange])
+        let rawURL = String(transcript[matchRange]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;:"))
+        var normalizedURL = rawURL
+        if !normalizedURL.hasPrefix("http://") && !normalizedURL.hasPrefix("https://") {
+            normalizedURL = "https://\(normalizedURL)"
+        }
+        return (raw: rawURL, normalized: normalizedURL)
     }
 
     // MARK: - Helpers
