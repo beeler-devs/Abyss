@@ -4,6 +4,23 @@ import Foundation
 /// Proves the tool-calling pipeline without any backend.
 /// Same input always produces the same output sequence.
 struct LocalConductorStub: Conductor {
+    private enum AgentSpawnCall {
+        static let name = "agent.spawn"
+
+        struct Arguments: Codable {
+            let prompt: String
+            let repository: String?
+            let ref: String?
+            let prUrl: String?
+            let model: String?
+            let autoCreatePr: Bool?
+            let openAsCursorGithubApp: Bool?
+            let skipReviewerRequest: Bool?
+            let branchName: String?
+            let autoBranch: Bool?
+        }
+    }
+
     private struct AgentSpawnIntent {
         let repositoryURL: String
         let prompt: String
@@ -124,7 +141,7 @@ struct LocalConductorStub: Conductor {
     }
 
     private func makeSpawnAgentEventSequence(transcript: String, intent: AgentSpawnIntent) -> [Event] {
-        let repositoryLabel = AgentProgressCard.shortRepositoryName(from: intent.repositoryURL) ?? intent.repositoryURL
+        let repositoryLabel = shortRepositoryName(from: intent.repositoryURL) ?? intent.repositoryURL
         let responseText = "Starting a Cursor cloud agent for \(repositoryLabel). I'll show a live progress card as it works."
 
         let setThinkingCallId = stableId(transcript, suffix: "setState-thinking")
@@ -151,8 +168,8 @@ struct LocalConductorStub: Conductor {
                 callId: appendUserCallId
             ),
             Event.toolCall(
-                name: AgentSpawnTool.name,
-                arguments: encode(AgentSpawnTool.Arguments(
+                name: AgentSpawnCall.name,
+                arguments: encode(AgentSpawnCall.Arguments(
                     prompt: intent.prompt,
                     repository: intent.repositoryURL,
                     ref: "main",
@@ -256,6 +273,13 @@ struct LocalConductorStub: Conductor {
             normalizedURL = "https://\(normalizedURL)"
         }
         return (raw: rawURL, normalized: normalizedURL)
+    }
+
+    private func shortRepositoryName(from repository: String?) -> String? {
+        guard let repository, let url = URL(string: repository) else { return nil }
+        let comps = url.pathComponents.filter { $0 != "/" }
+        guard comps.count >= 2 else { return nil }
+        return "\(comps[comps.count - 2])/\(comps[comps.count - 1])"
     }
 
     // MARK: - Helpers
