@@ -5,8 +5,10 @@ struct SettingsView: View {
     @Binding var recordingMode: RecordingMode
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
     @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
     @AppStorage("elevenLabsModelId") private var modelId = "eleven_turbo_v2_5"
+    @State private var showCursorKey = false
 
     var body: some View {
         NavigationStack {
@@ -34,7 +36,7 @@ struct SettingsView: View {
                     HStack {
                         Text("API Key")
                         Spacer()
-                        if Config.isAPIKeyConfigured {
+                        if Config.isElevenLabsAPIKeyConfigured {
                             Label("Configured", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(.green)
@@ -56,6 +58,39 @@ struct SettingsView: View {
                         .autocorrectionDisabled()
                 }
 
+                Section("Cursor Cloud Agents") {
+                    HStack {
+                        Text("API Key")
+                        Spacer()
+                        if Config.isCursorAPIKeyConfigured {
+                            Label("Configured", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                        } else {
+                            Label("Not Set", systemImage: "xmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                        }
+                    }
+
+                    Group {
+                        if showCursorKey {
+                            TextField("Cursor API Key", text: $cursorAPIKey)
+                        } else {
+                            SecureField("Cursor API Key", text: $cursorAPIKey)
+                        }
+                    }
+                    .font(.system(.body, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+
+                    Toggle("Show Key", isOn: $showCursorKey)
+
+                    Text("Used by agent tools: agent.spawn, agent.status, agent.cancel, agent.followup, and agent.list.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("About") {
                     LabeledContent("Version", value: "Phase 1")
                     LabeledContent("Architecture", value: "Tool-Calling")
@@ -63,7 +98,7 @@ struct SettingsView: View {
                     LabeledContent("TTS Engine", value: "ElevenLabs")
                 }
 
-                if !Config.isAPIKeyConfigured {
+                if !Config.isElevenLabsAPIKeyConfigured {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
                             Label("Setup Required", systemImage: "info.circle")

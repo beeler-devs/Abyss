@@ -72,6 +72,7 @@ final class ConversationViewModel: ObservableObject {
         let registry = ToolRegistry()
         let sttImpl = transcriber ?? self.transcriber
         let ttsImpl = tts ?? self.tts
+        let cursorClient = CursorCloudAgentsClient()
 
         // Register audio tools
         registry.register(STTStartTool(transcriber: sttImpl, onPartial: { [weak self] partial in
@@ -84,6 +85,13 @@ final class ConversationViewModel: ObservableObject {
         // Register conversation tools
         registry.register(ConvoAppendMessageTool(store: conversationStore))
         registry.register(ConvoSetStateTool(stateStore: appStateStore))
+
+        // Register Cursor Cloud Agent tools
+        registry.register(AgentSpawnTool(client: cursorClient))
+        registry.register(AgentStatusTool(client: cursorClient))
+        registry.register(AgentCancelTool(client: cursorClient))
+        registry.register(AgentFollowUpTool(client: cursorClient))
+        registry.register(AgentListTool(client: cursorClient))
 
         self.toolRegistry = registry
         self.toolRouter = ToolRouter(registry: registry, eventBus: eventBus)

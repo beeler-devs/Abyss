@@ -25,8 +25,10 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     private var audioBuffers: [Float] = []
     private var inputSampleRate: Double = 16000
     private let targetSampleRate: Double = 16000
-    private var lastPartialTime: Date = .distantPast
-    private let partialInterval: TimeInterval = 3.0 // Run partials every 3 seconds
+    private var partialTranscriptionTask: Task<Void, Never>?
+    private var partialTranscriptionInFlight = false
+    private var lastPartialSampleCount = 0
+    private let partialDebounceNanoseconds: UInt64 = 250_000_000
     #endif
 
     var partials: AsyncStream<String> {
@@ -57,6 +59,10 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         // Ensure the model is ready (or attempted) before recording starts.
         await ensureWhisperKitLoaded()
         audioBuffers = []
+        partialTranscriptionTask?.cancel()
+        partialTranscriptionTask = nil
+        partialTranscriptionInFlight = false
+        lastPartialSampleCount = 0
         #endif
 
         // Recreate the partial stream
@@ -94,20 +100,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
                 self.lock.withLock {
                     self.audioBuffers.append(contentsOf: samples)
                 }
-                // Throttled: only run transcription every N seconds to avoid overwhelming WhisperKit
-                let now = Date()
-                let shouldTranscribe = self.lock.withLock {
-                    if now.timeIntervalSince(self.lastPartialTime) >= self.partialInterval {
-                        self.lastPartialTime = now
-                        return true
-                    }
-                    return false
-                }
-                if shouldTranscribe {
-                    Task { @Sendable in
-                        await self.transcribePartial()
-                    }
-                }
+                self.scheduleLivePartialTranscription()
                 #else
                 // Without WhisperKit, emit buffer level as placeholder
                 let rms = samples.reduce(0) { $0 + $1 * $1 } / Float(frameLength)
@@ -182,13 +175,30 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
     private func transcribePartial() async {
         guard let wk = whisperKit else { return }
-        let samples: [Float] = lock.withLock { audioBuffers }
-        // Need at least ~2s of audio at input rate for reliable transcription
-        let minSamplesAtInputRate = Int(inputSampleRate * 2.0)
+        let snapshot: (samples: [Float], sampleRate: Double, sampleCount: Int)? = lock.withLock {
+            guard _isListening, !partialTranscriptionInFlight else { return nil }
+            let sampleCount = audioBuffers.count
+            let minNewSamples = max(Int(inputSampleRate * 0.2), 1600)
+            guard sampleCount - lastPartialSampleCount >= minNewSamples else { return nil }
+
+            partialTranscriptionInFlight = true
+            return (audioBuffers, inputSampleRate, sampleCount)
+        }
+        guard let snapshot else { return }
+        defer {
+            lock.withLock {
+                partialTranscriptionInFlight = false
+                lastPartialSampleCount = snapshot.sampleCount
+            }
+        }
+
+        let samples = snapshot.samples
+        // Allow early partials so transcript feels live while user is speaking.
+        let minSamplesAtInputRate = Int(snapshot.sampleRate * 0.35)
         guard samples.count > minSamplesAtInputRate else { return }
 
-        let forWhisper = resampleTo16k(samples, sourceRate: inputSampleRate)
-        guard forWhisper.count > 16000 else { return }
+        let forWhisper = resampleTo16k(samples, sourceRate: snapshot.sampleRate)
+        guard forWhisper.count > 3200 else { return }
 
         do {
             let results = try await wk.transcribe(audioArray: forWhisper)
@@ -204,6 +214,28 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             // Partial errors are non-fatal, skip logging to reduce console spam
         }
     }
+
+    private func scheduleLivePartialTranscription() {
+        let shouldSchedule = lock.withLock {
+            guard partialTranscriptionTask == nil else { return false }
+            return true
+        }
+        guard shouldSchedule else { return }
+
+        let task = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: self.partialDebounceNanoseconds)
+            guard !Task.isCancelled else { return }
+            await self.transcribePartial()
+            self.lock.withLock {
+                self.partialTranscriptionTask = nil
+            }
+        }
+
+        lock.withLock {
+            partialTranscriptionTask = task
+        }
+    }
     #endif
 
     func stop() async throws -> String {
@@ -216,6 +248,10 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
 
         #if canImport(WhisperKit)
+        lock.withLock {
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+        }
         // Final transcription pass on all accumulated audio (resampled to 16kHz)
         let samples: [Float] = lock.withLock { audioBuffers }
         print("🎙️ Final transcription: \(samples.count) samples at \(inputSampleRate)Hz")

@@ -46,7 +46,43 @@ enum Config {
     }
 
     /// Whether the API key is configured.
-    static var isAPIKeyConfigured: Bool {
+    static var isElevenLabsAPIKeyConfigured: Bool {
         elevenLabsAPIKey != nil
+    }
+
+    /// Cursor API key, loaded from in-app settings, Secrets.plist, or environment.
+    static var cursorAPIKey: String? {
+        // 1. Check in-app settings (persisted in UserDefaults via @AppStorage)
+        if let key = UserDefaults.standard.string(forKey: "cursorAPIKey")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !key.isEmpty {
+            return key
+        }
+
+        // 2. Check Secrets.plist in the bundle
+        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+           let dict = NSDictionary(contentsOfFile: path),
+           let key = dict["CURSOR_API_KEY"] as? String,
+           !key.isEmpty {
+            return key
+        }
+
+        // 3. Check environment variable (useful for CI/testing)
+        if let key = ProcessInfo.processInfo.environment["CURSOR_API_KEY"],
+           !key.isEmpty {
+            return key
+        }
+
+        return nil
+    }
+
+    /// Whether the Cursor API key is configured.
+    static var isCursorAPIKeyConfigured: Bool {
+        cursorAPIKey != nil
+    }
+
+    /// Backward-compatible alias for existing code paths.
+    static var isAPIKeyConfigured: Bool {
+        isElevenLabsAPIKeyConfigured
     }
 }
