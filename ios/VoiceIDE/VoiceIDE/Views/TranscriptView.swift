@@ -71,24 +71,36 @@ struct MessageBubble: View {
         HStack {
             if isUser { Spacer(minLength: 60) }
 
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 0) {
                 Text(message.text)
                     .font(.body)
-                    .foregroundStyle(message.isPartial ? .secondary : .primary)
-
-                Text(message.role.rawValue.capitalized)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(textColor)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(isUser ? Color.blue.opacity(0.12) : Color(.systemGray6))
-            )
+            .padding(.horizontal, isUser ? 14 : 0)
+            .padding(.vertical, isUser ? 10 : 0)
+            .background(bubbleBackground)
 
             if !isUser { Spacer(minLength: 60) }
         }
         .padding(.horizontal)
+        .padding(.vertical, 2)
+    }
+
+    private var bubbleBackground: some View {
+        Group {
+            if isUser {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(red: 33 / 255, green: 33 / 255, blue: 33 / 255))
+            } else {
+                Color.clear
+            }
+        }
+    }
+
+    private var textColor: Color {
+        if isUser {
+            return .white
+        }
+        return message.isPartial ? .secondary : .primary
     }
 }

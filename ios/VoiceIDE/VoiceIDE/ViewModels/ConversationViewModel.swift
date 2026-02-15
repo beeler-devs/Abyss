@@ -47,6 +47,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem()
         observeStores()
+        preloadTranscriber()
         startSession()
     }
 
@@ -58,6 +59,13 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
+    }
+
+    private func preloadTranscriber() {
+        let transcriber = self.transcriber
+        Task {
+            await transcriber.preload()
+        }
     }
 
     private func setupToolSystem(transcriber: SpeechTranscriber? = nil, tts: TextToSpeech? = nil) {
@@ -138,6 +146,18 @@ final class ConversationViewModel: ObservableObject {
             if appState == .listening || appState == .transcribing {
                 await stopListeningAndProcess()
             }
+        }
+    }
+
+    /// User submitted text from the input bar.
+    func sendTypedMessage(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        Task {
+            eventBus.emit(Event.transcriptFinal(trimmed))
+            let conductorEvents = await conductor.handleTranscript(trimmed)
+            await toolRouter.processEvents(conductorEvents)
         }
     }
 

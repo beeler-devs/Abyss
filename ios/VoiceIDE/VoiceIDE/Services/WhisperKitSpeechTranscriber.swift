@@ -21,6 +21,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
     #if canImport(WhisperKit)
     private var whisperKit: WhisperKit?
+    private var whisperKitInitTask: Task<WhisperKit?, Never>?
     private var audioBuffers: [Float] = []
     private var inputSampleRate: Double = 16000
     private let targetSampleRate: Double = 16000
@@ -40,6 +41,12 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
     init() {}
 
+    func preload() async {
+        #if canImport(WhisperKit)
+        await ensureWhisperKitLoaded()
+        #endif
+    }
+
     func start() async throws {
         // Request microphone permission
         let session = AVAudioSession.sharedInstance()
@@ -47,18 +54,8 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         try session.setActive(true)
 
         #if canImport(WhisperKit)
-        // Initialize WhisperKit if needed
-        if whisperKit == nil {
-            print("📱 Initializing WhisperKit with base.en model...")
-            do {
-                whisperKit = try await WhisperKit(model: "base.en")
-                print("✅ WhisperKit loaded successfully")
-            } catch {
-                print("❌ WhisperKit initialization failed: \(error)")
-                print("⚠️ Continuing without transcription - audio will be captured but not transcribed")
-                // Continue anyway - we can still capture audio
-            }
-        }
+        // Ensure the model is ready (or attempted) before recording starts.
+        await ensureWhisperKitLoaded()
         audioBuffers = []
         #endif
 
@@ -127,6 +124,42 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     }
 
     #if canImport(WhisperKit)
+    private func ensureWhisperKitLoaded() async {
+        if lock.withLock({ whisperKit != nil }) {
+            return
+        }
+
+        if let existingTask = lock.withLock({ whisperKitInitTask }) {
+            _ = await existingTask.value
+            return
+        }
+
+        let loadTask = Task<WhisperKit?, Never> {
+            print("📱 Initializing WhisperKit with base.en model...")
+            do {
+                let kit = try await WhisperKit(model: "base.en")
+                print("✅ WhisperKit loaded successfully")
+                return kit
+            } catch {
+                print("❌ WhisperKit initialization failed: \(error)")
+                print("⚠️ Continuing without transcription - audio will be captured but not transcribed")
+                return nil
+            }
+        }
+
+        lock.withLock {
+            whisperKitInitTask = loadTask
+        }
+
+        let loadedKit = await loadTask.value
+        lock.withLock {
+            if let loadedKit {
+                whisperKit = loadedKit
+            }
+            whisperKitInitTask = nil
+        }
+    }
+
     /// Resample to 16kHz for WhisperKit (iPhone often captures at 48kHz).
     private func resampleTo16k(_ samples: [Float], sourceRate: Double) -> [Float] {
         guard sourceRate != targetSampleRate, sourceRate > 0 else { return samples }
