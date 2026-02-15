@@ -33,6 +33,7 @@ final class ConversationViewModel: ObservableObject {
     // Services (var to allow injection in test init)
     private var transcriber: SpeechTranscriber
     private var tts: TextToSpeech
+    private let transcriptFormatter: FastTranscriptFormatter
 
     private var cancellables = Set<AnyCancellable>()
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
@@ -47,6 +48,7 @@ final class ConversationViewModel: ObservableObject {
         )
         self.tts = elevenLabs
         self.transcriber = WhisperKitSpeechTranscriber()
+        self.transcriptFormatter = FastTranscriptFormatter()
 
         setupToolSystem()
         observeStores()
@@ -55,10 +57,16 @@ final class ConversationViewModel: ObservableObject {
     }
 
     /// Initializer for testing with injectable dependencies.
-    init(conductor: Conductor, transcriber: SpeechTranscriber, tts: TextToSpeech) {
+    init(
+        conductor: Conductor,
+        transcriber: SpeechTranscriber,
+        tts: TextToSpeech,
+        transcriptFormatter: FastTranscriptFormatter = FastTranscriptFormatter()
+    ) {
         self.conductor = conductor
         self.transcriber = transcriber
         self.tts = tts
+        self.transcriptFormatter = transcriptFormatter
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
@@ -274,11 +282,11 @@ final class ConversationViewModel: ObservableObject {
             }
         }
 
-        // Emit final transcript event
-        eventBus.emit(Event.transcriptFinal(finalTranscript))
+        let normalizedTranscript = transcriptFormatter.normalizeForAgent(finalTranscript)
 
-        // Send to conductor
-        let conductorEvents = await conductor.handleTranscript(finalTranscript)
+        // Emit normalized transcript and send to conductor.
+        eventBus.emit(Event.transcriptFinal(normalizedTranscript))
+        let conductorEvents = await conductor.handleTranscript(normalizedTranscript)
         await toolRouter.processEvents(conductorEvents)
 
         partialTranscript = ""
@@ -525,5 +533,70 @@ final class ConversationViewModel: ObservableObject {
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) -> T? {
         guard let json else { return nil }
         return try? JSONDecoder().decode(type, from: Data(json.utf8))
+    }
+}
+
+/// Extremely lightweight transcript cleanup for better downstream agent parsing.
+struct FastTranscriptFormatter: Sendable {
+    func normalizeForAgent(_ transcript: String) -> String {
+        var text = normalizeWhitespace(in: transcript)
+        guard !text.isEmpty else { return "" }
+
+        text = removeLeadingFillers(from: text)
+        text = normalizeSpokenGithubURL(text)
+        text = normalizePronounI(in: text)
+        text = capitalizeFirstCharacter(in: text)
+
+        if !hasTerminalPunctuation(text) {
+            text.append(".")
+        }
+
+        return text
+    }
+
+    private func normalizeWhitespace(in text: String) -> String {
+        text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func removeLeadingFillers(from text: String) -> String {
+        let pattern = #"^(?:(?:um+|uh+|ah+|er+|like|you know|i mean)\s+)+"#
+        return replacingRegex(pattern, with: "", in: text)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func normalizeSpokenGithubURL(_ text: String) -> String {
+        replacingRegex(#"github\s+dot\s+com"#, with: "github.com", in: text, caseInsensitive: true)
+    }
+
+    private func normalizePronounI(in text: String) -> String {
+        replacingRegex(#"\bi\b"#, with: "I", in: text)
+    }
+
+    private func capitalizeFirstCharacter(in text: String) -> String {
+        guard let first = text.first else { return text }
+        return first.uppercased() + text.dropFirst()
+    }
+
+    private func hasTerminalPunctuation(_ text: String) -> Bool {
+        guard let last = text.last else { return false }
+        return [".", "!", "?"].contains(String(last))
+    }
+
+    private func replacingRegex(
+        _ pattern: String,
+        with replacement: String,
+        in text: String,
+        caseInsensitive: Bool = false
+    ) -> String {
+        let options: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: options) else {
+            return text
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: replacement)
     }
 }
