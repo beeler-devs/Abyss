@@ -4,6 +4,11 @@ struct ContentView: View {
     @StateObject private var viewModel = ConversationViewModel()
     @State private var showSettings = false
     @State private var showEventTimeline = false
+    @State private var isTypingMode = false
+    @State private var typedMessage = ""
+
+    private let controlHeight: CGFloat = 56
+    private let iconColor = Color(red: 156 / 255, green: 156 / 255, blue: 156 / 255)
 
     var body: some View {
         NavigationStack {
@@ -49,38 +54,56 @@ struct ContentView: View {
                 Divider()
 
                 // Bottom controls
-                HStack(alignment: .center, spacing: 20) {
+                HStack(alignment: .center, spacing: 12) {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showEventTimeline.toggle()
-                        }
+                        showSettings = true
                     } label: {
-                        Image(systemName: showEventTimeline ? "list.bullet.circle.fill" : "list.bullet.circle")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 23, weight: .semibold))
+                            .foregroundStyle(iconColor)
+                            .frame(width: controlHeight, height: controlHeight)
+                            .background(
+                                RoundedRectangle(cornerRadius: controlHeight / 2)
+                                    .fill(Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255))
+                            )
                     }
-
-                    Spacer()
+                    .buttonStyle(.plain)
 
                     MicButton(
                         appState: viewModel.appState,
                         recordingMode: viewModel.recordingMode,
+                        isTypingMode: $isTypingMode,
+                        typedText: $typedMessage,
                         onTap: { viewModel.micTapped() },
                         onPressDown: { viewModel.micPressed() },
-                        onPressUp: { viewModel.micReleased() }
+                        onPressUp: { viewModel.micReleased() },
+                        onSendTyped: { text in
+                            viewModel.sendTypedMessage(text)
+                        }
                     )
 
-                    Spacer()
-
-                    Button {
-                        showSettings = true
-                    } label: {
-                        Image(systemName: "gear")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
+                    if !isTypingMode {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showEventTimeline.toggle()
+                            }
+                        } label: {
+                            Image(systemName: showEventTimeline ? "list.bullet.circle.fill" : "list.bullet.circle")
+                                .font(.system(size: 22, weight: .semibold))
+                                .foregroundStyle(iconColor)
+                                .frame(width: controlHeight, height: controlHeight)
+                                .background(
+                                    RoundedRectangle(cornerRadius: controlHeight / 2)
+                                        .fill(Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255))
+                                )
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        Color.clear
+                            .frame(width: controlHeight, height: controlHeight)
                     }
                 }
-                .padding(.horizontal, 30)
+                .padding(.horizontal, 16)
                 .padding(.vertical, 16)
             }
             .navigationTitle("VoiceIDE")
