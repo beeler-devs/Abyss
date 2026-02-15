@@ -64,10 +64,6 @@ final class ConversationViewModel: ObservableObject {
         observeStores()
     }
 
-    deinit {
-        agentStatusPollingTask?.cancel()
-    }
-
     private func preloadTranscriber() {
         let transcriber = self.transcriber
         Task {
@@ -181,6 +177,31 @@ final class ConversationViewModel: ObservableObject {
             eventBus.emit(Event.transcriptFinal(trimmed))
             let conductorEvents = await conductor.handleTranscript(trimmed)
             await toolRouter.processEvents(conductorEvents)
+        }
+    }
+
+    func refreshAgentStatus(cardID: UUID) {
+        guard let card = agentProgressCards.first(where: { $0.id == cardID }),
+              let agentID = card.agentId else { return }
+
+        Task {
+            await requestAgentStatus(agentID: agentID)
+        }
+    }
+
+    func cancelAgent(cardID: UUID) {
+        guard let card = agentProgressCards.first(where: { $0.id == cardID }),
+              let agentID = card.agentId else { return }
+
+        Task {
+            let cancelEvent = Event.toolCall(
+                name: AgentCancelTool.name,
+                arguments: encode(AgentCancelTool.Arguments(id: agentID))
+            )
+            eventBus.emit(cancelEvent)
+            if case .toolCall(let tc) = cancelEvent.kind {
+                _ = await toolRouter.dispatch(tc)
+            }
         }
     }
 
@@ -307,6 +328,188 @@ final class ConversationViewModel: ObservableObject {
         showError = true
     }
 
+    // MARK: - Agent Progress Cards
+
+    private func handleEventStream(_ event: Event) {
+        switch event.kind {
+        case .toolCall(let toolCall):
+            pendingToolCalls[toolCall.callId] = toolCall
+            if toolCall.name == AgentSpawnTool.name {
+                registerPendingAgentCard(from: toolCall)
+            }
+        case .toolResult(let toolResult):
+            guard let toolCall = pendingToolCalls.removeValue(forKey: toolResult.callId) else {
+                return
+            }
+            handleToolResult(toolResult, for: toolCall)
+        default:
+            break
+        }
+    }
+
+    private func registerPendingAgentCard(from toolCall: Event.ToolCall) {
+        guard let args = decode(AgentSpawnTool.Arguments.self, from: toolCall.arguments) else { return }
+        guard !agentProgressCards.contains(where: { $0.spawnCallId == toolCall.callId }) else { return }
+
+        let card = AgentProgressCard.pending(
+            spawnCallId: toolCall.callId,
+            prompt: args.prompt,
+            repository: args.repository,
+            autoCreatePR: args.autoCreatePr ?? false
+        )
+
+        agentProgressCards.insert(card, at: 0)
+    }
+
+    private func handleToolResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
+        switch toolCall.name {
+        case AgentSpawnTool.name:
+            handleAgentSpawnResult(toolResult, for: toolCall)
+        case AgentStatusTool.name:
+            handleAgentStatusResult(toolResult, for: toolCall)
+        case AgentCancelTool.name:
+            handleAgentCancelResult(toolResult, for: toolCall)
+        default:
+            break
+        }
+    }
+
+    private func handleAgentSpawnResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
+        if let error = toolResult.error {
+            updateCard(spawnCallId: toolCall.callId) { card in
+                card.applySpawnError(error)
+            }
+            sortCardsByLastUpdate()
+            return
+        }
+
+        guard let result = decode(AgentSpawnTool.Result.self, from: toolResult.result) else { return }
+
+        if updateCard(spawnCallId: toolCall.callId, mutate: { card in
+            card.applySpawnResult(result)
+        }) == false {
+            var fallbackCard = AgentProgressCard.pending(
+                spawnCallId: toolCall.callId,
+                prompt: "Cursor agent task",
+                repository: nil,
+                autoCreatePR: false
+            )
+            fallbackCard.applySpawnResult(result)
+            agentProgressCards.insert(fallbackCard, at: 0)
+        }
+
+        sortCardsByLastUpdate()
+        if result.status.uppercased() != "FINISHED" {
+            ensureAgentStatusPolling()
+        }
+    }
+
+    private func handleAgentStatusResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
+        guard let args = decode(AgentStatusTool.Arguments.self, from: toolCall.arguments) else { return }
+
+        if let error = toolResult.error {
+            updateCard(agentID: args.id) { card in
+                card.noteStatusRefreshError(error)
+            }
+            sortCardsByLastUpdate()
+            return
+        }
+
+        guard let result = decode(AgentStatusTool.Result.self, from: toolResult.result) else { return }
+
+        if updateCard(agentID: result.id, mutate: { card in
+            card.applyStatusResult(result)
+        }) == false {
+            var fallbackCard = AgentProgressCard.pending(
+                spawnCallId: toolCall.callId,
+                prompt: result.name ?? "Cursor agent task",
+                repository: nil,
+                autoCreatePR: false
+            )
+            fallbackCard.applyStatusResult(result)
+            agentProgressCards.insert(fallbackCard, at: 0)
+        }
+
+        sortCardsByLastUpdate()
+        if !agentProgressCards.filter({ !$0.isTerminal && $0.agentId != nil }).isEmpty {
+            ensureAgentStatusPolling()
+        }
+    }
+
+    private func handleAgentCancelResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
+        if toolResult.error != nil { return }
+        guard let result = decode(AgentCancelTool.Result.self, from: toolResult.result) else { return }
+
+        updateCard(agentID: result.id) { card in
+            card.applyCancelled(agentID: result.id)
+        }
+        sortCardsByLastUpdate()
+    }
+
+    @discardableResult
+    private func updateCard(spawnCallId: String, mutate: (inout AgentProgressCard) -> Void) -> Bool {
+        guard let index = agentProgressCards.firstIndex(where: { $0.spawnCallId == spawnCallId }) else {
+            return false
+        }
+        mutate(&agentProgressCards[index])
+        return true
+    }
+
+    @discardableResult
+    private func updateCard(agentID: String, mutate: (inout AgentProgressCard) -> Void) -> Bool {
+        guard let index = agentProgressCards.firstIndex(where: { $0.agentId == agentID }) else {
+            return false
+        }
+        mutate(&agentProgressCards[index])
+        return true
+    }
+
+    private func sortCardsByLastUpdate() {
+        agentProgressCards.sort { $0.updatedAt > $1.updatedAt }
+    }
+
+    private func ensureAgentStatusPolling() {
+        guard agentStatusPollingTask == nil else { return }
+
+        agentStatusPollingTask = Task { [weak self] in
+            await self?.pollAgentStatuses()
+        }
+    }
+
+    private func pollAgentStatuses() async {
+        defer { agentStatusPollingTask = nil }
+
+        while !Task.isCancelled {
+            let activeAgentIDs: [String] = agentProgressCards.compactMap { card in
+                guard let agentID = card.agentId, !card.isTerminal else { return nil }
+                return agentID
+            }
+
+            guard !activeAgentIDs.isEmpty else {
+                break
+            }
+
+            for agentID in activeAgentIDs {
+                if Task.isCancelled { return }
+                await requestAgentStatus(agentID: agentID)
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
+
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+        }
+    }
+
+    private func requestAgentStatus(agentID: String) async {
+        let statusEvent = Event.toolCall(
+            name: AgentStatusTool.name,
+            arguments: encode(AgentStatusTool.Arguments(id: agentID))
+        )
+        eventBus.emit(statusEvent)
+        if case .toolCall(let tc) = statusEvent.kind {
+            _ = await toolRouter.dispatch(tc)
+        }
+    }
+
     // MARK: - Helpers
 
     private func encode<T: Encodable>(_ value: T) -> String {
@@ -317,5 +520,10 @@ final class ConversationViewModel: ObservableObject {
             return "{}"
         }
         return json
+    }
+
+    private func decode<T: Decodable>(_ type: T.Type, from json: String?) -> T? {
+        guard let json else { return nil }
+        return try? JSONDecoder().decode(type, from: Data(json.utf8))
     }
 }

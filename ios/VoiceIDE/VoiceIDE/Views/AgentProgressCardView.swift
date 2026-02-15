@@ -149,10 +149,8 @@ struct AgentProgressCardView: View {
     }
 
     private var statusFooterText: String {
-        if let updated = relativeFormatter.localizedString(for: card.updatedAt, relativeTo: Date()) {
-            return "Updated \(updated)"
-        }
-        return "Updating..."
+        let updated = relativeFormatter.localizedString(for: card.updatedAt, relativeTo: Date())
+        return "Updated \(updated)"
     }
 
     @ViewBuilder

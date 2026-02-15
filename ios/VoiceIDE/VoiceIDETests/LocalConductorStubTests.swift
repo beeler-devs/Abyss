@@ -142,4 +142,25 @@ final class LocalConductorStubTests: XCTestCase {
         XCTAssertEqual(speechEvents.count, 1)
         XCTAssertTrue(speechEvents[0].contains("Hello"))
     }
+
+    func testSpawnAgentCommandEmitsAgentSpawnToolCall() async {
+        let conductor = LocalConductorStub()
+        let transcript = "Spawn a cursor agent on https://github.com/example/repo to fix flaky tests"
+
+        let events = await conductor.handleTranscript(transcript)
+        let toolCalls = events.compactMap { event -> Event.ToolCall? in
+            if case .toolCall(let tc) = event.kind { return tc }
+            return nil
+        }
+
+        XCTAssertTrue(toolCalls.contains(where: { $0.name == AgentSpawnTool.name }))
+
+        guard let spawnCall = toolCalls.first(where: { $0.name == AgentSpawnTool.name }) else {
+            XCTFail("agent.spawn tool call missing")
+            return
+        }
+
+        XCTAssertTrue(spawnCall.arguments.contains("https://github.com/example/repo"))
+        XCTAssertTrue(spawnCall.arguments.lowercased().contains("fix flaky tests"))
+    }
 }
