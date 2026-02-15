@@ -186,6 +186,24 @@ protocol Tool {
 
 ---
 
+## Cursor Cloud Agent Tools
+
+These tools are implemented and backed by the Cursor Cloud Agents API:
+
+| Name | Purpose | Category |
+|------|---------|----------|
+| `agent.spawn` | Launch a cloud agent for a repository/PR | EXECUTE |
+| `agent.status` | Retrieve a cloud agent's current status | READ |
+| `agent.cancel` | Stop a running cloud agent | EXECUTE |
+| `agent.followup` | Add follow-up instructions to an existing agent | EXECUTE |
+| `agent.list` | List cloud agents for the authenticated user | READ |
+
+Requirements:
+- Cursor API key configured in `Settings -> Cursor Cloud Agents -> API Key` or `CURSOR_API_KEY`.
+- Authentication uses Basic auth with your Cursor API key.
+
+---
+
 ## Phase 2+ Tools (Planned)
 
 These tools are NOT implemented in Phase 1 but the architecture is designed to support them by simply implementing the `Tool` protocol and calling `registry.register()`.
@@ -212,13 +230,6 @@ These tools are NOT implemented in Phase 1 but the architecture is designed to s
 | `browser.navigate` | Open URL | EXECUTE |
 | `browser.screenshot` | Capture page | READ |
 | `browser.click` | Click element | EXECUTE |
-
-### Agent Tools
-| Name | Purpose | Category |
-|------|---------|----------|
-| `agent.spawn` | Start sub-agent (Nova Act) | EXECUTE |
-| `agent.status` | Check agent progress | READ |
-| `agent.cancel` | Cancel running agent | EXECUTE |
 
 ### Project Tools
 | Name | Purpose | Category |

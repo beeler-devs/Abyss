@@ -14,7 +14,7 @@ struct ContentView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 // API key warning banner
-                if !Config.isAPIKeyConfigured {
+                if !Config.isElevenLabsAPIKeyConfigured {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.yellow)

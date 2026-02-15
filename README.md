@@ -20,6 +20,7 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 - **iOS 17.0+** device or simulator
 - **Swift 5.9+**
 - **ElevenLabs API key** (for TTS — free tier works)
+- **Cursor API key** (optional, for cloud agent tools)
 
 ## Setup
 
@@ -45,6 +46,8 @@ cat > ios/VoiceIDE/VoiceIDE/App/Secrets.plist << 'EOF'
 <dict>
     <key>ELEVENLABS_API_KEY</key>
     <string>YOUR_API_KEY_HERE</string>
+    <key>CURSOR_API_KEY</key>
+    <string>YOUR_CURSOR_API_KEY_HERE</string>
     <key>ELEVENLABS_VOICE_ID</key>
     <string>21m00Tcm4TlvDq8ikWAM</string>
     <key>ELEVENLABS_MODEL_ID</key>
@@ -58,7 +61,16 @@ Replace `YOUR_API_KEY_HERE` with your actual key from [elevenlabs.io](https://el
 
 **The app will work without the key** — STT and the tool pipeline function normally, but TTS will emit an error event.
 
-### 3. Add Secrets.plist to the Xcode target
+### 3. Configure Cursor Cloud Agents key (optional)
+
+You can set your Cursor API key in either place:
+
+1. In-app: `Settings -> Cursor Cloud Agents -> API Key`
+2. `Secrets.plist` with `CURSOR_API_KEY`
+
+This enables `agent.spawn`, `agent.status`, `agent.cancel`, `agent.followup`, and `agent.list`.
+
+### 4. Add Secrets.plist to the Xcode target
 
 In Xcode:
 1. Right-click the `App` group → "Add Files to VoiceIDE"
@@ -66,7 +78,7 @@ In Xcode:
 3. Ensure "Copy items if needed" is checked
 4. Ensure it's added to the VoiceIDE target
 
-### 4. Build and Run
+### 5. Build and Run
 
 Select an iOS 17+ device or simulator and hit Run (⌘R).
 
@@ -103,6 +115,8 @@ Select an iOS 17+ device or simulator and hit Run (⌘R).
 │   │   │   │   ├── STTStopTool.swift
 │   │   │   │   ├── TTSSpeakTool.swift
 │   │   │   │   └── TTSStopTool.swift
+│   │   │   ├── Agent/
+│   │   │   │   └── AgentTools.swift
 │   │   │   └── Conversation/
 │   │   │       ├── ConvoAppendMessageTool.swift
 │   │   │       └── ConvoSetStateTool.swift
@@ -110,7 +124,8 @@ Select an iOS 17+ device or simulator and hit Run (⌘R).
 │   │   │   ├── SpeechTranscriber.swift         # Protocol
 │   │   │   ├── WhisperKitSpeechTranscriber.swift
 │   │   │   ├── TextToSpeech.swift              # Protocol
-│   │   │   └── ElevenLabsTTS.swift
+│   │   │   ├── ElevenLabsTTS.swift
+│   │   │   └── CursorCloudAgentsClient.swift
 │   │   ├── Conductor/
 │   │   │   ├── ConductorProtocol.swift
 │   │   │   └── LocalConductorStub.swift
@@ -141,6 +156,7 @@ Select an iOS 17+ device or simulator and hit Run (⌘R).
 - **Recording modes** — tap-to-toggle (default) or press-and-hold
 - **Event timeline** — collapsible debug view showing every event in real-time
 - **Deterministic conductor** — `LocalConductorStub` proves the pipeline without a backend
+- **Cursor Cloud Agent tools** — `agent.spawn`, `agent.status`, `agent.cancel`, `agent.followup`, `agent.list`
 
 ## Testing
 
