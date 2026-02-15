@@ -144,4 +144,50 @@ final class ToolRouterTests: XCTestCase {
             XCTFail("Expected speechFinal")
         }
     }
+
+    func testAgentSpawnTool() async throws {
+        let bus = EventBus()
+        let registry = ToolRegistry()
+        let mockClient = MockCursorCloudAgentsClient()
+
+        registry.register(AgentSpawnTool(client: mockClient))
+        let router = ToolRouter(registry: registry, eventBus: bus)
+
+        let toolCall = Event.ToolCall(
+            name: "agent.spawn",
+            arguments: """
+            {"prompt":"Fix failing test","repository":"https://github.com/example/repo","ref":"main","autoCreatePr":true}
+            """
+        )
+
+        let result = await router.dispatch(toolCall)
+
+        XCTAssertEqual(mockClient.launchedRequests.count, 1)
+        if case .toolResult(let tr) = result.kind {
+            XCTAssertNil(tr.error)
+            XCTAssertNotNil(tr.result)
+        } else {
+            XCTFail("Expected tool.result")
+        }
+    }
+
+    func testAgentStatusAndCancelTools() async {
+        let bus = EventBus()
+        let registry = ToolRegistry()
+        let mockClient = MockCursorCloudAgentsClient()
+
+        registry.register(AgentStatusTool(client: mockClient))
+        registry.register(AgentCancelTool(client: mockClient))
+        let router = ToolRouter(registry: registry, eventBus: bus)
+
+        _ = await router.dispatch(
+            Event.ToolCall(name: "agent.status", arguments: "{\"id\":\"bc_test123\"}")
+        )
+        _ = await router.dispatch(
+            Event.ToolCall(name: "agent.cancel", arguments: "{\"id\":\"bc_test123\"}")
+        )
+
+        XCTAssertEqual(mockClient.statusRequestedIDs, ["bc_test123"])
+        XCTAssertEqual(mockClient.stoppedAgentIDs, ["bc_test123"])
+    }
 }
