@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:VoiceBot2}/ios/VoiceIDE",
+            "name": "Debug VoiceIDE (ios/VoiceIDE)",
+            "program": "${workspaceFolder:VoiceBot2}/ios/VoiceIDE/.build/debug/VoiceIDE",
+            "preLaunchTask": "swift: Build Debug VoiceIDE (ios/VoiceIDE)"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:VoiceBot2}/ios/VoiceIDE",
+            "name": "Release VoiceIDE (ios/VoiceIDE)",
+            "program": "${workspaceFolder:VoiceBot2}/ios/VoiceIDE/.build/release/VoiceIDE",
+            "preLaunchTask": "swift: Build Release VoiceIDE (ios/VoiceIDE)"
+        }
+    ]
+}
