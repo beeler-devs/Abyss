@@ -1,4 +1,9 @@
 import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// Displays the conversation transcript with auto-scrolling.
 struct TranscriptView: View {
@@ -64,6 +69,7 @@ struct TranscriptView: View {
 
 struct MessageBubble: View {
     let message: ConversationMessage
+    @State private var didCopy = false
 
     private var isUser: Bool { message.role == .user }
 
@@ -71,10 +77,14 @@ struct MessageBubble: View {
         HStack {
             if isUser { Spacer(minLength: 60) }
 
-            VStack(alignment: isUser ? .trailing : .leading, spacing: 0) {
+            VStack(alignment: isUser ? .trailing : .leading, spacing: 8) {
                 Text(message.text)
                     .font(.body)
                     .foregroundStyle(textColor)
+
+                if showsAssistantActions {
+                    assistantActions
+                }
             }
             .padding(.horizontal, isUser ? 14 : 0)
             .padding(.vertical, isUser ? 10 : 0)
@@ -84,6 +94,60 @@ struct MessageBubble: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 2)
+    }
+
+    private var showsAssistantActions: Bool {
+        !isUser && !message.isPartial && !message.text.isEmpty
+    }
+
+    private var assistantActions: some View {
+        HStack(spacing: 16) {
+            Button {
+                copyAssistantMessage()
+            } label: {
+                Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+            }
+            .accessibilityLabel("Copy assistant response")
+
+            Button {
+                // Reserved for future feedback handling.
+            } label: {
+                Image(systemName: "hand.thumbsup")
+            }
+            .accessibilityLabel("Thumbs up")
+
+            Button {
+                // Reserved for future feedback handling.
+            } label: {
+                Image(systemName: "hand.thumbsdown")
+            }
+            .accessibilityLabel("Thumbs down")
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .buttonStyle(.plain)
+        .padding(.top, 2)
+    }
+
+    private func copyAssistantMessage() {
+#if canImport(UIKit)
+        UIPasteboard.general.string = message.text
+#elseif canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(message.text, forType: .string)
+#endif
+        withAnimation(.easeInOut(duration: 0.15)) {
+            didCopy = true
+        }
+
+        Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    didCopy = false
+                }
+            }
+        }
     }
 
     private var bubbleBackground: some View {

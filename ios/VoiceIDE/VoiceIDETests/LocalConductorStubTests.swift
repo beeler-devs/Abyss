@@ -163,4 +163,41 @@ final class LocalConductorStubTests: XCTestCase {
         XCTAssertTrue(spawnCall.arguments.contains("https://github.com/example/repo"))
         XCTAssertTrue(spawnCall.arguments.lowercased().contains("fix flaky tests"))
     }
+
+    func testCodingRequestWithRepositoryAlsoSpawnsAgent() async {
+        let conductor = LocalConductorStub()
+        let transcript = "Fix flaky tests in github.com/example/repo and open a pull request"
+
+        let events = await conductor.handleTranscript(transcript)
+        let toolCalls = events.compactMap { event -> Event.ToolCall? in
+            if case .toolCall(let tc) = event.kind { return tc }
+            return nil
+        }
+
+        guard let spawnCall = toolCalls.first(where: { $0.name == AgentSpawnTool.name }) else {
+            XCTFail("agent.spawn tool call missing")
+            return
+        }
+
+        XCTAssertTrue(spawnCall.arguments.contains("https://github.com/example/repo"))
+        XCTAssertTrue(spawnCall.arguments.contains("\"autoCreatePr\":true"))
+    }
+
+    func testStatusRequestEmitsAgentStatusToolCall() async {
+        let conductor = LocalConductorStub()
+        let transcript = "Check status for agent bc_test123"
+
+        let events = await conductor.handleTranscript(transcript)
+        let toolCalls = events.compactMap { event -> Event.ToolCall? in
+            if case .toolCall(let tc) = event.kind { return tc }
+            return nil
+        }
+
+        guard let statusCall = toolCalls.first(where: { $0.name == AgentStatusTool.name }) else {
+            XCTFail("agent.status tool call missing")
+            return
+        }
+
+        XCTAssertTrue(statusCall.arguments.contains("bc_test123"))
+    }
 }
