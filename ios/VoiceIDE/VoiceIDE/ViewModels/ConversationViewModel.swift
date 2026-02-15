@@ -13,6 +13,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var partialTranscript: String = ""
     @Published var errorMessage: String?
     @Published var showError: Bool = false
+    @Published var agentProgressCards: [AgentProgressCard] = []
 
     @AppStorage("recordingMode") var recordingMode: RecordingMode = .tapToToggle
 
@@ -34,6 +35,8 @@ final class ConversationViewModel: ObservableObject {
     private var tts: TextToSpeech
 
     private var cancellables = Set<AnyCancellable>()
+    private var pendingToolCalls: [String: Event.ToolCall] = [:]
+    private var agentStatusPollingTask: Task<Void, Never>?
 
     // MARK: - Init
 
@@ -59,6 +62,10 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
+    }
+
+    deinit {
+        agentStatusPollingTask?.cancel()
     }
 
     private func preloadTranscriber() {
@@ -105,6 +112,14 @@ final class ConversationViewModel: ObservableObject {
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
                 self.appState = self.appStateStore.current
+            }
+            .store(in: &cancellables)
+
+        // Observe individual tool call/result events to maintain agent progress cards.
+        eventBus.stream
+            .receive(on: RunLoop.main)
+            .sink { [weak self] event in
+                self?.handleEventStream(event)
             }
             .store(in: &cancellables)
     }

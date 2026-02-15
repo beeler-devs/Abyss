@@ -38,10 +38,19 @@ struct ContentView: View {
                     appState: viewModel.appState
                 )
 
-                // Placeholder for future artifact cards
-                if false { // Phase 2+
-                    Text("Artifact cards will appear here")
-                        .foregroundStyle(.secondary)
+                // Agent progress cards
+                if !viewModel.agentProgressCards.isEmpty {
+                    VStack(spacing: 10) {
+                        ForEach(Array(viewModel.agentProgressCards.prefix(2))) { card in
+                            AgentProgressCardView(
+                                card: card,
+                                onRefresh: { viewModel.refreshAgentStatus(cardID: card.id) },
+                                onCancel: { viewModel.cancelAgent(cardID: card.id) }
+                            )
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
 
                 // Event timeline (collapsible)
