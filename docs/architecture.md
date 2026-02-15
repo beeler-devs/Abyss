@@ -152,7 +152,9 @@ VoiceIDE is a voice-first agentic development app built around **formal tool cal
 - `file.read`, `file.write`, `file.list`
 - `git.status`, `git.commit`, `git.push`
 - `browser.navigate`, `browser.screenshot`
-- `agent.spawn`, `agent.status` (for Nova Act sub-agents)
 - `project.analyze`, `project.search`
+
+Implemented now (available for conductor use):
+- `agent.spawn`, `agent.status`, `agent.cancel`, `agent.followup`, `agent.list` (Cursor Cloud Agents API)
 
 All follow the same `Tool` protocol and register in `ToolRegistry`.

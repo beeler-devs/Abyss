@@ -84,3 +84,71 @@ final class MockTextToSpeech: TextToSpeech, @unchecked Sendable {
         }
     }
 }
+
+// MARK: - Mock Cursor Cloud Agents
+
+final class MockCursorCloudAgentsClient: CursorCloudAgentsProviding, @unchecked Sendable {
+    var launchedRequests: [CursorLaunchAgentRequest] = []
+    var statusRequestedIDs: [String] = []
+    var stoppedAgentIDs: [String] = []
+    var followUpCalls: [(id: String, prompt: String)] = []
+    var listCallCount = 0
+
+    var nextAgent = CursorAgent(
+        id: "bc_test123",
+        name: "Test Agent",
+        status: "RUNNING",
+        source: .init(repository: "https://github.com/example/repo", ref: "main"),
+        target: .init(
+            branchName: "cursor/test-branch",
+            url: "https://cursor.com/agents?id=bc_test123",
+            prUrl: nil,
+            autoCreatePr: false,
+            openAsCursorGithubApp: false,
+            skipReviewerRequest: false
+        ),
+        summary: nil,
+        createdAt: "2026-02-15T00:00:00Z"
+    )
+
+    func listAgents(limit: Int?, cursor: String?, prURL: String?) async throws -> CursorListAgentsResponse {
+        listCallCount += 1
+        return CursorListAgentsResponse(agents: [nextAgent], nextCursor: nil)
+    }
+
+    func agentStatus(id: String) async throws -> CursorAgent {
+        statusRequestedIDs.append(id)
+        return nextAgent
+    }
+
+    func launchAgent(request: CursorLaunchAgentRequest) async throws -> CursorAgent {
+        launchedRequests.append(request)
+        return nextAgent
+    }
+
+    func addFollowUp(agentID: String, prompt: CursorFollowUpRequest) async throws -> CursorIDOnlyResponse {
+        followUpCalls.append((id: agentID, prompt: prompt.prompt.text))
+        return CursorIDOnlyResponse(id: agentID)
+    }
+
+    func stopAgent(id: String) async throws -> CursorIDOnlyResponse {
+        stoppedAgentIDs.append(id)
+        return CursorIDOnlyResponse(id: id)
+    }
+
+    func deleteAgent(id: String) async throws -> CursorIDOnlyResponse {
+        CursorIDOnlyResponse(id: id)
+    }
+
+    func apiKeyInfo() async throws -> CursorAPIKeyInfo {
+        CursorAPIKeyInfo(apiKeyName: "Test Key", createdAt: "2026-02-15T00:00:00Z", userEmail: "test@example.com")
+    }
+
+    func models() async throws -> CursorModelsResponse {
+        CursorModelsResponse(models: ["gpt-5.2"])
+    }
+
+    func repositories() async throws -> CursorRepositoriesResponse {
+        CursorRepositoriesResponse(repositories: [])
+    }
+}
