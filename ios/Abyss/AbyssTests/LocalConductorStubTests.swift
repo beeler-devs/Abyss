@@ -1,5 +1,5 @@
 import XCTest
-@testable import VoiceIDE
+@testable import Abyss
 
 final class LocalConductorStubTests: XCTestCase {
 

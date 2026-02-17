@@ -1,8 +1,8 @@
-# VoiceIDE Architecture — Phase 1
+# Abyss Architecture — Phase 1
 
 ## Overview
 
-VoiceIDE is a voice-first agentic development app built around **formal tool calling**. The core principle is that all state mutations, audio operations, and UI updates flow through a structured event/tool system — never through direct method calls from the UI or conductor.
+Abyss is a voice-first agentic development app built around **formal tool calling**. The core principle is that all state mutations, audio operations, and UI updates flow through a structured event/tool system — never through direct method calls from the UI or conductor.
 
 ## Architecture Diagram
 

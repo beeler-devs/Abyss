@@ -115,7 +115,7 @@ struct ContentView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 16)
             }
-            .navigationTitle("VoiceIDE")
+            .navigationTitle("Abyss")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showSettings) {
                 SettingsView(recordingMode: $viewModel.recordingMode)

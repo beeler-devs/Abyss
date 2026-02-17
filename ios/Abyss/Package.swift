@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "VoiceIDE",
+    name: "Abyss",
     platforms: [
         .macOS(.v13),  // required by WhisperKit; needed for `swift test` on Mac
         .iOS(.v17)
@@ -12,22 +12,22 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "VoiceIDE",
+            name: "Abyss",
             dependencies: [
                 .product(name: "WhisperKit", package: "WhisperKit")
             ],
-            path: "VoiceIDE",
+            path: "Abyss",
             linkerSettings: [
                 .unsafeFlags(
-                    ["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "VoiceIDE/Info.plist"],
+                    ["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist", "-Xlinker", "Abyss/Info.plist"],
                     .when(platforms: [.iOS])
                 )
             ]
         ),
         .testTarget(
-            name: "VoiceIDETests",
-            dependencies: ["VoiceIDE"],
-            path: "VoiceIDETests"
+            name: "AbyssTests",
+            dependencies: ["Abyss"],
+            path: "AbyssTests"
         )
     ]
 )
