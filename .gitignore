@@ -23,8 +23,8 @@ Package.resolved
 Pods/
 
 # Secrets / Config
-ios/VoiceIDE/VoiceIDE/App/Secrets.xcconfig
-ios/VoiceIDE/VoiceIDE/App/Secrets.plist
+ios/Abyss/Abyss/App/Secrets.xcconfig
+ios/Abyss/Abyss/App/Secrets.plist
 Secrets.plist
 secrets.plist
 

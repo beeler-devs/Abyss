@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleDisplayName</key>
-	<string>VoiceIDE</string>
+	<string>Abyss</string>
 	<key>CFBundleExecutable</key>
-	<string>VoiceIDE</string>
+	<string>Abyss</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleName</key>
-	<string>VoiceIDE</string>
+	<string>Abyss</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -19,7 +19,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>VoiceIDE uses the microphone to listen to your voice for speech-to-text and voice commands.</string>
+	<string>Abyss uses the microphone to listen to your voice for speech-to-text and voice commands.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

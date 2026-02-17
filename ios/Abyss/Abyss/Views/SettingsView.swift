@@ -104,7 +104,7 @@ struct SettingsView: View {
                             Label("Setup Required", systemImage: "info.circle")
                                 .font(.subheadline.bold())
 
-                            Text("Create a file at ios/VoiceIDE/VoiceIDE/App/Secrets.plist with your ELEVENLABS_API_KEY. See README for details.")
+                            Text("Create a file at ios/Abyss/Abyss/App/Secrets.plist with your ELEVENLABS_API_KEY. See README for details.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

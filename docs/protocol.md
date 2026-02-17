@@ -1,4 +1,4 @@
-# VoiceIDE Event Protocol
+# Abyss Event Protocol
 
 ## Overview
 

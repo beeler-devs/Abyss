@@ -1,4 +1,4 @@
-# VoiceIDE — Phase 1
+# Abyss — Phase 1
 
 A voice-first agentic development app built around **formal tool calling**. Every action that touches state, audio, or UI flows through structured `tool.call` / `tool.result` events.
 
@@ -28,18 +28,18 @@ See [docs/architecture.md](docs/architecture.md) for the full design.
 
 ```bash
 git clone <repo-url>
-cd VoiceBot2/ios/VoiceIDE
+cd Abyss/ios/Abyss
 open Package.swift  # Opens in Xcode
 ```
 
-Or open the `ios/VoiceIDE` directory in Xcode directly.
+Or open the `ios/Abyss` directory in Xcode directly.
 
 ### 2. Configure API Key
 
 Create a `Secrets.plist` file (git-ignored) for your ElevenLabs API key:
 
 ```bash
-cat > ios/VoiceIDE/VoiceIDE/App/Secrets.plist << 'EOF'
+cat > ios/Abyss/Abyss/App/Secrets.plist << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -73,10 +73,10 @@ This enables `agent.spawn`, `agent.status`, `agent.cancel`, `agent.followup`, an
 ### 4. Add Secrets.plist to the Xcode target
 
 In Xcode:
-1. Right-click the `App` group → "Add Files to VoiceIDE"
+1. Right-click the `App` group → "Add Files to Abyss"
 2. Select `Secrets.plist`
 3. Ensure "Copy items if needed" is checked
-4. Ensure it's added to the VoiceIDE target
+4. Ensure it's added to the Abyss target
 
 ### 5. Build and Run
 
@@ -94,11 +94,11 @@ Select an iOS 17+ device or simulator and hit Run (⌘R).
 │   ├── architecture.md                # Architecture + Phase 2 plan
 │   ├── protocol.md                    # Event protocol for WebSocket
 │   └── tools.md                       # Tool catalog with schemas
-├── ios/VoiceIDE/
+├── ios/Abyss/
 │   ├── Package.swift                  # SPM manifest (WhisperKit dependency)
-│   ├── VoiceIDE/
+│   ├── Abyss/
 │   │   ├── App/
-│   │   │   ├── VoiceIDEApp.swift      # @main entry point
+│   │   │   ├── AbyssApp.swift         # @main entry point
 │   │   │   ├── Config.swift           # Secret/config loader
 │   │   │   └── Secrets.plist          # (git-ignored) API keys
 │   │   ├── Models/
@@ -138,7 +138,7 @@ Select an iOS 17+ device or simulator and hit Run (⌘R).
 │   │       ├── EventTimelineView.swift
 │   │       ├── StateIndicator.swift
 │   │       └── SettingsView.swift
-│   └── VoiceIDETests/
+│   └── AbyssTests/
 │       ├── Helpers.swift              # Mock implementations
 │       ├── EventBusTests.swift
 │       ├── ToolRouterTests.swift
@@ -161,7 +161,7 @@ Select an iOS 17+ device or simulator and hit Run (⌘R).
 ## Testing
 
 ```bash
-cd ios/VoiceIDE
+cd ios/Abyss
 swift test
 ```
 

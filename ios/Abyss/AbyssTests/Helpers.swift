@@ -1,5 +1,5 @@
 import Foundation
-@testable import VoiceIDE
+@testable import Abyss
 
 // MARK: - Mock SpeechTranscriber
 
