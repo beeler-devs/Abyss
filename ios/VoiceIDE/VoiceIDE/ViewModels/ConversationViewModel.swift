@@ -197,7 +197,7 @@ final class ConversationViewModel: ObservableObject {
         case .error(let errInfo):
             // Surface server errors
             eventBus.emit(event)
-            errorMessage = errInfo.message
+            errorMessage = "[\(errInfo.code)] \(errInfo.message)"
             showError = true
 
         default:

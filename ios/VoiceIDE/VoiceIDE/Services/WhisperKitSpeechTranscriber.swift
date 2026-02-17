@@ -41,13 +41,8 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     init() {}
 
     func start() async throws {
-        // Request microphone permission
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: .duckOthers)
-        try session.setActive(true)
-
         #if canImport(WhisperKit)
-        // Initialize WhisperKit if needed
+        // Initialize WhisperKit if needed (do this first, before audio setup)
         if whisperKit == nil {
             print("📱 Initializing WhisperKit with base.en model...")
             do {
@@ -62,6 +57,11 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         audioBuffers = []
         #endif
 
+        // Configure audio session for recording
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+        try session.setActive(true)
+
         // Recreate the partial stream
         let (stream, continuation) = AsyncStream<String>.makeStream()
         lock.withLock {
@@ -74,10 +74,31 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         // Start the audio engine for capture
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
-        let format = inputNode.outputFormat(forBus: 0)
+        
+        // Get the input format - use the hardware's native format
+        let inputFormat = inputNode.inputFormat(forBus: 0)
+        let sampleRate = inputFormat.sampleRate
+        
+        // If sample rate is still 0 or invalid, use a default format
+        let recordingFormat: AVAudioFormat
+        if sampleRate > 0 {
+            recordingFormat = inputFormat
+        } else {
+            // Fallback to a standard format if the hardware format is invalid
+            guard let fallbackFormat = AVAudioFormat(
+                commonFormat: .pcmFormatFloat32,
+                sampleRate: 48000,
+                channels: 1,
+                interleaved: false
+            ) else {
+                throw NSError(domain: "AudioSetup", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not create audio format"])
+            }
+            recordingFormat = fallbackFormat
+            print("⚠️ Using fallback audio format: 48kHz")
+        }
 
         #if canImport(WhisperKit)
-        inputSampleRate = format.sampleRate
+        inputSampleRate = recordingFormat.sampleRate
         print("🎤 Audio engine started. Sample rate: \(inputSampleRate) Hz")
         // Emit immediate feedback so user sees the mic is working
         partialContinuation?.yield("Listening…")
@@ -86,7 +107,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         partialContinuation?.yield("Listening… (no transcription)")
         #endif
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
             guard let self else { return }
             let channelData = buffer.floatChannelData?[0]
             let frameLength = Int(buffer.frameLength)

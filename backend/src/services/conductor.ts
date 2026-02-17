@@ -225,8 +225,12 @@ async function processBedrockStream(
         }
 
         case 'error': {
-          logger.error('Bedrock stream error', ctx, { message: chunk.message });
-          await sendToConnection(connectionId, makeErrorEvent('bedrock_error', chunk.message));
+          const classified = classifyBedrockError(chunk.message);
+          logger.error('Bedrock stream error', ctx, {
+            code: classified.code,
+            message: chunk.message,
+          });
+          await sendToConnection(connectionId, makeErrorEvent(classified.code, classified.message));
           break;
         }
       }
@@ -258,4 +262,41 @@ async function saveFullConversation(
       ':now': new Date().toISOString(),
     },
   }));
+}
+
+function classifyBedrockError(rawMessage: string): { code: string; message: string } {
+  const msg = rawMessage || 'Unknown Bedrock error';
+  const normalized = msg.toLowerCase();
+
+  // Common Bedrock / AWS SDK v3 error names:
+  // - ServiceQuotaExceededException
+  // - ThrottlingException / TooManyRequestsException
+  // - ValidationException
+  if (msg.includes('ServiceQuotaExceededException') || normalized.includes('tokens per day') || normalized.includes('quota')) {
+    return {
+      code: 'bedrock_quota_exceeded',
+      message:
+        `${msg}\n\n` +
+        'This error is coming from AWS Bedrock service quotas for your AWS account/model/region. ' +
+        'Check AWS Console → Service Quotas → Amazon Bedrock (and model access), or reduce traffic.',
+    };
+  }
+
+  if (msg.includes('ThrottlingException') || msg.includes('TooManyRequestsException') || normalized.includes('throttl') || normalized.includes('rate exceeded')) {
+    return {
+      code: 'bedrock_throttled',
+      message:
+        `${msg}\n\n` +
+        'AWS Bedrock is throttling requests (rate limit). Try again in a bit, or lower concurrency / request rate.',
+    };
+  }
+
+  if (msg.includes('ValidationException') || normalized.includes('validation')) {
+    return {
+      code: 'bedrock_validation',
+      message: msg,
+    };
+  }
+
+  return { code: 'bedrock_error', message: msg };
 }

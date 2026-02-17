@@ -13,9 +13,27 @@ struct Event: Identifiable, Codable, Sendable {
         self.kind = kind
     }
 
+    enum CodingKeys: String, CodingKey {
+        case id, timestamp, kind
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(UUID.self, forKey: .id)) ?? UUID()
+        timestamp = (try? c.decode(Date.self, forKey: .timestamp)) ?? Date()
+        kind = try c.decode(Kind.self, forKey: .kind)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(timestamp, forKey: .timestamp)
+        try c.encode(kind, forKey: .kind)
+    }
+
     // MARK: - Event Kinds
 
-    enum Kind: Codable, Sendable {
+    enum Kind: Sendable {
         case sessionStart(SessionStart)
         case userAudioTranscriptPartial(TranscriptPartial)
         case userAudioTranscriptFinal(TranscriptFinal)
@@ -84,6 +102,75 @@ struct Event: Identifiable, Codable, Sendable {
     struct ErrorInfo: Codable, Sendable {
         let code: String
         let message: String
+    }
+}
+
+// MARK: - Custom Codable for Event.Kind
+
+extension Event.Kind: Codable {
+    enum CodingKeys: String, CodingKey {
+        case sessionStart
+        case userAudioTranscriptPartial
+        case userAudioTranscriptFinal
+        case assistantSpeechPartial
+        case assistantSpeechFinal
+        case assistantUIPatch
+        case toolCall
+        case toolResult
+        case error
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        
+        if let value = try? container.decode(Event.SessionStart.self, forKey: .sessionStart) {
+            self = .sessionStart(value)
+        } else if let value = try? container.decode(Event.TranscriptPartial.self, forKey: .userAudioTranscriptPartial) {
+            self = .userAudioTranscriptPartial(value)
+        } else if let value = try? container.decode(Event.TranscriptFinal.self, forKey: .userAudioTranscriptFinal) {
+            self = .userAudioTranscriptFinal(value)
+        } else if let value = try? container.decode(Event.SpeechPartial.self, forKey: .assistantSpeechPartial) {
+            self = .assistantSpeechPartial(value)
+        } else if let value = try? container.decode(Event.SpeechFinal.self, forKey: .assistantSpeechFinal) {
+            self = .assistantSpeechFinal(value)
+        } else if let value = try? container.decode(Event.UIPatch.self, forKey: .assistantUIPatch) {
+            self = .assistantUIPatch(value)
+        } else if let value = try? container.decode(Event.ToolCall.self, forKey: .toolCall) {
+            self = .toolCall(value)
+        } else if let value = try? container.decode(Event.ToolResult.self, forKey: .toolResult) {
+            self = .toolResult(value)
+        } else if let value = try? container.decode(Event.ErrorInfo.self, forKey: .error) {
+            self = .error(value)
+        } else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(codingPath: decoder.codingPath, debugDescription: "Unknown event kind")
+            )
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        
+        switch self {
+        case .sessionStart(let value):
+            try container.encode(value, forKey: .sessionStart)
+        case .userAudioTranscriptPartial(let value):
+            try container.encode(value, forKey: .userAudioTranscriptPartial)
+        case .userAudioTranscriptFinal(let value):
+            try container.encode(value, forKey: .userAudioTranscriptFinal)
+        case .assistantSpeechPartial(let value):
+            try container.encode(value, forKey: .assistantSpeechPartial)
+        case .assistantSpeechFinal(let value):
+            try container.encode(value, forKey: .assistantSpeechFinal)
+        case .assistantUIPatch(let value):
+            try container.encode(value, forKey: .assistantUIPatch)
+        case .toolCall(let value):
+            try container.encode(value, forKey: .toolCall)
+        case .toolResult(let value):
+            try container.encode(value, forKey: .toolResult)
+        case .error(let value):
+            try container.encode(value, forKey: .error)
+        }
     }
 }
 

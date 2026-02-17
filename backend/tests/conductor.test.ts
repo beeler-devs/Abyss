@@ -154,6 +154,36 @@ describe('handleTranscriptFinal', () => {
     const errorEvent = sendCalls.find(([, event]) => 'error' in event.kind);
     expect(errorEvent).toBeDefined();
   });
+
+  test('classifies Bedrock quota errors as bedrock_quota_exceeded', async () => {
+    const session: SessionRecord = {
+      sessionId: 'sess-1',
+      conversation: [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockDynamo.getOrCreateSession.mockResolvedValue(session);
+
+    const converseStreamMock = mockConverseStream([
+      {
+        type: 'error',
+        message: 'ServiceQuotaExceededException · Too many tokens per day',
+      },
+    ]);
+    jest.spyOn(bedrockModule, 'converseStream').mockImplementation(converseStreamMock);
+
+    await handleTranscriptFinal('conn-1', 'sess-1', 'Hello');
+
+    const sendCalls = mockWs.sendToConnection.mock.calls;
+    const errorEvent = sendCalls.find(([, event]) => 'error' in event.kind);
+    expect(errorEvent).toBeDefined();
+    if (errorEvent) {
+      const kind = errorEvent[1].kind as { error: { code: string; message: string } };
+      expect(kind.error.code).toBe('bedrock_quota_exceeded');
+      expect(kind.error.message).toContain('Too many tokens per day');
+    }
+  });
 });
 
 // ─── handleToolResult ───────────────────────────────────────────────────────

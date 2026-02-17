@@ -171,6 +171,9 @@ final class WebSocketConductorClient: NSObject, ConductorClient, URLSessionWebSo
             return
         }
 
+        // Ignore empty frames (e.g. pings or connection acks from infrastructure)
+        guard !data.isEmpty else { return }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
 
@@ -180,7 +183,28 @@ final class WebSocketConductorClient: NSObject, ConductorClient, URLSessionWebSo
                 inboundContinuation?.yield(event)
             }
         } catch {
-            // Try to emit as error event
+            // Log the real decoding error and raw payload for debugging
+            let rawPreview = String(data: data, encoding: .utf8).map { s in
+                s.count > 400 ? String(s.prefix(400)) + "…" : s
+            } ?? "<invalid UTF-8>"
+            print("⚠️ Server event decode failed. Raw payload: \(rawPreview)")
+            if let decodingError = error as? DecodingError {
+                switch decodingError {
+                case .keyNotFound(let key, let context):
+                    print("⚠️ Missing key '\(key.stringValue)' at \(context.debugDescription)")
+                case .typeMismatch(let type, let context):
+                    print("⚠️ Type mismatch \(type) at \(context.debugDescription)")
+                case .valueNotFound(let type, let context):
+                    print("⚠️ Value not found \(type) at \(context.debugDescription)")
+                case .dataCorrupted(let context):
+                    print("⚠️ Data corrupted at \(context.debugDescription)")
+                @unknown default:
+                    print("⚠️ \(decodingError)")
+                }
+            } else {
+                print("⚠️ \(error)")
+            }
+            // Only surface to user if we got non-empty data (real event that didn't match)
             lock.withLock {
                 inboundContinuation?.yield(
                     Event.error(code: "decode_error", message: "Failed to decode server event: \(error.localizedDescription)")

@@ -278,7 +278,24 @@ export async function* converseStream(
       }
     }
   } catch (err) {
-    const message = (err as Error).message || 'Unknown Bedrock error';
+    const anyErr = err as any;
+    const name = typeof anyErr?.name === 'string' ? anyErr.name : undefined;
+    const baseMessage = (anyErr?.message as string) || 'Unknown Bedrock error';
+    const httpStatus = typeof anyErr?.$metadata?.httpStatusCode === 'number'
+      ? anyErr.$metadata.httpStatusCode
+      : undefined;
+    const requestId = typeof anyErr?.$metadata?.requestId === 'string'
+      ? anyErr.$metadata.requestId
+      : undefined;
+
+    const parts = [
+      name ? `${name}` : undefined,
+      httpStatus ? `HTTP ${httpStatus}` : undefined,
+      requestId ? `requestId ${requestId}` : undefined,
+    ].filter(Boolean);
+
+    const message = parts.length > 0 ? `${parts.join(' · ')} · ${baseMessage}` : baseMessage;
+
     logger.error('Bedrock ConverseStream failed', { sessionId }, { error: message });
     yield { type: 'error', message };
   }
