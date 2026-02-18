@@ -3,6 +3,7 @@ import SwiftUI
 /// Settings sheet for configuring recording mode and API keys.
 struct SettingsView: View {
     @Binding var recordingMode: RecordingMode
+    @Binding var useServerConductor: Bool
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
@@ -27,6 +28,27 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     case .pressAndHold:
                         Label("Hold mic to record, release to stop", systemImage: "hand.tap.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Conductor") {
+                    Toggle("Use Server Conductor", isOn: $useServerConductor)
+                        .disabled(!Config.isBackendWSConfigured)
+
+                    if Config.isBackendWSConfigured {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("BACKEND_WS_URL")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(Config.backendWSURLString ?? "")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -92,8 +114,8 @@ struct SettingsView: View {
                 }
 
                 Section("About") {
-                    LabeledContent("Version", value: "Phase 1")
-                    LabeledContent("Architecture", value: "Tool-Calling")
+                    LabeledContent("Version", value: "Phase 2")
+                    LabeledContent("Architecture", value: "Tool-Calling + WS Conductor")
                     LabeledContent("STT Engine", value: "WhisperKit")
                     LabeledContent("TTS Engine", value: "ElevenLabs")
                 }

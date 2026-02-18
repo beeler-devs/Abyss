@@ -3,13 +3,15 @@ import Foundation
 /// Strongly-typed event model representing every action in the system.
 /// All state changes, tool calls, and assistant outputs flow through events.
 struct Event: Identifiable, Codable, Sendable {
-    let id: UUID
+    let id: String
     let timestamp: Date
+    let sessionId: String?
     let kind: Kind
 
-    init(id: UUID = UUID(), timestamp: Date = Date(), kind: Kind) {
+    init(id: String = UUID().uuidString, timestamp: Date = Date(), sessionId: String? = nil, kind: Kind) {
         self.id = id
         self.timestamp = timestamp
+        self.sessionId = sessionId
         self.kind = kind
     }
 
@@ -22,6 +24,8 @@ struct Event: Identifiable, Codable, Sendable {
         case assistantSpeechPartial(SpeechPartial)
         case assistantSpeechFinal(SpeechFinal)
         case assistantUIPatch(UIPatch)
+        case agentStatus(AgentStatus)
+        case audioOutputInterrupted(AudioOutputInterrupted)
         case toolCall(ToolCall)
         case toolResult(ToolResult)
         case error(ErrorInfo)
@@ -50,13 +54,22 @@ struct Event: Identifiable, Codable, Sendable {
     }
 
     struct UIPatch: Codable, Sendable {
-        let patch: String // Placeholder JSON patch for Phase 2+
+        let patch: String
+    }
+
+    struct AgentStatus: Codable, Sendable {
+        let status: String
+        let detail: String?
+    }
+
+    struct AudioOutputInterrupted: Codable, Sendable {
+        let reason: String
     }
 
     struct ToolCall: Codable, Sendable, Equatable {
         let callId: String
         let name: String
-        let arguments: String // JSON-encoded arguments
+        let arguments: String
 
         init(callId: String = UUID().uuidString, name: String, arguments: String) {
             self.callId = callId
@@ -67,7 +80,7 @@ struct Event: Identifiable, Codable, Sendable {
 
     struct ToolResult: Codable, Sendable {
         let callId: String
-        let result: String? // JSON-encoded result
+        let result: String?
         let error: String?
 
         var isError: Bool { error != nil }
@@ -91,43 +104,51 @@ struct Event: Identifiable, Codable, Sendable {
 
 extension Event {
     static func sessionStart(sessionId: String = UUID().uuidString) -> Event {
-        Event(kind: .sessionStart(SessionStart(sessionId: sessionId)))
+        Event(sessionId: sessionId, kind: .sessionStart(SessionStart(sessionId: sessionId)))
     }
 
-    static func transcriptPartial(_ text: String) -> Event {
-        Event(kind: .userAudioTranscriptPartial(TranscriptPartial(text: text)))
+    static func transcriptPartial(_ text: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .userAudioTranscriptPartial(TranscriptPartial(text: text)))
     }
 
-    static func transcriptFinal(_ text: String) -> Event {
-        Event(kind: .userAudioTranscriptFinal(TranscriptFinal(text: text)))
+    static func transcriptFinal(_ text: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .userAudioTranscriptFinal(TranscriptFinal(text: text)))
     }
 
-    static func speechPartial(_ text: String) -> Event {
-        Event(kind: .assistantSpeechPartial(SpeechPartial(text: text)))
+    static func speechPartial(_ text: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantSpeechPartial(SpeechPartial(text: text)))
     }
 
-    static func speechFinal(_ text: String) -> Event {
-        Event(kind: .assistantSpeechFinal(SpeechFinal(text: text)))
+    static func speechFinal(_ text: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantSpeechFinal(SpeechFinal(text: text)))
     }
 
-    static func uiPatch(_ patch: String) -> Event {
-        Event(kind: .assistantUIPatch(UIPatch(patch: patch)))
+    static func uiPatch(_ patch: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantUIPatch(UIPatch(patch: patch)))
     }
 
-    static func toolCall(name: String, arguments: String, callId: String = UUID().uuidString) -> Event {
-        Event(kind: .toolCall(ToolCall(callId: callId, name: name, arguments: arguments)))
+    static func agentStatus(_ status: String, detail: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .agentStatus(AgentStatus(status: status, detail: detail)))
     }
 
-    static func toolResult(callId: String, result: String) -> Event {
-        Event(kind: .toolResult(ToolResult.success(callId: callId, result: result)))
+    static func audioOutputInterrupted(_ reason: String = "barge_in", sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .audioOutputInterrupted(AudioOutputInterrupted(reason: reason)))
     }
 
-    static func toolError(callId: String, error: String) -> Event {
-        Event(kind: .toolResult(ToolResult.failure(callId: callId, error: error)))
+    static func toolCall(name: String, arguments: String, callId: String = UUID().uuidString, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .toolCall(ToolCall(callId: callId, name: name, arguments: arguments)))
     }
 
-    static func error(code: String, message: String) -> Event {
-        Event(kind: .error(ErrorInfo(code: code, message: message)))
+    static func toolResult(callId: String, result: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .toolResult(ToolResult.success(callId: callId, result: result)))
+    }
+
+    static func toolError(callId: String, error: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .toolResult(ToolResult.failure(callId: callId, error: error)))
+    }
+
+    static func error(code: String, message: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .error(ErrorInfo(code: code, message: message)))
     }
 }
 
@@ -142,6 +163,8 @@ extension Event.Kind {
         case .assistantSpeechPartial: return "assistant.speech.partial"
         case .assistantSpeechFinal: return "assistant.speech.final"
         case .assistantUIPatch: return "assistant.ui.patch"
+        case .agentStatus: return "agent.status"
+        case .audioOutputInterrupted: return "audio.output.interrupted"
         case .toolCall(let tc): return "tool.call: \(tc.name)"
         case .toolResult(let tr): return tr.isError ? "tool.result: ERROR" : "tool.result: OK"
         case .error(let e): return "error: \(e.code)"

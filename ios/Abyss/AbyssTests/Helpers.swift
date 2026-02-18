@@ -152,3 +152,109 @@ final class MockCursorCloudAgentsClient: CursorCloudAgentsProviding, @unchecked 
         CursorRepositoriesResponse(repositories: [])
     }
 }
+
+// MARK: - Mock Conductor Clients
+
+final class MockConductorClient: ConductorClient, @unchecked Sendable {
+    private let lock = NSLock()
+
+    private let stream: AsyncStream<Event>
+    private let continuation: AsyncStream<Event>.Continuation
+
+    private(set) var connectCallCount = 0
+    private(set) var disconnectCallCount = 0
+    private(set) var sentEvents: [Event] = []
+    var connectError: Error?
+
+    var inboundEvents: AsyncStream<Event> { stream }
+
+    init() {
+        let (stream, continuation) = AsyncStream<Event>.makeStream()
+        self.stream = stream
+        self.continuation = continuation
+    }
+
+    func connect(sessionId: String) async throws {
+        lock.withLock {
+            connectCallCount += 1
+        }
+
+        if let connectError {
+            throw connectError
+        }
+    }
+
+    func disconnect() async {
+        lock.withLock {
+            disconnectCallCount += 1
+        }
+    }
+
+    func send(event: Event) async throws {
+        lock.withLock {
+            sentEvents.append(event)
+        }
+    }
+
+    func emitInbound(_ event: Event) {
+        continuation.yield(event)
+    }
+
+    func finishInbound() {
+        continuation.finish()
+    }
+}
+
+final class MockWebSocketTransport: WebSocketTransport, @unchecked Sendable {
+    private let lock = NSLock()
+
+    private let stream: AsyncStream<String>
+    private let continuation: AsyncStream<String>.Continuation
+
+    private(set) var connectCallCount = 0
+    private(set) var disconnectCallCount = 0
+    private(set) var sentTexts: [String] = []
+
+    var inboundText: AsyncStream<String> { stream }
+
+    init() {
+        let (stream, continuation) = AsyncStream<String>.makeStream()
+        self.stream = stream
+        self.continuation = continuation
+    }
+
+    func connect() async throws {
+        lock.withLock {
+            connectCallCount += 1
+        }
+    }
+
+    func disconnect() async {
+        lock.withLock {
+            disconnectCallCount += 1
+        }
+        continuation.finish()
+    }
+
+    func send(text: String) async throws {
+        lock.withLock {
+            sentTexts.append(text)
+        }
+    }
+
+    func emitInboundText(_ text: String) {
+        continuation.yield(text)
+    }
+
+    func finishInbound() {
+        continuation.finish()
+    }
+}
+
+private extension NSLock {
+    func withLock<T>(_ action: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return action()
+    }
+}

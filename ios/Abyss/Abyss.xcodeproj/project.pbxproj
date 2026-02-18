@@ -33,14 +33,17 @@
 		A10000000000000100000017 /* SpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000017 /* SpeechTranscriber.swift */; };
 		A10000000000000100000018 /* TextToSpeech.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000018 /* TextToSpeech.swift */; };
 		A10000000000000100000019 /* ElevenLabsTTS.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000019 /* ElevenLabsTTS.swift */; };
-			A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */; };
-			A1000000000000010000001B /* ConductorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001B /* ConductorProtocol.swift */; };
-			A1000000000000010000001C /* LocalConductorStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001C /* LocalConductorStub.swift */; };
-			A1000000000000010000001D /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000100000001 /* WhisperKit */; };
-			A1000000000000010000001E /* AgentProgressCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001D /* AgentProgressCard.swift */; };
-			A1000000000000010000001F /* AgentProgressCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001F /* AgentProgressCardView.swift */; };
-			A10000000000000100000020 /* CursorCloudAgentsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000020 /* CursorCloudAgentsClient.swift */; };
-			A10000000000000100000021 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000021 /* AgentTools.swift */; };
+		A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */; };
+		A1000000000000010000001B /* ConductorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001B /* ConductorProtocol.swift */; };
+		A1000000000000010000001C /* LocalConductorStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001C /* LocalConductorStub.swift */; };
+		A1000000000000010000002A /* LocalConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002A /* LocalConductorClient.swift */; };
+		A1000000000000010000002B /* WebSocketConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002B /* WebSocketConductorClient.swift */; };
+		A1000000000000010000002C /* EventEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002C /* EventEnvelope.swift */; };
+		A1000000000000010000001D /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000100000001 /* WhisperKit */; };
+		A1000000000000010000001E /* AgentProgressCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001D /* AgentProgressCard.swift */; };
+		A1000000000000010000001F /* AgentProgressCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001F /* AgentProgressCardView.swift */; };
+		A10000000000000100000020 /* CursorCloudAgentsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000020 /* CursorCloudAgentsClient.swift */; };
+		A10000000000000100000021 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000021 /* AgentTools.swift */; };
 		B10000000000000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000100000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -70,16 +73,19 @@
 		A20000000000000100000016 /* ConvoSetStateTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvoSetStateTool.swift; sourceTree = "<group>"; };
 		A20000000000000100000017 /* SpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechTranscriber.swift; sourceTree = "<group>"; };
 		A20000000000000100000018 /* TextToSpeech.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextToSpeech.swift; sourceTree = "<group>"; };
-			A20000000000000100000019 /* ElevenLabsTTS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElevenLabsTTS.swift; sourceTree = "<group>"; };
-			A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitSpeechTranscriber.swift; sourceTree = "<group>"; };
-			A2000000000000010000001B /* ConductorProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConductorProtocol.swift; sourceTree = "<group>"; };
-			A2000000000000010000001C /* LocalConductorStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorStub.swift; sourceTree = "<group>"; };
-			A2000000000000010000001D /* AgentProgressCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProgressCard.swift; sourceTree = "<group>"; };
-			A2000000000000010000001E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-			A2000000000000010000001F /* AgentProgressCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProgressCardView.swift; sourceTree = "<group>"; };
-			A20000000000000100000020 /* CursorCloudAgentsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorCloudAgentsClient.swift; sourceTree = "<group>"; };
-			A20000000000000100000021 /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
-			A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20000000000000100000019 /* ElevenLabsTTS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ElevenLabsTTS.swift; sourceTree = "<group>"; };
+		A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitSpeechTranscriber.swift; sourceTree = "<group>"; };
+		A2000000000000010000001B /* ConductorProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConductorProtocol.swift; sourceTree = "<group>"; };
+		A2000000000000010000001C /* LocalConductorStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorStub.swift; sourceTree = "<group>"; };
+		A2000000000000010000002A /* LocalConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorClient.swift; sourceTree = "<group>"; };
+		A2000000000000010000002B /* WebSocketConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketConductorClient.swift; sourceTree = "<group>"; };
+		A2000000000000010000002C /* EventEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEnvelope.swift; sourceTree = "<group>"; };
+		A2000000000000010000001D /* AgentProgressCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProgressCard.swift; sourceTree = "<group>"; };
+		A2000000000000010000001E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A2000000000000010000001F /* AgentProgressCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProgressCardView.swift; sourceTree = "<group>"; };
+		A20000000000000100000020 /* CursorCloudAgentsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorCloudAgentsClient.swift; sourceTree = "<group>"; };
+		A20000000000000100000021 /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
+		A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -129,28 +135,29 @@
 			path = App;
 			sourceTree = "<group>";
 		};
-			A50000000000000100000004 /* Models */ = {
-				isa = PBXGroup;
-				children = (
-					A2000000000000010000000A /* Event.swift */,
-					A2000000000000010000000B /* EventBus.swift */,
-					A2000000000000010000001D /* AgentProgressCard.swift */,
-					A2000000000000010000000C /* AppState.swift */,
-					A2000000000000010000000D /* ConversationMessage.swift */,
-				);
-				path = Models;
-				sourceTree = "<group>";
+		A50000000000000100000004 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000010000000A /* Event.swift */,
+				A2000000000000010000000B /* EventBus.swift */,
+				A2000000000000010000001D /* AgentProgressCard.swift */,
+				A2000000000000010000000C /* AppState.swift */,
+				A2000000000000010000000D /* ConversationMessage.swift */,
+				A2000000000000010000002C /* EventEnvelope.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
 		};
-			A50000000000000100000005 /* Views */ = {
-				isa = PBXGroup;
-				children = (
-					A20000000000000100000003 /* ContentView.swift */,
-					A2000000000000010000001F /* AgentProgressCardView.swift */,
-					A20000000000000100000004 /* MicButton.swift */,
-					A20000000000000100000005 /* TranscriptView.swift */,
-					A20000000000000100000006 /* EventTimelineView.swift */,
-					A20000000000000100000007 /* StateIndicator.swift */,
-					A20000000000000100000008 /* SettingsView.swift */,
+		A50000000000000100000005 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000003 /* ContentView.swift */,
+				A2000000000000010000001F /* AgentProgressCardView.swift */,
+				A20000000000000100000004 /* MicButton.swift */,
+				A20000000000000100000005 /* TranscriptView.swift */,
+				A20000000000000100000006 /* EventTimelineView.swift */,
+				A20000000000000100000007 /* StateIndicator.swift */,
+				A20000000000000100000008 /* SettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -163,28 +170,28 @@
 			path = ViewModels;
 			sourceTree = "<group>";
 		};
-			A50000000000000100000007 /* Tools */ = {
-				isa = PBXGroup;
-				children = (
-					A2000000000000010000000E /* ToolProtocol.swift */,
-					A2000000000000010000000F /* ToolRegistry.swift */,
-					A20000000000000100000010 /* ToolRouter.swift */,
-					A5000000000000010000000D /* Agent */,
-					A5000000000000010000000B /* Audio */,
-					A5000000000000010000000C /* Conversation */,
-				);
-				path = Tools;
-				sourceTree = "<group>";
+		A50000000000000100000007 /* Tools */ = {
+			isa = PBXGroup;
+			children = (
+				A2000000000000010000000E /* ToolProtocol.swift */,
+				A2000000000000010000000F /* ToolRegistry.swift */,
+				A20000000000000100000010 /* ToolRouter.swift */,
+				A5000000000000010000000D /* Agent */,
+				A5000000000000010000000B /* Audio */,
+				A5000000000000010000000C /* Conversation */,
+			);
+			path = Tools;
+			sourceTree = "<group>";
 		};
-			A50000000000000100000008 /* Services */ = {
-				isa = PBXGroup;
-				children = (
-					A20000000000000100000020 /* CursorCloudAgentsClient.swift */,
-					A20000000000000100000017 /* SpeechTranscriber.swift */,
-					A20000000000000100000018 /* TextToSpeech.swift */,
-					A20000000000000100000019 /* ElevenLabsTTS.swift */,
-					A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */,
-				);
+		A50000000000000100000008 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000020 /* CursorCloudAgentsClient.swift */,
+				A20000000000000100000017 /* SpeechTranscriber.swift */,
+				A20000000000000100000018 /* TextToSpeech.swift */,
+				A20000000000000100000019 /* ElevenLabsTTS.swift */,
+				A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */,
+			);
 			path = Services;
 			sourceTree = "<group>";
 		};
@@ -193,6 +200,8 @@
 			children = (
 				A2000000000000010000001B /* ConductorProtocol.swift */,
 				A2000000000000010000001C /* LocalConductorStub.swift */,
+				A2000000000000010000002A /* LocalConductorClient.swift */,
+				A2000000000000010000002B /* WebSocketConductorClient.swift */,
 			);
 			path = Conductor;
 			sourceTree = "<group>";
@@ -208,27 +217,27 @@
 			path = Audio;
 			sourceTree = "<group>";
 		};
-			A5000000000000010000000C /* Conversation */ = {
-				isa = PBXGroup;
-				children = (
-					A20000000000000100000015 /* ConvoAppendMessageTool.swift */,
-					A20000000000000100000016 /* ConvoSetStateTool.swift */,
-				);
-				path = Conversation;
-				sourceTree = "<group>";
-			};
-			A5000000000000010000000D /* Agent */ = {
-				isa = PBXGroup;
-				children = (
-					A20000000000000100000021 /* AgentTools.swift */,
-				);
-				path = Agent;
-				sourceTree = "<group>";
-			};
-			A50000000000000300000001 /* Products */ = {
-				isa = PBXGroup;
-				children = (
-					A20000000000000200000001 /* Abyss.app */,
+		A5000000000000010000000C /* Conversation */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000015 /* ConvoAppendMessageTool.swift */,
+				A20000000000000100000016 /* ConvoSetStateTool.swift */,
+			);
+			path = Conversation;
+			sourceTree = "<group>";
+		};
+		A5000000000000010000000D /* Agent */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000100000021 /* AgentTools.swift */,
+			);
+			path = Agent;
+			sourceTree = "<group>";
+		};
+		A50000000000000300000001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20000000000000200000001 /* Abyss.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -288,6 +297,18 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		A70000000000000100000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7A85AD292F402BF30013064D /* Secrets.plist in Resources */,
+				B10000000000000100000001 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXShellScriptBuildPhase section */
 		A70000000000000100000003 /* Create Secrets.plist if missing */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -312,18 +333,6 @@
 		};
 /* End PBXShellScriptBuildPhase section */
 
-/* Begin PBXResourcesBuildPhase section */
-		A70000000000000100000002 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				7A85AD292F402BF30013064D /* Secrets.plist in Resources */,
-				B10000000000000100000001 /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
-
 /* Begin PBXSourcesBuildPhase section */
 		A70000000000000100000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -336,31 +345,34 @@
 				A10000000000000100000005 /* TranscriptView.swift in Sources */,
 				A10000000000000100000006 /* EventTimelineView.swift in Sources */,
 				A10000000000000100000007 /* StateIndicator.swift in Sources */,
-					A10000000000000100000008 /* SettingsView.swift in Sources */,
-					A10000000000000100000009 /* ConversationViewModel.swift in Sources */,
-					A1000000000000010000001F /* AgentProgressCardView.swift in Sources */,
-					A1000000000000010000000A /* Event.swift in Sources */,
-					A1000000000000010000000B /* EventBus.swift in Sources */,
-					A1000000000000010000000C /* AppState.swift in Sources */,
-					A1000000000000010000001E /* AgentProgressCard.swift in Sources */,
-					A1000000000000010000000D /* ConversationMessage.swift in Sources */,
-					A1000000000000010000000E /* ToolProtocol.swift in Sources */,
-					A1000000000000010000000F /* ToolRegistry.swift in Sources */,
-					A10000000000000100000010 /* ToolRouter.swift in Sources */,
-					A10000000000000100000021 /* AgentTools.swift in Sources */,
-					A10000000000000100000011 /* STTStartTool.swift in Sources */,
-					A10000000000000100000012 /* STTStopTool.swift in Sources */,
-					A10000000000000100000013 /* TTSSpeakTool.swift in Sources */,
-					A10000000000000100000014 /* TTSStopTool.swift in Sources */,
-					A10000000000000100000015 /* ConvoAppendMessageTool.swift in Sources */,
-					A10000000000000100000016 /* ConvoSetStateTool.swift in Sources */,
-					A10000000000000100000020 /* CursorCloudAgentsClient.swift in Sources */,
-					A10000000000000100000017 /* SpeechTranscriber.swift in Sources */,
-					A10000000000000100000018 /* TextToSpeech.swift in Sources */,
-					A10000000000000100000019 /* ElevenLabsTTS.swift in Sources */,
+				A10000000000000100000008 /* SettingsView.swift in Sources */,
+				A10000000000000100000009 /* ConversationViewModel.swift in Sources */,
+				A1000000000000010000001F /* AgentProgressCardView.swift in Sources */,
+				A1000000000000010000000A /* Event.swift in Sources */,
+				A1000000000000010000000B /* EventBus.swift in Sources */,
+				A1000000000000010000000C /* AppState.swift in Sources */,
+				A1000000000000010000001E /* AgentProgressCard.swift in Sources */,
+				A1000000000000010000000D /* ConversationMessage.swift in Sources */,
+				A1000000000000010000000E /* ToolProtocol.swift in Sources */,
+				A1000000000000010000000F /* ToolRegistry.swift in Sources */,
+				A10000000000000100000010 /* ToolRouter.swift in Sources */,
+				A10000000000000100000021 /* AgentTools.swift in Sources */,
+				A10000000000000100000011 /* STTStartTool.swift in Sources */,
+				A10000000000000100000012 /* STTStopTool.swift in Sources */,
+				A10000000000000100000013 /* TTSSpeakTool.swift in Sources */,
+				A10000000000000100000014 /* TTSStopTool.swift in Sources */,
+				A10000000000000100000015 /* ConvoAppendMessageTool.swift in Sources */,
+				A10000000000000100000016 /* ConvoSetStateTool.swift in Sources */,
+				A10000000000000100000020 /* CursorCloudAgentsClient.swift in Sources */,
+				A10000000000000100000017 /* SpeechTranscriber.swift in Sources */,
+				A10000000000000100000018 /* TextToSpeech.swift in Sources */,
+				A10000000000000100000019 /* ElevenLabsTTS.swift in Sources */,
 				A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */,
 				A1000000000000010000001B /* ConductorProtocol.swift in Sources */,
 				A1000000000000010000001C /* LocalConductorStub.swift in Sources */,
+				A1000000000000010000002A /* LocalConductorClient.swift in Sources */,
+				A1000000000000010000002B /* WebSocketConductorClient.swift in Sources */,
+				A1000000000000010000002C /* EventEnvelope.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -476,6 +488,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -488,7 +501,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyss;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -503,6 +516,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -515,7 +529,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyss;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;

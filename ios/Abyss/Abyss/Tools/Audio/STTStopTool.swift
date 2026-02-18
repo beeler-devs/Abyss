@@ -22,7 +22,9 @@ struct STTStopTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
+        print("🔧 [TOOL] STTStopTool.execute() ENTER")
         let transcript = try await transcriber.stop()
+        print("🔧 [TOOL] STTStopTool.execute() DONE — transcript='\(transcript)'")
         return Result(finalTranscript: transcript)
     }
 }

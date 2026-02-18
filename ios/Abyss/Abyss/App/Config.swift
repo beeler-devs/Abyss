@@ -1,48 +1,69 @@
 import Foundation
 
 /// Centralized configuration loader.
-/// Reads secrets from Secrets.plist (git-ignored) or environment variables.
-/// Never hardcode API keys.
+/// Reads runtime values from UserDefaults, Secrets.plist (git-ignored), Info.plist, or environment.
 enum Config {
-    /// ElevenLabs API key, loaded from Secrets.plist or environment.
-    static var elevenLabsAPIKey: String? {
-        // 1. Check Secrets.plist in the bundle
+    // MARK: - Shared Lookup
+
+    private static func valueFromSecretsPlist(_ key: String) -> String? {
         if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
            let dict = NSDictionary(contentsOfFile: path),
-           let key = dict["ELEVENLABS_API_KEY"] as? String,
-           !key.isEmpty {
-            return key
+           let value = dict[key] as? String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
         }
-
-        // 2. Check environment variable (useful for CI/testing)
-        if let key = ProcessInfo.processInfo.environment["ELEVENLABS_API_KEY"],
-           !key.isEmpty {
-            return key
-        }
-
         return nil
+    }
+
+    private static func valueFromInfoPlist(_ key: String) -> String? {
+        guard let value = Bundle.main.object(forInfoDictionaryKey: key) as? String else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.hasPrefix("$(") {
+            return nil
+        }
+        return trimmed
+    }
+
+    private static func valueFromEnvironment(_ key: String) -> String? {
+        guard let value = ProcessInfo.processInfo.environment[key] else {
+            return nil
+        }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    // MARK: - ElevenLabs
+
+    /// ElevenLabs API key, loaded from Secrets.plist or environment.
+    static var elevenLabsAPIKey: String? {
+        valueFromSecretsPlist("ELEVENLABS_API_KEY")
+            ?? valueFromEnvironment("ELEVENLABS_API_KEY")
     }
 
     /// Default ElevenLabs voice ID.
     static var elevenLabsVoiceId: String {
-        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
-           let dict = NSDictionary(contentsOfFile: path),
-           let voiceId = dict["ELEVENLABS_VOICE_ID"] as? String,
-           !voiceId.isEmpty {
-            return voiceId
+        if let value = UserDefaults.standard.string(forKey: "elevenLabsVoiceId")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty {
+            return value
         }
-        return "21m00Tcm4TlvDq8ikWAM" // Rachel (default)
+
+        return valueFromSecretsPlist("ELEVENLABS_VOICE_ID")
+            ?? "21m00Tcm4TlvDq8ikWAM"
     }
 
     /// Default ElevenLabs model ID.
     static var elevenLabsModelId: String {
-        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
-           let dict = NSDictionary(contentsOfFile: path),
-           let modelId = dict["ELEVENLABS_MODEL_ID"] as? String,
-           !modelId.isEmpty {
-            return modelId
+        if let value = UserDefaults.standard.string(forKey: "elevenLabsModelId")?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !value.isEmpty {
+            return value
         }
-        return "eleven_turbo_v2_5"
+
+        return valueFromSecretsPlist("ELEVENLABS_MODEL_ID")
+            ?? "eleven_turbo_v2_5"
     }
 
     /// Whether the API key is configured.
@@ -50,38 +71,52 @@ enum Config {
         elevenLabsAPIKey != nil
     }
 
+    // MARK: - Cursor
+
     /// Cursor API key, loaded from in-app settings, Secrets.plist, or environment.
     static var cursorAPIKey: String? {
-        // 1. Check in-app settings (persisted in UserDefaults via @AppStorage)
         if let key = UserDefaults.standard.string(forKey: "cursorAPIKey")?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !key.isEmpty {
             return key
         }
 
-        // 2. Check Secrets.plist in the bundle
-        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
-           let dict = NSDictionary(contentsOfFile: path),
-           let key = dict["CURSOR_API_KEY"] as? String,
-           !key.isEmpty {
-            return key
-        }
-
-        // 3. Check environment variable (useful for CI/testing)
-        if let key = ProcessInfo.processInfo.environment["CURSOR_API_KEY"],
-           !key.isEmpty {
-            return key
-        }
-
-        return nil
+        return valueFromSecretsPlist("CURSOR_API_KEY")
+            ?? valueFromEnvironment("CURSOR_API_KEY")
     }
 
-    /// Whether the Cursor API key is configured.
     static var isCursorAPIKeyConfigured: Bool {
         cursorAPIKey != nil
     }
 
-    /// Backward-compatible alias for existing code paths.
+    // MARK: - Conductor Backend
+
+    /// WebSocket URL used by the Phase 2 server conductor (e.g. ws://192.168.1.20:8080/ws).
+    static var backendWSURL: URL? {
+        let raw = valueFromSecretsPlist("BACKEND_WS_URL")
+            ?? valueFromInfoPlist("BACKEND_WS_URL")
+            ?? valueFromEnvironment("BACKEND_WS_URL")
+
+        guard let raw,
+              let url = URL(string: raw),
+              let scheme = url.scheme?.lowercased(),
+              ["ws", "wss"].contains(scheme) else {
+            return nil
+        }
+
+        return url
+    }
+
+    static var backendWSURLString: String? {
+        backendWSURL?.absoluteString
+    }
+
+    static var isBackendWSConfigured: Bool {
+        backendWSURL != nil
+    }
+
+    // MARK: - Backward Compatibility
+
     static var isAPIKeyConfigured: Bool {
         isElevenLabsAPIKeyConfigured
     }

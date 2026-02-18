@@ -9,6 +9,7 @@ import AppKit
 struct TranscriptView: View {
     let messages: [ConversationMessage]
     let partialTranscript: String
+    let assistantPartialSpeech: String
     let appState: AppState
 
     var body: some View {
@@ -35,8 +36,23 @@ struct TranscriptView: View {
                         .id("partial")
                     }
 
+                    // Show streamed assistant partial without appending permanent messages.
+                    if !assistantPartialSpeech.isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "text.bubble")
+                                .foregroundStyle(.purple)
+                                .font(.caption)
+                            Text(assistantPartialSpeech)
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                                .italic()
+                        }
+                        .padding(.horizontal)
+                        .id("assistant-partial")
+                    }
+
                     // Empty state
-                    if messages.isEmpty && partialTranscript.isEmpty {
+                    if messages.isEmpty && partialTranscript.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -61,6 +77,11 @@ struct TranscriptView: View {
             .onChange(of: partialTranscript) { _, _ in
                 withAnimation(.easeOut(duration: 0.1)) {
                     proxy.scrollTo("partial", anchor: .bottom)
+                }
+            }
+            .onChange(of: assistantPartialSpeech) { _, _ in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("assistant-partial", anchor: .bottom)
                 }
             }
         }

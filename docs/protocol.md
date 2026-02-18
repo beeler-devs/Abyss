@@ -1,242 +1,240 @@
-# Abyss Event Protocol
+# Abyss Event Protocol (Phase 2)
 
-## Overview
+## Transport
 
-All communication between the conductor (brain), runtime (iOS app), and UI flows through structured events. This document defines the protocol for the future WebSocket-based communication between client and server.
-
-## Transport (Phase 2)
-
-- **Protocol**: WebSocket (wss://)
-- **Encoding**: JSON (UTF-8)
-- **Direction**: Bidirectional
-  - Client → Server: user events (transcript, audio state)
-  - Server → Client: conductor events (tool calls, speech, UI patches)
+- Protocol: WebSocket (`ws://` or `wss://`)
+- Encoding: UTF-8 JSON
+- Endpoint: `/ws`
+- Direction:
+  - Client -> Server: session, transcript, tool results, interruption notices
+  - Server -> Client: speech stream, tool calls, status/UI/error events
 
 ## Event Envelope
 
-Every message on the wire is an Event:
+Every message is an envelope:
 
 ```json
 {
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "timestamp": "2025-01-15T10:30:00.000Z",
-  "kind": { ... }
+  "id": "evt_123",
+  "type": "tool.call",
+  "timestamp": "2026-02-18T12:34:56.123Z",
+  "sessionId": "session-abc",
+  "payload": {}
 }
 ```
+
+Fields:
+
+- `id`: unique event id (used by client dedupe)
+- `type`: dot-separated event type
+- `timestamp`: ISO8601
+- `sessionId`: stable session id for the socket session
+- `payload`: type-specific object
 
 ## Event Types
 
-### session.start
-
-Emitted when a new session begins.
+### session.start (client -> server)
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "sessionStart": {
-      "sessionId": "abc123"
-    }
+  "id": "evt-1",
+  "type": "session.start",
+  "timestamp": "2026-02-18T12:00:00.000Z",
+  "sessionId": "session-1",
+  "payload": { "sessionId": "session-1" }
+}
+```
+
+### session.started (server -> client, optional ack)
+
+```json
+{
+  "id": "evt-2",
+  "type": "session.started",
+  "timestamp": "2026-02-18T12:00:00.050Z",
+  "sessionId": "session-1",
+  "payload": { "sessionId": "session-1" }
+}
+```
+
+### user.audio.transcript.final (client -> server)
+
+```json
+{
+  "id": "evt-3",
+  "type": "user.audio.transcript.final",
+  "timestamp": "2026-02-18T12:00:04.000Z",
+  "sessionId": "session-1",
+  "payload": {
+    "text": "hello",
+    "timestamp": "2026-02-18T12:00:04.000Z",
+    "sessionId": "session-1"
   }
 }
 ```
 
-### user.audio.transcript.partial
-
-Streaming partial transcript from STT.
+### assistant.speech.partial (server -> client)
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "userAudioTranscriptPartial": {
-      "text": "Hello wor"
-    }
+  "id": "evt-4",
+  "type": "assistant.speech.partial",
+  "timestamp": "2026-02-18T12:00:04.200Z",
+  "sessionId": "session-1",
+  "payload": { "text": "Hello, " }
+}
+```
+
+### assistant.speech.final (server -> client)
+
+```json
+{
+  "id": "evt-5",
+  "type": "assistant.speech.final",
+  "timestamp": "2026-02-18T12:00:04.800Z",
+  "sessionId": "session-1",
+  "payload": { "text": "Hello, how can I help?" }
+}
+```
+
+### tool.call (server -> client)
+
+```json
+{
+  "id": "evt-6",
+  "type": "tool.call",
+  "timestamp": "2026-02-18T12:00:04.100Z",
+  "sessionId": "session-1",
+  "payload": {
+    "callId": "call-123",
+    "name": "convo.setState",
+    "arguments": "{\"state\":\"thinking\"}"
   }
 }
 ```
 
-### user.audio.transcript.final
+### tool.result (client -> server)
 
-Final transcript after STT completes.
+Success:
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "userAudioTranscriptFinal": {
-      "text": "Hello world"
-    }
+  "id": "evt-7",
+  "type": "tool.result",
+  "timestamp": "2026-02-18T12:00:04.120Z",
+  "sessionId": "session-1",
+  "payload": {
+    "callId": "call-123",
+    "result": "{\"newState\":\"thinking\",\"previousState\":\"idle\"}",
+    "error": null
   }
 }
 ```
 
-### assistant.speech.partial
-
-Streaming partial speech text from the conductor.
+Error:
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "assistantSpeechPartial": {
-      "text": "I can help you"
-    }
+  "id": "evt-8",
+  "type": "tool.result",
+  "timestamp": "2026-02-18T12:00:04.120Z",
+  "sessionId": "session-1",
+  "payload": {
+    "callId": "call-123",
+    "result": null,
+    "error": "ElevenLabs API key missing"
   }
 }
 ```
 
-### assistant.speech.final
-
-Final speech text from the conductor.
+### assistant.ui.patch (server -> client)
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "assistantSpeechFinal": {
-      "text": "I can help you with that. Let me check the code."
-    }
+  "id": "evt-9",
+  "type": "assistant.ui.patch",
+  "timestamp": "2026-02-18T12:00:05.000Z",
+  "sessionId": "session-1",
+  "payload": {
+    "patch": "{\"op\":\"replace\",\"path\":\"/cards/0\"}"
   }
 }
 ```
 
-### assistant.ui.patch
-
-UI update from the conductor (Phase 2+). Placeholder in Phase 1.
+### agent.status (server -> client)
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "assistantUIPatch": {
-      "patch": "{\"op\":\"add\",\"path\":\"/cards/0\",\"value\":{\"type\":\"diff\",\"file\":\"main.swift\"}}"
-    }
+  "id": "evt-10",
+  "type": "agent.status",
+  "timestamp": "2026-02-18T12:00:05.500Z",
+  "sessionId": "session-1",
+  "payload": {
+    "status": "thinking",
+    "detail": "Running tool sequence"
   }
 }
 ```
 
-### tool.call
-
-Conductor requests the runtime to execute a tool.
+### audio.output.interrupted (client -> server, optional)
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "toolCall": {
-      "callId": "call-abc123",
-      "name": "tts.speak",
-      "arguments": "{\"text\":\"Hello there!\"}"
-    }
+  "id": "evt-11",
+  "type": "audio.output.interrupted",
+  "timestamp": "2026-02-18T12:00:06.000Z",
+  "sessionId": "session-1",
+  "payload": {
+    "reason": "barge_in"
   }
 }
 ```
 
-### tool.result
-
-Runtime reports the result of a tool execution.
+### error (either direction)
 
 ```json
 {
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "toolResult": {
-      "callId": "call-abc123",
-      "result": "{\"spoken\":true}",
-      "error": null
-    }
+  "id": "evt-12",
+  "type": "error",
+  "timestamp": "2026-02-18T12:00:06.050Z",
+  "sessionId": "session-1",
+  "payload": {
+    "code": "model_provider_failed",
+    "message": "Anthropic HTTP 429"
   }
 }
 ```
 
-Error case:
+## Required Phase 2 Sequence
 
-```json
-{
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "toolResult": {
-      "callId": "call-abc123",
-      "result": null,
-      "error": "ElevenLabs API key is not configured."
-    }
-  }
-}
-```
+On `user.audio.transcript.final`, the backend emits:
 
-### error
+1. `tool.call` `convo.setState` `{state:"thinking"}`
+2. `tool.call` `convo.appendMessage` for user transcript
+3. `assistant.speech.partial` chunks
+4. `assistant.speech.final`
+5. `tool.call` `convo.appendMessage` for assistant
+6. `tool.call` `convo.setState` `{state:"speaking"}`
+7. `tool.call` `tts.speak`
+8. `tool.call` `convo.setState` `{state:"idle"}`
 
-System-level error event.
+## Reconnect + Dedupe
 
-```json
-{
-  "id": "uuid",
-  "timestamp": "iso8601",
-  "kind": {
-    "error": {
-      "code": "tts_failed",
-      "message": "ElevenLabs returned HTTP 401"
-    }
-  }
-}
-```
+Client behavior:
 
-## WebSocket Protocol Flow (Phase 2)
+- reconnect with exponential backoff
+- keep same `sessionId` for reconnect attempts
+- dedupe inbound events by `event.id`
+- ignore duplicate ids across reconnects
 
-```
-Client                          Server
-  |                               |
-  |-- session.start ------------->|
-  |                               |
-  |-- user.audio.transcript.final|
-  |   { text: "Hello" }  ------->|
-  |                               |
-  |<-- tool.call: convo.setState  |
-  |    { state: "thinking" }      |
-  |                               |
-  |-- tool.result: ok ----------->|
-  |                               |
-  |<-- assistant.speech.final     |
-  |    { text: "Hi there!" }      |
-  |                               |
-  |<-- tool.call: tts.speak       |
-  |    { text: "Hi there!" }      |
-  |                               |
-  |-- tool.result: ok ----------->|
-  |                               |
-  |<-- tool.call: convo.setState  |
-  |    { state: "idle" }          |
-  |                               |
-  |-- tool.result: ok ----------->|
-```
+Server behavior:
 
-## Reconnection Strategy (Phase 2)
+- accept repeated `session.start`
+- do not require strict ACK handshake to continue
+- may resend events after reconnect; client id dedupe makes this safe
 
-1. On disconnect, buffer outgoing events locally
-2. On reconnect, send `session.reconnect` with last known event ID
-3. Server replays missed events from its log
-4. Client deduplicates by event ID
+## Compatibility Notes
 
-## Versioning
-
-Events include no explicit version field in Phase 1. Phase 2 will add:
-
-```json
-{
-  "protocolVersion": "2.0",
-  "id": "...",
-  ...
-}
-```
-
-Clients must ignore unknown event kinds gracefully.
+- Unknown `type` values should be ignored safely.
+- `payload` remains object-based for forward compatibility.
+- `arguments` and `result` stay JSON-encoded strings to align with the iOS tool router contract.

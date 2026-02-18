@@ -142,7 +142,10 @@ struct MicButton: View {
                 switch recordingMode {
                 case .tapToToggle:
                     if isTapGesture(value.translation) {
+                        print("🖱️ [STEP 0] MicButton tap gesture recognized (translation=\(value.translation)) — calling onTap()")
                         onTap()
+                    } else {
+                        print("🖱️ [STEP 0-MISS] MicButton drag too large — not a tap (translation=\(value.translation))")
                     }
                 case .pressAndHold:
                     if isPressing {

@@ -98,6 +98,10 @@ struct EventRow: View {
                 Image(systemName: "text.bubble").foregroundStyle(.purple)
             case .assistantUIPatch:
                 Image(systemName: "rectangle.on.rectangle").foregroundStyle(.orange)
+            case .agentStatus:
+                Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(.teal)
+            case .audioOutputInterrupted:
+                Image(systemName: "speaker.slash.fill").foregroundStyle(.orange)
             case .toolCall:
                 Image(systemName: "wrench.fill").foregroundStyle(.indigo)
             case .toolResult(let tr):
@@ -123,6 +127,10 @@ struct EventRow: View {
             return "speech.final: \"\(f.text.prefix(40))\""
         case .assistantUIPatch(let p):
             return "ui.patch: \(p.patch.prefix(30))"
+        case .agentStatus(let status):
+            return "agent.status: \(status.status)"
+        case .audioOutputInterrupted(let interrupted):
+            return "audio.output.interrupted: \(interrupted.reason)"
         case .toolCall(let tc):
             return "tool.call: \(tc.name)(\(tc.arguments.prefix(30)))"
         case .toolResult(let tr):

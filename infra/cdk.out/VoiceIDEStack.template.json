@@ -1,0 +1,1196 @@
+{
+ "Description": "VoiceIDE Phase 2 — WebSocket API + Bedrock Conductor",
+ "Resources": {
+  "ConnectionsTable8000B8A1": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "connectionId",
+      "AttributeType": "S"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+     {
+      "AttributeName": "connectionId",
+      "KeyType": "HASH"
+     }
+    ],
+    "TableName": "VoiceIDE-Connections"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/ConnectionsTable/Resource"
+   }
+  },
+  "SessionsTable7C302024": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "sessionId",
+      "AttributeType": "S"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+     {
+      "AttributeName": "sessionId",
+      "KeyType": "HASH"
+     }
+    ],
+    "TableName": "VoiceIDE-Sessions"
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/SessionsTable/Resource"
+   }
+  },
+  "PendingTable0A187476": {
+   "Type": "AWS::DynamoDB::Table",
+   "Properties": {
+    "AttributeDefinitions": [
+     {
+      "AttributeName": "sessionId",
+      "AttributeType": "S"
+     }
+    ],
+    "BillingMode": "PAY_PER_REQUEST",
+    "KeySchema": [
+     {
+      "AttributeName": "sessionId",
+      "KeyType": "HASH"
+     }
+    ],
+    "TableName": "VoiceIDE-Pending",
+    "TimeToLiveSpecification": {
+     "AttributeName": "ttl",
+     "Enabled": true
+    }
+   },
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/PendingTable/Resource"
+   }
+  },
+  "ConnectFunctionServiceRole95D35EC9": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/ConnectFunction/ServiceRole/Resource"
+   }
+  },
+  "ConnectFunctionServiceRoleDefaultPolicy48CD77CD": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ConnectionsTable8000B8A1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ConnectionsTable8000B8A1",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "ConnectFunctionServiceRoleDefaultPolicy48CD77CD",
+    "Roles": [
+     {
+      "Ref": "ConnectFunctionServiceRole95D35EC9"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/ConnectFunction/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "ConnectFunction52BFC429": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-192440504332-us-east-1",
+     "S3Key": "b820686eb5011352d5feb1aaa23a34693a3f328a856efbead1cdd4e3adebb1c1.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "CONNECTIONS_TABLE": {
+       "Ref": "ConnectionsTable8000B8A1"
+      },
+      "SESSIONS_TABLE": {
+       "Ref": "SessionsTable7C302024"
+      },
+      "PENDING_TABLE": {
+       "Ref": "PendingTable0A187476"
+      },
+      "BEDROCK_MODEL_ID": "amazon.nova-lite-v1:0",
+      "LOG_LEVEL": "INFO"
+     }
+    },
+    "FunctionName": "VoiceIDE-Connect",
+    "Handler": "handlers/connect.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "ConnectFunctionServiceRole95D35EC9",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs20.x",
+    "Timeout": 10
+   },
+   "DependsOn": [
+    "ConnectFunctionServiceRoleDefaultPolicy48CD77CD",
+    "ConnectFunctionServiceRole95D35EC9"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/ConnectFunction/Resource",
+    "aws:asset:path": "asset.b820686eb5011352d5feb1aaa23a34693a3f328a856efbead1cdd4e3adebb1c1",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "ConnectFunctionLogRetention89039925": {
+   "Type": "Custom::LogRetention",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aFD4BFC8A",
+      "Arn"
+     ]
+    },
+    "LogGroupName": {
+     "Fn::Join": [
+      "",
+      [
+       "/aws/lambda/",
+       {
+        "Ref": "ConnectFunction52BFC429"
+       }
+      ]
+     ]
+    },
+    "RetentionInDays": 14
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/ConnectFunction/LogRetention/Resource"
+   }
+  },
+  "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole9741ECFB": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a/ServiceRole/Resource"
+   }
+  },
+  "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicyADDA7DEB": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "logs:PutRetentionPolicy",
+        "logs:DeleteRetentionPolicy"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicyADDA7DEB",
+    "Roles": [
+     {
+      "Ref": "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole9741ECFB"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aFD4BFC8A": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Handler": "index.handler",
+    "Runtime": "nodejs22.x",
+    "Timeout": 900,
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-192440504332-us-east-1",
+     "S3Key": "2819175352ad1ce0dae768e83fc328fb70fb5f10b4a8ff0ccbcb791f02b0716d.zip"
+    },
+    "Role": {
+     "Fn::GetAtt": [
+      "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole9741ECFB",
+      "Arn"
+     ]
+    }
+   },
+   "DependsOn": [
+    "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRoleDefaultPolicyADDA7DEB",
+    "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aServiceRole9741ECFB"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8a/Resource",
+    "aws:asset:path": "asset.2819175352ad1ce0dae768e83fc328fb70fb5f10b4a8ff0ccbcb791f02b0716d",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "DisconnectFunctionServiceRole3E08E553": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/DisconnectFunction/ServiceRole/Resource"
+   }
+  },
+  "DisconnectFunctionServiceRoleDefaultPolicyF854158E": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ConnectionsTable8000B8A1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ConnectionsTable8000B8A1",
+         "Arn"
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "DisconnectFunctionServiceRoleDefaultPolicyF854158E",
+    "Roles": [
+     {
+      "Ref": "DisconnectFunctionServiceRole3E08E553"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/DisconnectFunction/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "DisconnectFunctionEFD34B26": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-192440504332-us-east-1",
+     "S3Key": "b820686eb5011352d5feb1aaa23a34693a3f328a856efbead1cdd4e3adebb1c1.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "CONNECTIONS_TABLE": {
+       "Ref": "ConnectionsTable8000B8A1"
+      },
+      "SESSIONS_TABLE": {
+       "Ref": "SessionsTable7C302024"
+      },
+      "PENDING_TABLE": {
+       "Ref": "PendingTable0A187476"
+      },
+      "BEDROCK_MODEL_ID": "amazon.nova-lite-v1:0",
+      "LOG_LEVEL": "INFO"
+     }
+    },
+    "FunctionName": "VoiceIDE-Disconnect",
+    "Handler": "handlers/disconnect.handler",
+    "MemorySize": 256,
+    "Role": {
+     "Fn::GetAtt": [
+      "DisconnectFunctionServiceRole3E08E553",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs20.x",
+    "Timeout": 10
+   },
+   "DependsOn": [
+    "DisconnectFunctionServiceRoleDefaultPolicyF854158E",
+    "DisconnectFunctionServiceRole3E08E553"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/DisconnectFunction/Resource",
+    "aws:asset:path": "asset.b820686eb5011352d5feb1aaa23a34693a3f328a856efbead1cdd4e3adebb1c1",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "DisconnectFunctionLogRetentionA4206683": {
+   "Type": "Custom::LogRetention",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aFD4BFC8A",
+      "Arn"
+     ]
+    },
+    "LogGroupName": {
+     "Fn::Join": [
+      "",
+      [
+       "/aws/lambda/",
+       {
+        "Ref": "DisconnectFunctionEFD34B26"
+       }
+      ]
+     ]
+    },
+    "RetentionInDays": 14
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/DisconnectFunction/LogRetention/Resource"
+   }
+  },
+  "MessageFunctionServiceRole94EDDC6B": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "lambda.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "ManagedPolicyArns": [
+     {
+      "Fn::Join": [
+       "",
+       [
+        "arn:",
+        {
+         "Ref": "AWS::Partition"
+        },
+        ":iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+       ]
+      ]
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/MessageFunction/ServiceRole/Resource"
+   }
+  },
+  "MessageFunctionServiceRoleDefaultPolicy3725DC08": {
+   "Type": "AWS::IAM::Policy",
+   "Properties": {
+    "PolicyDocument": {
+     "Statement": [
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ConnectionsTable8000B8A1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "ConnectionsTable8000B8A1",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SessionsTable7C302024",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "SessionsTable7C302024",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:BatchGetItem",
+        "dynamodb:Query",
+        "dynamodb:GetItem",
+        "dynamodb:Scan",
+        "dynamodb:ConditionCheckItem",
+        "dynamodb:BatchWriteItem",
+        "dynamodb:PutItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:DescribeTable"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "PendingTable0A187476",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "dynamodb:GetRecords",
+        "dynamodb:GetShardIterator"
+       ],
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::GetAtt": [
+         "PendingTable0A187476",
+         "Arn"
+        ]
+       }
+      },
+      {
+       "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream"
+       ],
+       "Effect": "Allow",
+       "Resource": "*"
+      },
+      {
+       "Action": "execute-api:ManageConnections",
+       "Effect": "Allow",
+       "Resource": {
+        "Fn::Join": [
+         "",
+         [
+          "arn:aws:execute-api:us-east-1:192440504332:",
+          {
+           "Ref": "WebSocketApi34BCF99B"
+          },
+          "/prod/*"
+         ]
+        ]
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    },
+    "PolicyName": "MessageFunctionServiceRoleDefaultPolicy3725DC08",
+    "Roles": [
+     {
+      "Ref": "MessageFunctionServiceRole94EDDC6B"
+     }
+    ]
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/MessageFunction/ServiceRole/DefaultPolicy/Resource"
+   }
+  },
+  "MessageFunction5E234045": {
+   "Type": "AWS::Lambda::Function",
+   "Properties": {
+    "Code": {
+     "S3Bucket": "cdk-hnb659fds-assets-192440504332-us-east-1",
+     "S3Key": "b820686eb5011352d5feb1aaa23a34693a3f328a856efbead1cdd4e3adebb1c1.zip"
+    },
+    "Environment": {
+     "Variables": {
+      "CONNECTIONS_TABLE": {
+       "Ref": "ConnectionsTable8000B8A1"
+      },
+      "SESSIONS_TABLE": {
+       "Ref": "SessionsTable7C302024"
+      },
+      "PENDING_TABLE": {
+       "Ref": "PendingTable0A187476"
+      },
+      "BEDROCK_MODEL_ID": "amazon.nova-lite-v1:0",
+      "LOG_LEVEL": "INFO"
+     }
+    },
+    "FunctionName": "VoiceIDE-Message",
+    "Handler": "handlers/message.handler",
+    "MemorySize": 512,
+    "Role": {
+     "Fn::GetAtt": [
+      "MessageFunctionServiceRole94EDDC6B",
+      "Arn"
+     ]
+    },
+    "Runtime": "nodejs20.x",
+    "Timeout": 120
+   },
+   "DependsOn": [
+    "MessageFunctionServiceRoleDefaultPolicy3725DC08",
+    "MessageFunctionServiceRole94EDDC6B"
+   ],
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/MessageFunction/Resource",
+    "aws:asset:path": "asset.b820686eb5011352d5feb1aaa23a34693a3f328a856efbead1cdd4e3adebb1c1",
+    "aws:asset:is-bundled": false,
+    "aws:asset:property": "Code"
+   }
+  },
+  "MessageFunctionLogRetentionFF5786D7": {
+   "Type": "Custom::LogRetention",
+   "Properties": {
+    "ServiceToken": {
+     "Fn::GetAtt": [
+      "LogRetentionaae0aa3c5b4d4f87b02d85b201efdd8aFD4BFC8A",
+      "Arn"
+     ]
+    },
+    "LogGroupName": {
+     "Fn::Join": [
+      "",
+      [
+       "/aws/lambda/",
+       {
+        "Ref": "MessageFunction5E234045"
+       }
+      ]
+     ]
+    },
+    "RetentionInDays": 14
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/MessageFunction/LogRetention/Resource"
+   }
+  },
+  "WebSocketApi34BCF99B": {
+   "Type": "AWS::ApiGatewayV2::Api",
+   "Properties": {
+    "Name": "VoiceIDE-WebSocket",
+    "ProtocolType": "WEBSOCKET",
+    "RouteSelectionExpression": "$request.body.action"
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/Resource"
+   }
+  },
+  "WebSocketApiconnectRouteConnectIntegrationPermission39398969": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "ConnectFunction52BFC429",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:us-east-1:192440504332:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*$connect"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$connect-Route/ConnectIntegration-Permission"
+   }
+  },
+  "WebSocketApiconnectRouteConnectIntegration7F1E0FDE": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "ConnectFunction52BFC429",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$connect-Route/ConnectIntegration/Resource"
+   }
+  },
+  "WebSocketApiconnectRoute846149DD": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "$connect",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApiconnectRouteConnectIntegration7F1E0FDE"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$connect-Route/Resource"
+   }
+  },
+  "WebSocketApidisconnectRouteDisconnectIntegrationPermissionAE705904": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "DisconnectFunctionEFD34B26",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:us-east-1:192440504332:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*$disconnect"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$disconnect-Route/DisconnectIntegration-Permission"
+   }
+  },
+  "WebSocketApidisconnectRouteDisconnectIntegration94C91381": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "DisconnectFunctionEFD34B26",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$disconnect-Route/DisconnectIntegration/Resource"
+   }
+  },
+  "WebSocketApidisconnectRouteC181A19C": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "$disconnect",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApidisconnectRouteDisconnectIntegration94C91381"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$disconnect-Route/Resource"
+   }
+  },
+  "WebSocketApidefaultRouteDefaultIntegrationPermission0418F15D": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "MessageFunction5E234045",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:us-east-1:192440504332:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*$default"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$default-Route/DefaultIntegration-Permission"
+   }
+  },
+  "WebSocketApidefaultRouteDefaultIntegration0865A209": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "MessageFunction5E234045",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$default-Route/DefaultIntegration/Resource"
+   }
+  },
+  "WebSocketApidefaultRoute05EFD2FA": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "$default",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApidefaultRouteDefaultIntegration0865A209"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/$default-Route/Resource"
+   }
+  },
+  "WebSocketApisendMessageRouteMessageIntegrationPermission710F7994": {
+   "Type": "AWS::Lambda::Permission",
+   "Properties": {
+    "Action": "lambda:InvokeFunction",
+    "FunctionName": {
+     "Fn::GetAtt": [
+      "MessageFunction5E234045",
+      "Arn"
+     ]
+    },
+    "Principal": "apigateway.amazonaws.com",
+    "SourceArn": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":execute-api:us-east-1:192440504332:",
+       {
+        "Ref": "WebSocketApi34BCF99B"
+       },
+       "/*sendMessage"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/sendMessage-Route/MessageIntegration-Permission"
+   }
+  },
+  "WebSocketApisendMessageRouteMessageIntegration27953E56": {
+   "Type": "AWS::ApiGatewayV2::Integration",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "IntegrationType": "AWS_PROXY",
+    "IntegrationUri": {
+     "Fn::Join": [
+      "",
+      [
+       "arn:",
+       {
+        "Ref": "AWS::Partition"
+       },
+       ":apigateway:us-east-1:lambda:path/2015-03-31/functions/",
+       {
+        "Fn::GetAtt": [
+         "MessageFunction5E234045",
+         "Arn"
+        ]
+       },
+       "/invocations"
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/sendMessage-Route/MessageIntegration/Resource"
+   }
+  },
+  "WebSocketApisendMessageRouteC27A355C": {
+   "Type": "AWS::ApiGatewayV2::Route",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AuthorizationType": "NONE",
+    "RouteKey": "sendMessage",
+    "Target": {
+     "Fn::Join": [
+      "",
+      [
+       "integrations/",
+       {
+        "Ref": "WebSocketApisendMessageRouteMessageIntegration27953E56"
+       }
+      ]
+     ]
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketApi/sendMessage-Route/Resource"
+   }
+  },
+  "WebSocketStageC46B7E43": {
+   "Type": "AWS::ApiGatewayV2::Stage",
+   "Properties": {
+    "ApiId": {
+     "Ref": "WebSocketApi34BCF99B"
+    },
+    "AutoDeploy": true,
+    "StageName": "prod"
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/WebSocketStage/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/11O0WrDMAz8lr672pLsYa9tYTAYrCSDPRbFUY2bxA6R3RCM/33Ypdvo091Jd9KVUFav8LzBhbey67eDbiE0DmUvcOFT6FaDo+1aCF/YDiQOZ5NJFAOObYcQ3ryRTluTVv/5keZRM2trotA4QqjtLZ/xaAct1+zLLAquTshMjmGXQHAFey97cntkEoNVDB9W1eTI5Bc4aYWOFlyvJYRvahub3LtJp6sJfme19Y7+5LtxpGa8F32QD+bGocq1M4lR1MTWz5JErpmm2qgcvC8OZ/Pp3eRdFMZ2BBd+upYvUBRQbC6s9Xb2xumRoL7hD33tI4qEAQAA"
+   },
+   "Metadata": {
+    "aws:cdk:path": "VoiceIDEStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "WebSocketURL": {
+   "Description": "WebSocket API URL for iOS client",
+   "Value": {
+    "Fn::Join": [
+     "",
+     [
+      "wss://",
+      {
+       "Ref": "WebSocketApi34BCF99B"
+      },
+      ".execute-api.us-east-1.",
+      {
+       "Ref": "AWS::URLSuffix"
+      },
+      "/prod"
+     ]
+    ]
+   },
+   "Export": {
+    "Name": "VoiceIDE-WebSocketURL"
+   }
+  },
+  "WebSocketApiId": {
+   "Description": "WebSocket API ID",
+   "Value": {
+    "Ref": "WebSocketApi34BCF99B"
+   }
+  },
+  "ConnectionsTableName": {
+   "Value": {
+    "Ref": "ConnectionsTable8000B8A1"
+   }
+  },
+  "SessionsTableName": {
+   "Value": {
+    "Ref": "SessionsTable7C302024"
+   }
+  },
+  "PendingTableName": {
+   "Value": {
+    "Ref": "PendingTable0A187476"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}
