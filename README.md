@@ -1,199 +1,100 @@
-# Abyss — Phase 1
+# Abyss — Phase 2
 
-A voice-first agentic development app built around **formal tool calling**. Every action that touches state, audio, or UI flows through structured `tool.call` / `tool.result` events.
+A voice-first agentic development app with formal tool calling and a real WebSocket conductor backend.
 
-## Architecture
+- iOS app: `ios/Abyss`
+- Conductor server: `server`
+- Protocol/docs: `docs`
 
-```
-User Voice → WhisperKit STT → Conductor (tool calls) → ToolRouter → Services
-                                                                   ↓
-                                                            ElevenLabs TTS → Speaker
-```
+## Core Model
 
-All state changes are visible in the real-time Event Timeline.
+All behavior flows through events:
 
-See [docs/architecture.md](docs/architecture.md) for the full design.
+- Backend emits `tool.call` and `assistant.speech.*`
+- iOS executes client tools through `ToolRouter`
+- iOS returns `tool.result` to backend
+- Event timeline preserves full ordering + `callId` correlation
 
-## Requirements
+## Repository Structure
 
-- **Xcode 15.2+**
-- **iOS 17.0+** device or simulator
-- **Swift 5.9+**
-- **ElevenLabs API key** (for TTS — free tier works)
-- **Cursor API key** (optional, for cloud agent tools)
-
-## Setup
-
-### 1. Clone and open
-
-```bash
-git clone <repo-url>
-cd Abyss/ios/Abyss
-open Package.swift  # Opens in Xcode
-```
-
-Or open the `ios/Abyss` directory in Xcode directly.
-
-### 2. Configure API Key
-
-Create a `Secrets.plist` file (git-ignored) for your ElevenLabs API key:
-
-```bash
-cat > ios/Abyss/Abyss/App/Secrets.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>ELEVENLABS_API_KEY</key>
-    <string>YOUR_API_KEY_HERE</string>
-    <key>CURSOR_API_KEY</key>
-    <string>YOUR_CURSOR_API_KEY_HERE</string>
-    <key>ELEVENLABS_VOICE_ID</key>
-    <string>21m00Tcm4TlvDq8ikWAM</string>
-    <key>ELEVENLABS_MODEL_ID</key>
-    <string>eleven_turbo_v2_5</string>
-</dict>
-</plist>
-EOF
-```
-
-Replace `YOUR_API_KEY_HERE` with your actual key from [elevenlabs.io](https://elevenlabs.io).
-
-**The app will work without the key** — STT and the tool pipeline function normally, but TTS will emit an error event.
-
-### 3. Configure Cursor Cloud Agents key (optional)
-
-You can set your Cursor API key in either place:
-
-1. In-app: `Settings -> Cursor Cloud Agents -> API Key`
-2. `Secrets.plist` with `CURSOR_API_KEY`
-
-This enables `agent.spawn`, `agent.status`, `agent.cancel`, `agent.followup`, and `agent.list`.
-
-### 4. Add Secrets.plist to the Xcode target
-
-In Xcode:
-1. Right-click the `App` group → "Add Files to Abyss"
-2. Select `Secrets.plist`
-3. Ensure "Copy items if needed" is checked
-4. Ensure it's added to the Abyss target
-
-### 5. Build and Run
-
-Select an iOS 17+ device or simulator and hit Run (⌘R).
-
-**Note**: WhisperKit requires a real device for microphone input. The simulator will have limited STT functionality.
-
-## Project Structure
-
-```
-/
-├── README.md                          # This file
-├── .gitignore
+```text
+/Users/bentontameling/Dev/VoiceBot2
+├── ios/Abyss/                  # iOS app (WhisperKit + ElevenLabs + EventBus)
+├── server/                     # Phase 2 WebSocket conductor (Anthropic provider active)
 ├── docs/
-│   ├── architecture.md                # Architecture + Phase 2 plan
-│   ├── protocol.md                    # Event protocol for WebSocket
-│   └── tools.md                       # Tool catalog with schemas
-├── ios/Abyss/
-│   ├── Package.swift                  # SPM manifest (WhisperKit dependency)
-│   ├── Abyss/
-│   │   ├── App/
-│   │   │   ├── AbyssApp.swift         # @main entry point
-│   │   │   ├── Config.swift           # Secret/config loader
-│   │   │   └── Secrets.plist          # (git-ignored) API keys
-│   │   ├── Models/
-│   │   │   ├── Event.swift            # Strongly-typed Event model
-│   │   │   ├── EventBus.swift         # Append-only event stream
-│   │   │   ├── AppState.swift         # State enum + RecordingMode
-│   │   │   └── ConversationMessage.swift
-│   │   ├── Tools/
-│   │   │   ├── ToolProtocol.swift     # Tool protocol + AnyTool
-│   │   │   ├── ToolRegistry.swift     # Name → handler mapping
-│   │   │   ├── ToolRouter.swift       # Dispatch + result emission
-│   │   │   ├── Audio/
-│   │   │   │   ├── STTStartTool.swift
-│   │   │   │   ├── STTStopTool.swift
-│   │   │   │   ├── TTSSpeakTool.swift
-│   │   │   │   └── TTSStopTool.swift
-│   │   │   ├── Agent/
-│   │   │   │   └── AgentTools.swift
-│   │   │   └── Conversation/
-│   │   │       ├── ConvoAppendMessageTool.swift
-│   │   │       └── ConvoSetStateTool.swift
-│   │   ├── Services/
-│   │   │   ├── SpeechTranscriber.swift         # Protocol
-│   │   │   ├── WhisperKitSpeechTranscriber.swift
-│   │   │   ├── TextToSpeech.swift              # Protocol
-│   │   │   ├── ElevenLabsTTS.swift
-│   │   │   └── CursorCloudAgentsClient.swift
-│   │   ├── Conductor/
-│   │   │   ├── ConductorProtocol.swift
-│   │   │   └── LocalConductorStub.swift
-│   │   ├── ViewModels/
-│   │   │   └── ConversationViewModel.swift
-│   │   └── Views/
-│   │       ├── ContentView.swift
-│   │       ├── MicButton.swift
-│   │       ├── TranscriptView.swift
-│   │       ├── EventTimelineView.swift
-│   │       ├── StateIndicator.swift
-│   │       └── SettingsView.swift
-│   └── AbyssTests/
-│       ├── Helpers.swift              # Mock implementations
-│       ├── EventBusTests.swift
-│       ├── ToolRouterTests.swift
-│       ├── LocalConductorStubTests.swift
-│       └── BargeInTests.swift
-└── scripts/                           # (reserved for build scripts)
+│   ├── phase2-architecture.md
+│   ├── protocol.md
+│   └── runbook.md
+└── README.md
 ```
 
-## Features (Phase 1)
+## iOS Setup
 
-- **On-device STT** via WhisperKit with streaming partials
-- **Streaming TTS** via ElevenLabs (low-latency, starts playing before full download)
-- **Formal tool calling** — all actions flow through `tool.call` → `tool.result`
-- **Barge-in** — tap mic while speaking to interrupt and start listening
-- **Recording modes** — tap-to-toggle (default) or press-and-hold
-- **Event timeline** — collapsible debug view showing every event in real-time
-- **Deterministic conductor** — `LocalConductorStub` proves the pipeline without a backend
-- **Cursor Cloud Agent tools** — `agent.spawn`, `agent.status`, `agent.cancel`, `agent.followup`, `agent.list`
+1. Open `ios/Abyss` in Xcode (`Package.swift` based project).
+2. Create local `Secrets.plist` (git-ignored) at:
+   - `/Users/bentontameling/Dev/VoiceBot2/ios/Abyss/Abyss/App/Secrets.plist`
+3. Include keys as needed:
 
-## Testing
+```xml
+<key>ELEVENLABS_API_KEY</key>
+<string>...</string>
+<key>CURSOR_API_KEY</key>
+<string>...</string>
+<key>BACKEND_WS_URL</key>
+<string>ws://<LAN-IP>:8080/ws</string>
+```
+
+4. In app Settings, toggle **Use Server Conductor**.
+
+If `BACKEND_WS_URL` is present and this is first run, server conductor is enabled automatically.
+
+## Server Setup
 
 ```bash
-cd ios/Abyss
+cd /Users/bentontameling/Dev/VoiceBot2/server
+npm install
+cp .env.example .env
+# Set ANTHROPIC_API_KEY in .env
+npm run dev
+```
+
+Default endpoint:
+
+- `ws://localhost:8080/ws`
+
+## Tests
+
+### iOS
+
+```bash
+cd /Users/bentontameling/Dev/VoiceBot2/ios/Abyss
 swift test
 ```
 
-Or in Xcode: ⌘U
+### Server
 
-Tests cover:
-- EventBus ordering and replay
-- ToolRouter dispatch and error handling
-- LocalConductorStub deterministic output
-- Barge-in: tts.stop called before stt.start
+```bash
+cd /Users/bentontameling/Dev/VoiceBot2/server
+npm test
+```
 
-## Troubleshooting
+## Smoke Test
 
-### "ElevenLabs API key is not configured"
-Create `Secrets.plist` as described above and add it to the Xcode target.
+```bash
+cd /Users/bentontameling/Dev/VoiceBot2/server
+npm run smoke
+```
 
-### WhisperKit model download fails
-WhisperKit downloads the model on first run. Ensure you have internet connectivity. The `base.en` model is ~140MB.
+## Docs
 
-### Microphone not working in simulator
-Use a real device. The iOS simulator has limited microphone support.
+- Architecture: `docs/phase2-architecture.md`
+- Protocol: `docs/protocol.md`
+- Runbook: `docs/runbook.md`
 
-### Build errors with WhisperKit
-Ensure you're using Xcode 15.2+ and targeting iOS 17+. Run `swift package resolve` if needed.
+## Secrets
 
-## Phase 2 Roadmap
+Never commit real secrets.
 
-- WebSocket conductor replacing LocalConductorStub
-- Bedrock Nova 2 Lite for reasoning
-- Nova embeddings for semantic code search
-- File editing, git operations, browser automation tools
-- Nova Act sub-agent integration
-- Artifact cards (diff views, log views) in the UI
-
-See [docs/architecture.md](docs/architecture.md) for the full Phase 2 plan.
+- `.env` (server) is local
+- `Secrets.plist` (iOS) is local
+- `.gitignore` already excludes these paths

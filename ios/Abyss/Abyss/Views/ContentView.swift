@@ -35,6 +35,7 @@ struct ContentView: View {
                 TranscriptView(
                     messages: viewModel.messages,
                     partialTranscript: viewModel.partialTranscript,
+                    assistantPartialSpeech: viewModel.assistantPartialSpeech,
                     appState: viewModel.appState
                 )
 
@@ -118,7 +119,13 @@ struct ContentView: View {
             .navigationTitle("Abyss")
             .navigationBarTitleDisplayMode(.inline)
             .sheet(isPresented: $showSettings) {
-                SettingsView(recordingMode: $viewModel.recordingMode)
+                SettingsView(
+                    recordingMode: $viewModel.recordingMode,
+                    useServerConductor: Binding(
+                        get: { viewModel.useServerConductor },
+                        set: { viewModel.setUseServerConductor($0) }
+                    )
+                )
             }
             .alert("Error", isPresented: $viewModel.showError) {
                 Button("OK") { viewModel.showError = false }

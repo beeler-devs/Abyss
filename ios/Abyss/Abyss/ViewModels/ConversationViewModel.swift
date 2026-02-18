@@ -11,9 +11,11 @@ final class ConversationViewModel: ObservableObject {
     @Published var messages: [ConversationMessage] = []
     @Published var appState: AppState = .idle
     @Published var partialTranscript: String = ""
+    @Published var assistantPartialSpeech: String = ""
     @Published var errorMessage: String?
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
+    @Published private(set) var useServerConductor: Bool = false
 
     @AppStorage("recordingMode") var recordingMode: RecordingMode = .tapToToggle
 
@@ -28,20 +30,44 @@ final class ConversationViewModel: ObservableObject {
 
     private var toolRegistry: ToolRegistry!
     private var toolRouter: ToolRouter!
-    private var conductor: Conductor = LocalConductorStub()
 
     // Services (var to allow injection in test init)
     private var transcriber: SpeechTranscriber
     private var tts: TextToSpeech
     private let transcriptFormatter: FastTranscriptFormatter
 
+    private let localConductor: Conductor
+    private let sessionId: String
+    private var activeConductorClient: ConductorClient?
+    private var inboundEventsTask: Task<Void, Never>?
+    private var isUsingServerClient = false
+
     private var cancellables = Set<AnyCancellable>()
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
     private var agentStatusPollingTask: Task<Void, Never>?
+    private var isStoppingRecording = false
+
+    private static let useServerConductorKey = "useServerConductor"
 
     // MARK: - Init
 
     init() {
+        let defaults = UserDefaults.standard
+
+        // When a backend URL is present in Secrets.plist the server conductor is always
+        // preferred, regardless of any stale UserDefaults value (e.g. from a previous
+        // failed-send fallback). UserDefaults is only consulted when no URL is configured.
+        let resolvedUseServer: Bool
+        if Config.isBackendWSConfigured {
+            resolvedUseServer = true
+        } else {
+            resolvedUseServer = defaults.bool(forKey: Self.useServerConductorKey)
+        }
+        defaults.set(resolvedUseServer, forKey: Self.useServerConductorKey)
+        self.useServerConductor = resolvedUseServer
+        self.localConductor = LocalConductorStub()
+        self.sessionId = UUID().uuidString
+
         let elevenLabs = ElevenLabsTTS(
             voiceId: Config.elevenLabsVoiceId,
             modelId: Config.elevenLabsModelId
@@ -56,20 +82,51 @@ final class ConversationViewModel: ObservableObject {
         startSession()
     }
 
-    /// Initializer for testing with injectable dependencies.
+    /// Initializer for testing with injectable dependencies and local-conductor semantics.
     init(
         conductor: Conductor,
         transcriber: SpeechTranscriber,
         tts: TextToSpeech,
         transcriptFormatter: FastTranscriptFormatter = FastTranscriptFormatter()
     ) {
-        self.conductor = conductor
+        self.useServerConductor = false
+        self.localConductor = conductor
+        self.sessionId = UUID().uuidString
         self.transcriber = transcriber
         self.tts = tts
         self.transcriptFormatter = transcriptFormatter
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
+    }
+
+    /// Initializer for testing with an explicit conductor client.
+    init(
+        conductorClient: ConductorClient,
+        transcriber: SpeechTranscriber,
+        tts: TextToSpeech,
+        transcriptFormatter: FastTranscriptFormatter = FastTranscriptFormatter(),
+        sessionId: String = UUID().uuidString,
+        autoStartSession: Bool = true
+    ) {
+        self.useServerConductor = false
+        self.localConductor = LocalConductorStub()
+        self.sessionId = sessionId
+        self.activeConductorClient = conductorClient
+        self.transcriber = transcriber
+        self.tts = tts
+        self.transcriptFormatter = transcriptFormatter
+
+        setupToolSystem(transcriber: transcriber, tts: tts)
+        observeStores()
+
+        if autoStartSession {
+            startSession(using: conductorClient)
+        }
+    }
+
+    deinit {
+        inboundEventsTask?.cancel()
     }
 
     private func preloadTranscriber() {
@@ -130,27 +187,123 @@ final class ConversationViewModel: ObservableObject {
 
     // MARK: - Session
 
-    private func startSession() {
+    private func startSession(using client: ConductorClient? = nil) {
         Task {
-            let events = await conductor.handleSessionStart()
-            await toolRouter.processEvents(events)
+            if let client {
+                await attachConductorClient(client)
+            } else {
+                await configureConductorClient(forceReconnect: true)
+            }
         }
+    }
+
+    func setUseServerConductor(_ enabled: Bool) {
+        let resolved = enabled && Config.isBackendWSConfigured
+        guard useServerConductor != resolved else { return }
+
+        useServerConductor = resolved
+        UserDefaults.standard.set(resolved, forKey: Self.useServerConductorKey)
+
+        Task {
+            await configureConductorClient(forceReconnect: true)
+        }
+    }
+
+    private func configureConductorClient(forceReconnect: Bool) async {
+        let shouldUseServer = useServerConductor && Config.isBackendWSConfigured
+        if !forceReconnect, shouldUseServer == isUsingServerClient, activeConductorClient != nil {
+            return
+        }
+
+        await disconnectConductorClient()
+
+        if shouldUseServer, let backendURL = Config.backendWSURL {
+            let wsClient = WebSocketConductorClient(backendURL: backendURL)
+            do {
+                isUsingServerClient = true
+                try await connectConductorClient(wsClient)
+                return
+            } catch {
+                eventBus.emit(Event.error(
+                    code: "conductor_connect_failed",
+                    message: "Could not connect to server conductor. Falling back to local conductor.",
+                    sessionId: sessionId
+                ))
+                isUsingServerClient = false
+            }
+        }
+
+        let localClient = LocalConductorClient(conductor: localConductor)
+        do {
+            try await connectConductorClient(localClient)
+            activeConductorClient = localClient
+        } catch {
+            eventBus.emit(Event.error(
+                code: "local_conductor_failed",
+                message: "Failed to start local conductor: \(error.localizedDescription)",
+                sessionId: sessionId
+            ))
+        }
+    }
+
+    private func attachConductorClient(_ client: ConductorClient) async {
+        await disconnectConductorClient()
+        do {
+            try await connectConductorClient(client)
+            activeConductorClient = client
+        } catch {
+            eventBus.emit(Event.error(
+                code: "conductor_connect_failed",
+                message: "Failed to attach conductor client: \(error.localizedDescription)",
+                sessionId: sessionId
+            ))
+        }
+    }
+
+    private func connectConductorClient(_ client: ConductorClient) async throws {
+        activeConductorClient = client
+        try await client.connect(sessionId: sessionId)
+
+        inboundEventsTask?.cancel()
+        inboundEventsTask = Task { [weak self] in
+            guard let self else { return }
+            for await event in client.inboundEvents {
+                await self.handleInboundEvent(event)
+            }
+        }
+    }
+
+    private func disconnectConductorClient() async {
+        inboundEventsTask?.cancel()
+        inboundEventsTask = nil
+
+        if let client = activeConductorClient {
+            await client.disconnect()
+        }
+        activeConductorClient = nil
     }
 
     // MARK: - User Intents (UI calls these)
 
     /// User tapped the mic button (tap-to-toggle mode).
     func micTapped() {
+        print("🔔 [STEP 1] micTapped() — appState=\(appState.rawValue), isStoppingRecording=\(isStoppingRecording)")
         Task {
+            print("🔔 [STEP 1-TASK] micTapped Task running — appState=\(appState.rawValue)")
             switch appState {
             case .idle, .error:
                 await startListening()
             case .listening, .transcribing:
+                guard !isStoppingRecording else {
+                    print("🚫 [STEP 1a] tap ignored — isStoppingRecording=true, bailing out")
+                    return
+                }
                 await stopListeningAndProcess()
             case .speaking:
                 // Barge-in: stop TTS, then start listening
                 await bargeIn()
             case .thinking:
+                print("🚫 [STEP 1b] tap ignored — appState=.thinking")
                 break // Can't interrupt thinking
             }
         }
@@ -170,9 +323,8 @@ final class ConversationViewModel: ObservableObject {
     /// User released (press-and-hold mode).
     func micReleased() {
         Task {
-            if appState == .listening || appState == .transcribing {
-                await stopListeningAndProcess()
-            }
+            guard (appState == .listening || appState == .transcribing), !isStoppingRecording else { return }
+            await stopListeningAndProcess()
         }
     }
 
@@ -182,9 +334,9 @@ final class ConversationViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return }
 
         Task {
-            eventBus.emit(Event.transcriptFinal(trimmed))
-            let conductorEvents = await conductor.handleTranscript(trimmed)
-            await toolRouter.processEvents(conductorEvents)
+            let transcriptEvent = Event.transcriptFinal(trimmed, sessionId: sessionId)
+            eventBus.emit(transcriptEvent)
+            await sendEventToConductor(transcriptEvent)
         }
     }
 
@@ -204,7 +356,8 @@ final class ConversationViewModel: ObservableObject {
         Task {
             let cancelEvent = Event.toolCall(
                 name: AgentCancelTool.name,
-                arguments: encode(AgentCancelTool.Arguments(id: agentID))
+                arguments: encode(AgentCancelTool.Arguments(id: agentID)),
+                sessionId: sessionId
             )
             eventBus.emit(cancelEvent)
             if case .toolCall(let tc) = cancelEvent.kind {
@@ -218,11 +371,13 @@ final class ConversationViewModel: ObservableObject {
     /// Start listening via tool calls.
     private func startListening() async {
         partialTranscript = ""
+        assistantPartialSpeech = ""
 
         // Set state to listening
         let setStateEvent = Event.toolCall(
             name: "convo.setState",
-            arguments: encode(ConvoSetStateTool.Arguments(state: "listening"))
+            arguments: encode(ConvoSetStateTool.Arguments(state: "listening")),
+            sessionId: sessionId
         )
         eventBus.emit(setStateEvent)
         if case .toolCall(let tc) = setStateEvent.kind {
@@ -232,7 +387,8 @@ final class ConversationViewModel: ObservableObject {
         // Start STT
         let sttEvent = Event.toolCall(
             name: "stt.start",
-            arguments: encode(STTStartTool.Arguments(mode: recordingMode.rawValue))
+            arguments: encode(STTStartTool.Arguments(mode: recordingMode.rawValue)),
+            sessionId: sessionId
         )
         eventBus.emit(sttEvent)
         if case .toolCall(let tc) = sttEvent.kind {
@@ -246,32 +402,51 @@ final class ConversationViewModel: ObservableObject {
 
     /// Stop listening and send transcript to conductor.
     private func stopListeningAndProcess() async {
+        print("⏹️ [STEP 2] stopListeningAndProcess() ENTER — appState=\(appState.rawValue)")
+        isStoppingRecording = true
+        defer {
+            print("⏹️ [STEP 2-EXIT] stopListeningAndProcess() EXIT — resetting isStoppingRecording")
+            isStoppingRecording = false
+        }
+
         // Set state to transcribing
         let setTranscribingEvent = Event.toolCall(
             name: "convo.setState",
-            arguments: encode(ConvoSetStateTool.Arguments(state: "transcribing"))
+            arguments: encode(ConvoSetStateTool.Arguments(state: "transcribing")),
+            sessionId: sessionId
         )
         eventBus.emit(setTranscribingEvent)
         if case .toolCall(let tc) = setTranscribingEvent.kind {
             await toolRouter.dispatch(tc)
         }
+        print("⏹️ [STEP 3] setState(transcribing) dispatched — appState now=\(appState.rawValue)")
 
         // Stop STT and get final transcript
         let sttStopEvent = Event.toolCall(
             name: "stt.stop",
-            arguments: encode(STTStopTool.Arguments())
+            arguments: encode(STTStopTool.Arguments()),
+            sessionId: sessionId
         )
         eventBus.emit(sttStopEvent)
 
+        print("⏹️ [STEP 4] stt.stop dispatched — WAITING for WhisperKit final transcription...")
         var finalTranscript = partialTranscript
         if case .toolCall(let tc) = sttStopEvent.kind {
             let result = await toolRouter.dispatch(tc)
-            if case .toolResult(let tr) = result.kind, let json = tr.result {
-                if let decoded = try? JSONDecoder().decode(STTStopTool.Result.self, from: Data(json.utf8)) {
+            if case .toolResult(let tr) = result.kind {
+                if tr.isError {
+                    print("⏹️ [STEP 4-ERR] stt.stop returned an error: \(tr.error ?? "unknown")")
+                } else if let json = tr.result,
+                          let decoded = try? JSONDecoder().decode(STTStopTool.Result.self, from: Data(json.utf8)) {
                     finalTranscript = decoded.finalTranscript
+                } else {
+                    print("⏹️ [STEP 4-WARN] stt.stop result could not be decoded — json=\(tr.result ?? "nil")")
                 }
+            } else {
+                print("⏹️ [STEP 4-WARN] stt.stop returned unexpected event kind")
             }
         }
+        print("⏹️ [STEP 5] stt.stop returned — finalTranscript='\(finalTranscript)'")
 
         // Use partial if final is empty, but skip placeholder text
         if finalTranscript.isEmpty {
@@ -279,15 +454,20 @@ final class ConversationViewModel: ObservableObject {
             // Don't use the "Listening…" placeholder as actual speech
             if trimmed != "Listening…" && !trimmed.isEmpty {
                 finalTranscript = trimmed
+                print("⏹️ [STEP 5a] empty final — fell back to partial: '\(finalTranscript)'")
+            } else {
+                print("⏹️ [STEP 5b] both final and partial are empty/placeholder — sending empty transcript")
             }
         }
 
         let normalizedTranscript = transcriptFormatter.normalizeForAgent(finalTranscript)
+        print("⏹️ [STEP 6] sending to conductor — normalizedTranscript='\(normalizedTranscript)'")
 
         // Emit normalized transcript and send to conductor.
-        eventBus.emit(Event.transcriptFinal(normalizedTranscript))
-        let conductorEvents = await conductor.handleTranscript(normalizedTranscript)
-        await toolRouter.processEvents(conductorEvents)
+        let transcriptEvent = Event.transcriptFinal(normalizedTranscript, sessionId: sessionId)
+        eventBus.emit(transcriptEvent)
+        await sendEventToConductor(transcriptEvent)
+        print("⏹️ [STEP 7] sendEventToConductor returned — conversation turn complete")
 
         partialTranscript = ""
     }
@@ -297,21 +477,29 @@ final class ConversationViewModel: ObservableObject {
         // 1. Stop TTS via tool call
         let ttsStopEvent = Event.toolCall(
             name: "tts.stop",
-            arguments: encode(TTSStopTool.Arguments())
+            arguments: encode(TTSStopTool.Arguments()),
+            sessionId: sessionId
         )
         eventBus.emit(ttsStopEvent)
         if case .toolCall(let tc) = ttsStopEvent.kind {
             await toolRouter.dispatch(tc)
         }
 
-        // 2. Start listening
+        // 2. Notify server best-effort (non-blocking)
+        let interruptedEvent = Event.audioOutputInterrupted("barge_in", sessionId: sessionId)
+        eventBus.emit(interruptedEvent)
+        Task {
+            await sendEventToConductor(interruptedEvent, surfaceErrors: false)
+        }
+
+        // 3. Start listening immediately
         await startListening()
     }
 
     /// Handle partial transcript from STT.
     private func handlePartialTranscript(_ text: String) {
         partialTranscript = text
-        eventBus.emit(Event.transcriptPartial(text))
+        eventBus.emit(Event.transcriptPartial(text, sessionId: sessionId))
 
         // Update state to transcribing if we're getting partials
         if appState == .listening {
@@ -320,18 +508,103 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
+    private func sendEventToConductor(_ event: Event, surfaceErrors: Bool = true) async {
+        let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "nil"
+        print("📡 [SEND-1] sendEventToConductor — client=\(clientType), eventKind=\(event.kind.displayName)")
+        guard let client = activeConductorClient else {
+            print("📡 [SEND-ERR] activeConductorClient is nil — bailing")
+            if surfaceErrors {
+                eventBus.emit(Event.error(
+                    code: "conductor_missing",
+                    message: "Conductor client is not available.",
+                    sessionId: sessionId
+                ))
+            }
+            return
+        }
+
+        print("📡 [SEND-2] calling client.send()...")
+        do {
+            try await client.send(event: event)
+            print("📡 [SEND-3] client.send() returned OK")
+        } catch {
+            print("📡 [SEND-ERR] client.send() threw: \(error.localizedDescription)")
+
+            // When the server conductor fails (e.g. server unreachable or WebSocket timeout),
+            // automatically fall back to the local conductor so the conversation can continue
+            // instead of hanging indefinitely.
+            if isUsingServerClient {
+                print("📡 [SEND-FALLBACK] server conductor failed — switching to local conductor and retrying")
+                isUsingServerClient = false
+                useServerConductor = false
+                // Do NOT persist false to UserDefaults here — next launch should re-evaluate
+                // from Secrets.plist (so adding a working URL will auto-reconnect).
+
+                let localClient = LocalConductorClient(conductor: localConductor)
+                do {
+                    try await connectConductorClient(localClient)
+                    try await localClient.send(event: event)
+                    print("📡 [SEND-FALLBACK] local conductor send OK")
+                } catch {
+                    print("📡 [SEND-FALLBACK-ERR] local conductor send also failed: \(error.localizedDescription)")
+                    if surfaceErrors {
+                        eventBus.emit(Event.error(
+                            code: "conductor_send_failed",
+                            message: "Conductor unavailable: \(error.localizedDescription)",
+                            sessionId: sessionId
+                        ))
+                    }
+                }
+            } else if surfaceErrors {
+                eventBus.emit(Event.error(
+                    code: "conductor_send_failed",
+                    message: "Failed to send event to conductor: \(error.localizedDescription)",
+                    sessionId: sessionId
+                ))
+            }
+        }
+    }
+
+    private func handleInboundEvent(_ event: Event) async {
+        print("📥 [INBOUND] handleInboundEvent — \(event.kind.displayName)")
+        switch event.kind {
+        case .assistantSpeechPartial(let partial):
+            guard assistantPartialSpeech != partial.text else { return }
+            assistantPartialSpeech = partial.text
+            eventBus.emit(event)
+
+        case .assistantSpeechFinal:
+            assistantPartialSpeech = ""
+            eventBus.emit(event)
+
+        case .toolCall(let toolCall):
+            eventBus.emit(event)
+            print("📥 [INBOUND] dispatching tool '\(toolCall.name)'...")
+            let toolResultEvent = await toolRouter.dispatch(toolCall)
+            print("📥 [INBOUND] tool '\(toolCall.name)' done — sending result back")
+            await sendEventToConductor(toolResultEvent)
+            print("📥 [INBOUND] tool '\(toolCall.name)' result sent")
+
+        case .assistantUIPatch, .agentStatus, .sessionStart, .toolResult, .error,
+                .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted:
+            eventBus.emit(event)
+        }
+        print("📥 [INBOUND] handleInboundEvent DONE — \(event.kind.displayName)")
+    }
+
     /// Surface an error to the UI.
     private func handleToolError(_ message: String) async {
         let setErrorEvent = Event.toolCall(
             name: "convo.setState",
-            arguments: encode(ConvoSetStateTool.Arguments(state: "error"))
+            arguments: encode(ConvoSetStateTool.Arguments(state: "error")),
+            sessionId: sessionId
         )
         eventBus.emit(setErrorEvent)
         if case .toolCall(let tc) = setErrorEvent.kind {
             await toolRouter.dispatch(tc)
         }
 
-        eventBus.emit(Event.error(code: "tool_error", message: message))
+        eventBus.emit(Event.error(code: "tool_error", message: message, sessionId: sessionId))
         errorMessage = message
         showError = true
     }
@@ -510,7 +783,8 @@ final class ConversationViewModel: ObservableObject {
     private func requestAgentStatus(agentID: String) async {
         let statusEvent = Event.toolCall(
             name: AgentStatusTool.name,
-            arguments: encode(AgentStatusTool.Arguments(id: agentID))
+            arguments: encode(AgentStatusTool.Arguments(id: agentID)),
+            sessionId: sessionId
         )
         eventBus.emit(statusEvent)
         if case .toolCall(let tc) = statusEvent.kind {
