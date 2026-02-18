@@ -1,6 +1,4 @@
-# Xcode
-*.xcodeproj/
-*.xcworkspace/
+# Xcode (track .xcodeproj and .xcworkspace; ignore build artifacts and user state)
 build/
 DerivedData/
 *.pbxuser
@@ -22,11 +20,10 @@ Package.resolved
 # CocoaPods
 Pods/
 
-# Secrets / Config
-ios/Abyss/Abyss/App/Secrets.xcconfig
-ios/Abyss/Abyss/App/Secrets.plist
-Secrets.plist
-secrets.plist
+# Secrets / Config (never commit secrets)
+**/Secrets.plist
+**/Secrets.xcconfig
+**/secrets.plist
 
 # macOS
 .DS_Store
