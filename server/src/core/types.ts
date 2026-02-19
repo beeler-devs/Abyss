@@ -37,6 +37,7 @@ export interface PendingToolCall {
 
 export interface SessionState {
   sessionId: string;
+  githubToken?: string;
   history: ConversationTurn[];
   pendingToolCalls: Map<string, PendingToolCall>;
   toolResultResolvers: Map<

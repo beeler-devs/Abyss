@@ -139,6 +139,9 @@ export class ConductorService {
 
     switch (event.type) {
       case "session.start": {
+        if (typeof event.payload.githubToken === "string" && event.payload.githubToken) {
+          session.githubToken = event.payload.githubToken;
+        }
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;

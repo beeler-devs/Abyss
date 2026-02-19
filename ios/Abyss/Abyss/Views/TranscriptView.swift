@@ -8,6 +8,8 @@ import AppKit
 /// Displays the conversation transcript with auto-scrolling.
 struct TranscriptView: View {
     let messages: [ConversationMessage]
+    var partialTranscript: String = ""
+    var assistantPartialSpeech: String = ""
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -18,8 +20,28 @@ struct TranscriptView: View {
                             .id(message.id)
                     }
 
+                    // Live user speech while recording
+                    if !partialTranscript.isEmpty {
+                        MessageBubble(message: ConversationMessage(
+                            role: .user,
+                            text: partialTranscript,
+                            isPartial: true
+                        ))
+                        .id("partial_user")
+                    }
+
+                    // Live AI response building up
+                    if !assistantPartialSpeech.isEmpty {
+                        MessageBubble(message: ConversationMessage(
+                            role: .assistant,
+                            text: assistantPartialSpeech,
+                            isPartial: true
+                        ))
+                        .id("partial_assistant")
+                    }
+
                     // Empty state
-                    if messages.isEmpty {
+                    if messages.isEmpty && partialTranscript.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -39,6 +61,16 @@ struct TranscriptView: View {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
+                }
+            }
+            .onChange(of: partialTranscript) { _, _ in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("partial_user", anchor: .bottom)
+                }
+            }
+            .onChange(of: assistantPartialSpeech) { _, _ in
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("partial_assistant", anchor: .bottom)
                 }
             }
         }

@@ -7,12 +7,8 @@ struct AbyssApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if authManager.isAuthenticated {
-                ContentView(chatList: chatList)
-                    .environmentObject(authManager)
-            } else {
-                GitHubLoginView(authManager: authManager)
-            }
+            ContentView(chatList: chatList)
+                .environmentObject(authManager)
         }
     }
 }
