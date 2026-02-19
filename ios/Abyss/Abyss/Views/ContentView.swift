@@ -94,9 +94,11 @@ struct ContentView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            Image(systemName: "bubble.left.and.bubble.right")
-                .font(.system(size: 48))
-                .foregroundStyle(.tertiary)
+            Image("AbyssLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 72, height: 72)
+                .clipShape(RoundedRectangle(cornerRadius: 16))
             Text("No chat selected")
                 .font(.headline)
                 .foregroundStyle(.secondary)

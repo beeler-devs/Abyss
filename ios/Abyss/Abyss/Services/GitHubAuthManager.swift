@@ -11,6 +11,9 @@ final class GitHubAuthManager: NSObject, ObservableObject {
     private static let keychainService = "app.abyss.github"
     private static let keychainAccount = "github_access_token"
 
+    /// Retained so ARC doesn't release the session before the callback fires.
+    private var authSession: ASWebAuthenticationSession?
+
     override init() {
         super.init()
         isAuthenticated = (Self.loadToken() != nil)
@@ -68,7 +71,9 @@ final class GitHubAuthManager: NSObject, ObservableObject {
             let session = ASWebAuthenticationSession(
                 url: authURL,
                 callbackURLScheme: "abyss"
-            ) { callbackURL, error in
+            ) { [weak self] callbackURL, error in
+                Task { @MainActor in self?.authSession = nil }
+
                 if let error {
                     continuation.resume(throwing: error)
                     return
@@ -93,6 +98,7 @@ final class GitHubAuthManager: NSObject, ObservableObject {
 
             session.presentationContextProvider = self
             session.prefersEphemeralWebBrowserSession = false
+            authSession = session
             session.start()
         }
     }
@@ -188,12 +194,17 @@ final class GitHubAuthManager: NSObject, ObservableObject {
 
 extension GitHubAuthManager: ASWebAuthenticationPresentationContextProviding {
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        DispatchQueue.main.sync {
+        let findWindow = {
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
-                .flatMap { $0.windows }
-                .first { $0.isKeyWindow }
-                ?? UIWindow()
+                .compactMap { $0.keyWindow }
+                .first ?? UIWindow()
         }
+        // ASWebAuthenticationSession calls this on the main thread; sync-ing onto
+        // main from main deadlocks, so branch on the current thread.
+        if Thread.isMainThread {
+            return findWindow()
+        }
+        return DispatchQueue.main.sync { findWindow() }
     }
 }
