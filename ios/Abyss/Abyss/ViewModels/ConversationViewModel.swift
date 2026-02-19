@@ -46,6 +46,7 @@ final class ConversationViewModel: ObservableObject {
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
     private var agentStatusPollingTask: Task<Void, Never>?
     private var isStoppingRecording = false
+    private var isStartingRecording = false
     private var notifiedTerminalAgentIDs: Set<String> = []
 
     private static let useServerConductorKey = "useServerConductor"
@@ -292,11 +293,17 @@ final class ConversationViewModel: ObservableObject {
     func micTapped() {
         switch appState {
         case .idle, .error:
+            guard !isStartingRecording, !isStoppingRecording else { return }
             // Optimistic update so waveform appears immediately
             appState = .listening
             appStateStore.current = .listening
             Task { await startListening() }
         case .listening, .transcribing:
+            if !transcriber.isListening {
+                guard !isStartingRecording, !isStoppingRecording else { return }
+                Task { await startListening() }
+                return
+            }
             guard !isStoppingRecording else { return }
             Task { await stopListeningAndProcess() }
         case .speaking:
@@ -311,6 +318,7 @@ final class ConversationViewModel: ObservableObject {
         if appState == .speaking {
             Task { await bargeIn() }
         } else {
+            guard !isStartingRecording, !isStoppingRecording else { return }
             // Optimistic update so waveform appears immediately
             appState = .listening
             appStateStore.current = .listening
@@ -372,8 +380,16 @@ final class ConversationViewModel: ObservableObject {
 
     /// Start listening via tool calls.
     private func startListening() async {
+        guard !isStartingRecording else { return }
+        isStartingRecording = true
+        defer { isStartingRecording = false }
+
         partialTranscript = ""
         assistantPartialSpeech = ""
+
+        if transcriber.isListening {
+            return
+        }
 
         // Set state to listening
         let setStateEvent = Event.toolCall(
@@ -453,7 +469,7 @@ final class ConversationViewModel: ObservableObject {
         // Use partial if final is empty, but skip placeholder text
         if finalTranscript.isEmpty {
             let trimmed = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed != "Listening…" && !trimmed.isEmpty {
+            if !isPlaceholderTranscript(trimmed) && !trimmed.isEmpty {
                 finalTranscript = trimmed
                 print("⏹️ [STEP 5a] empty final — fell back to partial: '\(finalTranscript)'")
             } else {
@@ -850,6 +866,17 @@ final class ConversationViewModel: ObservableObject {
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) -> T? {
         guard let json else { return nil }
         return try? JSONDecoder().decode(type, from: Data(json.utf8))
+    }
+
+    private func isPlaceholderTranscript(_ text: String) -> Bool {
+        let normalized = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+
+        return normalized.isEmpty
+            || normalized.hasPrefix("listening")
+            || normalized.hasPrefix("[audio level")
+            || normalized == "[no audio captured]"
     }
 }
 
