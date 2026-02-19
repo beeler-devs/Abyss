@@ -29,6 +29,7 @@ struct Event: Identifiable, Codable, Sendable {
         case toolCall(ToolCall)
         case toolResult(ToolResult)
         case error(ErrorInfo)
+        case agentCompleted(AgentCompleted)
     }
 
     // MARK: - Payloads
@@ -99,6 +100,14 @@ struct Event: Identifiable, Codable, Sendable {
         let code: String
         let message: String
     }
+
+    struct AgentCompleted: Codable, Sendable {
+        let agentId: String
+        let status: String      // "FINISHED" or "FAILED"
+        let summary: String     // may be empty string
+        let name: String?       // agent display name
+        let prompt: String?     // original task prompt
+    }
 }
 
 // MARK: - Convenience Factories
@@ -151,6 +160,19 @@ extension Event {
     static func error(code: String, message: String, sessionId: String? = nil) -> Event {
         Event(sessionId: sessionId, kind: .error(ErrorInfo(code: code, message: message)))
     }
+
+    static func agentCompleted(
+        agentId: String,
+        status: String,
+        summary: String,
+        name: String?,
+        prompt: String?,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .agentCompleted(AgentCompleted(
+            agentId: agentId, status: status, summary: summary, name: name, prompt: prompt
+        )))
+    }
 }
 
 // MARK: - Display Helpers
@@ -169,6 +191,7 @@ extension Event.Kind {
         case .toolCall(let tc): return "tool.call: \(tc.name)"
         case .toolResult(let tr): return tr.isError ? "tool.result: ERROR" : "tool.result: OK"
         case .error(let e): return "error: \(e.code)"
+        case .agentCompleted(let ac): return "agent.completed: \(ac.agentId)"
         }
     }
 }

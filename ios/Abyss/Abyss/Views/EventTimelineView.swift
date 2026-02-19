@@ -110,6 +110,8 @@ struct EventRow: View {
                     .foregroundStyle(tr.isError ? .red : .green)
             case .error:
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+            case .agentCompleted:
+                Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
             }
         }
     }
@@ -141,6 +143,8 @@ struct EventRow: View {
             return "tool.result: \(tr.result?.prefix(30) ?? "ok")"
         case .error(let e):
             return "error[\(e.code)]: \(e.message.prefix(30))"
+        case .agentCompleted(let ac):
+            return "agent.completed: \(ac.agentId.prefix(8)) [\(ac.status)]"
         }
     }
 

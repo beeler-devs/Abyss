@@ -46,6 +46,7 @@ final class ConversationViewModel: ObservableObject {
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
     private var agentStatusPollingTask: Task<Void, Never>?
     private var isStoppingRecording = false
+    private var notifiedTerminalAgentIDs: Set<String> = []
 
     private static let useServerConductorKey = "useServerConductor"
 
@@ -604,7 +605,8 @@ final class ConversationViewModel: ObservableObject {
             print("📥 [INBOUND] tool '\(toolCall.name)' result sent")
 
         case .assistantUIPatch, .agentStatus, .sessionStart, .toolResult, .error,
-                .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted:
+                .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,
+                .agentCompleted:
             eventBus.emit(event)
         }
         print("📥 [INBOUND] handleInboundEvent DONE — \(event.kind.displayName)")
@@ -701,6 +703,9 @@ final class ConversationViewModel: ObservableObject {
         if result.status.uppercased() != "FINISHED" {
             ensureAgentStatusPolling()
         }
+        if let card = agentProgressCards.first(where: { $0.agentId == result.id }) {
+            notifyAgentCompletionIfNeeded(card: card)
+        }
     }
 
     private func handleAgentStatusResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
@@ -733,6 +738,9 @@ final class ConversationViewModel: ObservableObject {
         if !agentProgressCards.filter({ !$0.isTerminal && $0.agentId != nil }).isEmpty {
             ensureAgentStatusPolling()
         }
+        if let card = agentProgressCards.first(where: { $0.agentId == result.id }) {
+            notifyAgentCompletionIfNeeded(card: card)
+        }
     }
 
     private func handleAgentCancelResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
@@ -743,6 +751,23 @@ final class ConversationViewModel: ObservableObject {
             card.applyCancelled(agentID: result.id)
         }
         sortCardsByLastUpdate()
+    }
+
+    private func notifyAgentCompletionIfNeeded(card: AgentProgressCard) {
+        let status = card.normalizedStatus
+        guard status == "FINISHED" || status == "FAILED" else { return }
+        guard let agentId = card.agentId else { return }
+        guard !notifiedTerminalAgentIDs.contains(agentId) else { return }
+        notifiedTerminalAgentIDs.insert(agentId)
+        let event = Event.agentCompleted(
+            agentId: agentId,
+            status: status,
+            summary: card.summary.isEmpty ? "No summary available." : card.summary,
+            name: card.title.isEmpty ? nil : card.title,
+            prompt: card.prompt.isEmpty ? nil : card.prompt,
+            sessionId: sessionId
+        )
+        Task { await sendEventToConductor(event) }
     }
 
     @discardableResult
