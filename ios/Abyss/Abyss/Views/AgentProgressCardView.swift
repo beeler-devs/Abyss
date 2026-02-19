@@ -6,6 +6,7 @@ struct AgentProgressCardView: View {
     let onRefresh: () -> Void
     let onCancel: () -> Void
     let onDismiss: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -13,12 +14,12 @@ struct AgentProgressCardView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(card.title)
                         .font(.headline)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
 
                     if let repository = card.repository {
                         Text(repository)
                             .font(.caption.monospaced())
-                            .foregroundStyle(Color.white.opacity(0.55))
+                            .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
                             .lineLimit(1)
                     }
                 }
@@ -30,14 +31,14 @@ struct AgentProgressCardView: View {
                     .foregroundStyle(statusBadgeForeground)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(statusBadgeBackground)
+                    .background(AppTheme.agentCardStatusBadgeBackground(foreground: statusBadgeForeground, colorScheme: colorScheme))
 
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(Color.white.opacity(0.5))
+                        .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
                         .frame(width: 24, height: 24)
-                        .background(Color.white.opacity(0.1))
+                        .background(AppTheme.agentCardDismissBackground(for: colorScheme))
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -52,28 +53,28 @@ struct AgentProgressCardView: View {
 
                         Text(step.text)
                             .font(.body)
-                            .foregroundStyle(stepTextColor(for: step.state))
+                            .foregroundStyle(stepTextColor(for: step.state, colorScheme: colorScheme))
                     }
                 }
             }
 
             Text(card.errorMessage ?? card.summary)
                 .font(.footnote)
-                .foregroundStyle(card.errorMessage == nil ? Color.white.opacity(0.8) : Color.red.opacity(0.85))
+                .foregroundStyle(card.errorMessage == nil ? AppTheme.agentCardText(for: colorScheme).opacity(0.8) : Color.red.opacity(0.85))
                 .lineLimit(3)
 
             VStack(spacing: 8) {
                 HStack {
                     Text(statusFooterText)
                         .font(.footnote)
-                        .foregroundStyle(Color.white.opacity(0.75))
+                        .foregroundStyle(AppTheme.agentCardTertiaryText(for: colorScheme))
 
                     Spacer()
 
                     HStack(spacing: 8) {
                         Button("Refresh", action: onRefresh)
                             .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.85))
+                            .foregroundStyle(AppTheme.agentCardText(for: colorScheme).opacity(0.85))
 
                         if !card.isTerminal {
                             Button("Stop", action: onCancel)
@@ -87,7 +88,7 @@ struct AgentProgressCardView: View {
                     let width = max(0, proxy.size.width * card.progress)
                     ZStack(alignment: .leading) {
                         Capsule()
-                            .fill(Color.white.opacity(0.12))
+                            .fill(AppTheme.agentCardProgressTrack(for: colorScheme))
                             .frame(height: 4)
 
                         Capsule()
@@ -103,11 +104,11 @@ struct AgentProgressCardView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 20)
-                .fill(Color(red: 20 / 255, green: 22 / 255, blue: 27 / 255))
+                .fill(AppTheme.agentCardBackground(for: colorScheme))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 20)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
         )
     }
 
@@ -117,12 +118,8 @@ struct AgentProgressCardView: View {
         case "FAILED": return .red
         case "STOPPED", "CANCELLED": return .orange
         case "RUNNING": return .yellow
-        default: return .white.opacity(0.85)
+        default: return AppTheme.agentCardText(for: colorScheme).opacity(0.85)
         }
-    }
-
-    private var statusBadgeBackground: Color {
-        statusBadgeForeground.opacity(0.16)
     }
 
     private var progressFillColor: Color {
@@ -130,7 +127,7 @@ struct AgentProgressCardView: View {
         case "FINISHED": return .green
         case "FAILED": return .red
         case "STOPPED", "CANCELLED": return .orange
-        default: return .white.opacity(0.9)
+        default: return AppTheme.agentCardText(for: colorScheme).opacity(0.9)
         }
     }
 
@@ -148,14 +145,14 @@ struct AgentProgressCardView: View {
         }
     }
 
-    private func stepTextColor(for state: AgentProgressCard.Step.State) -> Color {
+    private func stepTextColor(for state: AgentProgressCard.Step.State, colorScheme: ColorScheme) -> Color {
         switch state {
         case .pending:
-            return Color.white.opacity(0.62)
+            return AppTheme.agentCardStepPendingText(for: colorScheme)
         case .failed:
             return Color.red.opacity(0.9)
         default:
-            return Color.white.opacity(0.92)
+            return AppTheme.agentCardStepActiveText(for: colorScheme)
         }
     }
 
@@ -170,7 +167,7 @@ struct AgentProgressCardView: View {
             if let branchName = card.branchName, !branchName.isEmpty {
                 Text(branchName)
                     .font(.caption.monospaced())
-                    .foregroundStyle(Color.white.opacity(0.6))
+                    .foregroundStyle(AppTheme.agentCardTertiaryText(for: colorScheme))
                     .lineLimit(1)
             }
 

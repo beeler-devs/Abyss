@@ -4,6 +4,7 @@ import SwiftUI
 /// Great for hackathon demos and debugging the tool pipeline.
 struct EventTimelineView: View {
     let events: [Event]
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -25,7 +26,7 @@ struct EventTimelineView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
-            .background(Color(.systemGray5))
+            .background(AppTheme.eventTimelineHeaderBackground(for: colorScheme))
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -44,11 +45,11 @@ struct EventTimelineView: View {
                 }
             }
         }
-        .background(Color(.systemBackground))
+        .background(AppTheme.eventTimelineBackground(for: colorScheme))
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color(.systemGray4), lineWidth: 0.5)
+                .stroke(AppTheme.eventTimelineBorder(for: colorScheme), lineWidth: 0.5)
         )
         .padding(.horizontal, 8)
     }

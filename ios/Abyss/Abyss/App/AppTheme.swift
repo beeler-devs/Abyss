@@ -59,7 +59,7 @@ enum AppTheme {
     static func actionBarIconTint(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
             ? Color(red: 156 / 255, green: 156 / 255, blue: 156 / 255)
-            : Color(red: 100 / 255, green: 100 / 255, blue: 100 / 255)
+            : .black
     }
 
     // MARK: - Message Bubbles

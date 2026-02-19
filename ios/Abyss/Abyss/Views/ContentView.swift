@@ -7,25 +7,15 @@ struct ContentView: View {
     @State private var showEventTimeline = false
     @State private var isTypingMode = false
     @State private var typedMessage = ""
+    @State private var showSidebar = false
 
     private var viewModel: ConversationViewModel? {
         chatList.selectedChat?.viewModel
     }
 
     var body: some View {
-        NavigationSplitView {
-            // Sidebar: chat list
-            List(chatList.chats, selection: $chatList.selectedChatId) { chat in
-                Button {
-                    chatList.selectChat(id: chat.id)
-                } label: {
-                    Text(chat.title)
-                        .lineLimit(1)
-                }
-                .tag(chat.id)
-            }
-            .navigationTitle("Chats")
-        } detail: {
+        ZStack(alignment: .leading) {
+            // Main content
             NavigationStack {
                 Group {
                     if let vm = viewModel {
@@ -39,12 +29,15 @@ struct ContentView: View {
                         emptyState
                     }
                 }
+                .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
-                            showSettings = true
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                showSidebar = true
+                            }
                         } label: {
-                            Image(systemName: "gearshape.fill")
+                            Image(systemName: "sidebar.left")
                                 .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                         }
                     }
@@ -62,26 +55,46 @@ struct ContentView: View {
                         }
                     }
                 }
-                .sheet(isPresented: $showSettings) {
-                    if let vm = viewModel {
-                        SettingsView(
-                            recordingMode: Binding(
-                                get: { vm.recordingMode },
-                                set: { vm.recordingMode = $0 }
-                            ),
-                            useServerConductor: Binding(
-                                get: { vm.useServerConductor },
-                                set: { vm.setUseServerConductor($0) }
-                            )
+            }
+            .sheet(isPresented: $showSettings) {
+                if let vm = viewModel {
+                    SettingsView(
+                        recordingMode: Binding(
+                            get: { vm.recordingMode },
+                            set: { vm.recordingMode = $0 }
+                        ),
+                        useServerConductor: Binding(
+                            get: { vm.useServerConductor },
+                            set: { vm.setUseServerConductor($0) }
                         )
-                    } else {
-                        SettingsView(
-                            recordingMode: .constant(.tapToToggle),
-                            useServerConductor: .constant(false)
-                        )
-                    }
+                    )
+                } else {
+                    SettingsView(
+                        recordingMode: .constant(.tapToToggle),
+                        useServerConductor: .constant(false)
+                    )
                 }
             }
+
+            // Dimming overlay when sidebar is open
+            Color.black
+                .opacity(showSidebar ? 0.35 : 0)
+                .ignoresSafeArea()
+                .allowsHitTesting(showSidebar)
+                .onTapGesture {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        showSidebar = false
+                    }
+                }
+
+            // Left slide-in chat panel
+            ChatSidebarPanel(
+                chatList: chatList,
+                showSidebar: $showSidebar,
+                showSettings: $showSettings
+            )
+            .frame(width: 280)
+            .offset(x: showSidebar ? 0 : -280)
         }
         .onAppear {
             if chatList.chats.isEmpty {
@@ -110,6 +123,138 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+}
+
+// MARK: - Chat Sidebar Panel
+
+private struct ChatSidebarPanel: View {
+    @ObservedObject var chatList: ChatListViewModel
+    @Binding var showSidebar: Bool
+    @Binding var showSettings: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Chats")
+                    .font(.title2.bold())
+                Spacer()
+                Button {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        showSidebar = false
+                    }
+                    chatList.createChat()
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.primary)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 60)
+            .padding(.bottom, 16)
+
+            Divider()
+
+            // Chat list
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(chatList.chats) { chat in
+                        ChatRowButton(
+                            chat: chat,
+                            isSelected: chatList.selectedChatId == chat.id,
+                            onSelect: {
+                                chatList.selectChat(id: chat.id)
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                                    showSidebar = false
+                                }
+                            },
+                            onDelete: {
+                                chatList.deleteChat(id: chat.id)
+                            }
+                        )
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+
+            Divider()
+
+            // Footer: Settings
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    showSidebar = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    showSettings = true
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 16))
+                        .frame(width: 28, height: 28)
+                        .foregroundStyle(.secondary)
+                    Text("Settings")
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 16)
+        }
+        .background(
+            (colorScheme == .dark ? Color(white: 0.1) : Color(white: 0.97))
+                .ignoresSafeArea()
+        )
+        .ignoresSafeArea(edges: .vertical)
+    }
+}
+
+// MARK: - Chat Row Button
+
+private struct ChatRowButton: View {
+    let chat: ChatSession
+    let isSelected: Bool
+    let onSelect: () -> Void
+    let onDelete: () -> Void
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                Image(systemName: "bubble.left")
+                    .font(.system(size: 14))
+                    .foregroundStyle(isSelected ? .white : .secondary)
+                    .frame(width: 22)
+                Text(chat.title)
+                    .font(.body)
+                    .lineLimit(1)
+                    .foregroundStyle(isSelected ? .white : .primary)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected
+                          ? Color.accentColor
+                          : Color.clear)
+            )
+            .padding(.horizontal, 10)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
 }
 
 /// Chat content view that observes ConversationViewModel so UI updates propagate.

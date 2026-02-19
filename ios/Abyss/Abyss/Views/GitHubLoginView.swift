@@ -5,7 +5,7 @@ struct GitHubLoginView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            AppTheme.authBackground.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 Spacer()
@@ -45,11 +45,11 @@ struct GitHubLoginView: View {
                     if let error = authManager.authError {
                         Text(error)
                             .font(.caption)
-                            .foregroundStyle(Color(red: 1, green: 0.4, blue: 0.4))
+                            .foregroundStyle(AppTheme.authErrorText)
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 24)
                             .padding(.vertical, 10)
-                            .background(Color.red.opacity(0.12))
+                            .background(AppTheme.authErrorBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
 
@@ -72,7 +72,7 @@ struct GitHubLoginView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
-                        .background(authManager.isAuthenticating ? Color.white.opacity(0.7) : Color.white)
+                        .background(authManager.isAuthenticating ? AppTheme.authButtonBackgroundLoading : AppTheme.authButtonBackground)
                         .foregroundStyle(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 14))
                     }
