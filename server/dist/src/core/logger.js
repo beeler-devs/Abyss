@@ -11,6 +11,10 @@ function contextPrefix(context) {
         parts.push(`call=${context.callId}`);
     if (context.trace)
         parts.push(`trace=${context.trace}`);
+    if (context.agentId)
+        parts.push(`agent=${context.agentId}`);
+    if (context.status)
+        parts.push(`status=${context.status}`);
     return parts.length ? `[${parts.join(" ")}] ` : "";
 }
 export const logger = {

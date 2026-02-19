@@ -79,6 +79,16 @@ export class AnthropicProvider {
         const maxTokens = withTools
             ? Math.min(this.config.maxTokens * 4, 4096)
             : this.config.maxTokens;
+        // Anthropic tool names must match ^[a-zA-Z0-9_-]+$ — dots are not allowed.
+        // Build a safe-name → original-name map so we can reverse after parsing.
+        const toolNameToOriginal = new Map();
+        const safeTools = toolList.map((tool) => {
+            const safeName = tool.name.replace(/\./g, "_");
+            if (safeName !== tool.name) {
+                toolNameToOriginal.set(safeName, tool.name);
+            }
+            return { ...tool, name: safeName };
+        });
         const response = await fetch("https://api.anthropic.com/v1/messages", {
             method: "POST",
             headers: {
@@ -94,11 +104,12 @@ export class AnthropicProvider {
                     "Keep spoken responses concise, practical, and voice-friendly.",
                     "Do not ask for speech-to-text tools. The user triggers listening manually.",
                     "Avoid markdown tables and avoid long formatting.",
-                    "When the user asks you to work on code, create a PR, analyze a repository, or run any coding task, use the agent.spawn tool.",
+                    "When the user asks you to work on code, create a PR, analyze a repository, or run any coding task, use the agent_spawn tool.",
                     "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
-                    "Always confirm the repository with the user if not specified.",
+                    "Before calling agent_spawn, if you do not know the exact owner/repo string, always call repositories_list first to get the list of available repositories, then pick the one that best matches what the user said.",
+                    "Never guess or hallucinate a repository name — only use repos returned by repositories_list.",
                 ].join(" "),
-                ...(withTools ? { tools: toolList } : {}),
+                ...(withTools ? { tools: safeTools } : {}),
                 messages,
             }),
             signal: AbortSignal.timeout(30_000),
@@ -125,10 +136,12 @@ export class AnthropicProvider {
             }
             if (type === "tool_use") {
                 const id = asNonEmptyString(block.id);
-                const name = asNonEmptyString(block.name);
+                const safeName = asNonEmptyString(block.name);
                 const input = isObject(block.input) ? block.input : {};
-                if (id && name) {
-                    toolCalls.push({ id, name, input });
+                if (id && safeName) {
+                    // Restore the original dotted name (e.g. agent_spawn → agent.spawn)
+                    const originalName = toolNameToOriginal.get(safeName) ?? safeName;
+                    toolCalls.push({ id, name: originalName, input });
                 }
             }
         }

@@ -1,4 +1,5 @@
 import "dotenv/config";
+import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { ConductorService } from "./core/conductorService.js";
 import { parseIncomingEvent, makeEvent } from "./core/events.js";
@@ -9,6 +10,8 @@ const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "anthropic").toLowerCase()
 const MAX_EVENT_BYTES = parseInteger(process.env.MAX_EVENT_BYTES, 65_536);
 const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
+const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
+const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? "";
 const provider = buildProvider({
     modelProvider: MODEL_PROVIDER,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY,
@@ -22,12 +25,23 @@ const conductor = new ConductorService(provider, {
     maxTurns: MAX_TURNS,
     rateLimitPerMinute: SESSION_RATE_LIMIT_PER_MIN,
 });
+// HTTP server handles /github/exchange for OAuth token exchange and upgrade to WebSocket.
+const httpServer = http.createServer(async (req, res) => {
+    if (req.method === "POST" && req.url === "/github/exchange") {
+        await handleGithubExchange(req, res);
+        return;
+    }
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "not_found" }));
+});
 const wss = new WebSocketServer({
-    port: PORT,
+    server: httpServer,
     path: "/ws",
     maxPayload: MAX_EVENT_BYTES,
 });
-logger.info(`Abyss conductor server listening on ws://localhost:${PORT}/ws using provider=${provider.name}`);
+httpServer.listen(PORT, () => {
+    logger.info(`Abyss conductor server listening on port ${PORT} using provider=${provider.name}`);
+});
 wss.on("connection", (socket, request) => {
     const limiter = conductor.createRateLimiter();
     let connectionSessionId = null;
@@ -88,6 +102,71 @@ wss.on("connection", (socket, request) => {
         });
     });
 });
+async function handleGithubExchange(req, res) {
+    if (!GITHUB_CLIENT_ID || !GITHUB_CLIENT_SECRET) {
+        res.writeHead(503, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "github_not_configured" }));
+        return;
+    }
+    let body = "";
+    for await (const chunk of req) {
+        body += chunk;
+        if (body.length > 4096) {
+            res.writeHead(413, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: "payload_too_large" }));
+            return;
+        }
+    }
+    let code;
+    try {
+        const parsed = JSON.parse(body);
+        if (typeof parsed.code !== "string" || !parsed.code) {
+            throw new Error("missing code");
+        }
+        code = parsed.code;
+    }
+    catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "invalid_request", message: "Body must be JSON with a 'code' string." }));
+        return;
+    }
+    try {
+        const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            body: JSON.stringify({
+                client_id: GITHUB_CLIENT_ID,
+                client_secret: GITHUB_CLIENT_SECRET,
+                code,
+                redirect_uri: "abyss://oauth-callback",
+            }),
+            signal: AbortSignal.timeout(10_000),
+        });
+        const payload = await tokenResponse.json();
+        if (typeof payload.error === "string") {
+            logger.warn(`github token exchange error: ${payload.error}`);
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({ error: payload.error, description: payload.error_description }));
+            return;
+        }
+        const token = payload.access_token;
+        if (typeof token !== "string" || !token) {
+            throw new Error("no access_token in github response");
+        }
+        logger.info("github token exchange successful");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ token }));
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : "unknown";
+        logger.warn(`github token exchange failed: ${message}`);
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: "exchange_failed", message }));
+    }
+}
 function parseInteger(raw, fallback) {
     if (!raw) {
         return fallback;
