@@ -169,13 +169,17 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func observeStores() {
-        // Sync stores back to published properties whenever events are emitted
+        // Sync conversation messages back to the published property whenever events are emitted.
+        // NOTE: appState is NOT synced here — all state transitions set both appStateStore.current
+        // and appState directly (in tandem) throughout the VM. Syncing appState from the store
+        // via this sink causes a race: the sink fires on every eventBus emission (including
+        // tool.result events during barge-in), potentially overwriting an optimistic .listening
+        // state that was set synchronously before the async barge-in task ran.
         eventBus.$events
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
-                self.appState = self.appStateStore.current
             }
             .store(in: &cancellables)
 
@@ -307,6 +311,8 @@ final class ConversationViewModel: ObservableObject {
             guard !isStoppingRecording else { return }
             Task { await stopListeningAndProcess() }
         case .speaking:
+            appState = .listening
+            appStateStore.current = .listening
             Task { await bargeIn() }
         case .thinking:
             break // Can't interrupt thinking
@@ -316,6 +322,8 @@ final class ConversationViewModel: ObservableObject {
     /// User pressed down (press-and-hold mode).
     func micPressed() {
         if appState == .speaking {
+            appState = .listening
+            appStateStore.current = .listening
             Task { await bargeIn() }
         } else {
             guard !isStartingRecording, !isStoppingRecording else { return }
@@ -387,11 +395,10 @@ final class ConversationViewModel: ObservableObject {
         partialTranscript = ""
         assistantPartialSpeech = ""
 
-        if transcriber.isListening {
-            return
-        }
-
-        // Set state to listening
+        // Always assert the listening state, even if the transcriber is already running.
+        // Without this, a stale convo.setState(idle) arriving from the conductor after a
+        // barge-in can wipe out the .listening state we set optimistically, because
+        // startListening() would have returned early before re-asserting it.
         let setStateEvent = Event.toolCall(
             name: "convo.setState",
             arguments: encode(ConvoSetStateTool.Arguments(state: "listening")),
@@ -400,6 +407,10 @@ final class ConversationViewModel: ObservableObject {
         eventBus.emit(setStateEvent)
         if case .toolCall(let tc) = setStateEvent.kind {
             await toolRouter.dispatch(tc)
+        }
+
+        if transcriber.isListening {
+            return
         }
 
         // Start STT
@@ -619,6 +630,35 @@ final class ConversationViewModel: ObservableObject {
             print("📥 [INBOUND] tool '\(toolCall.name)' done — sending result back")
             await sendEventToConductor(toolResultEvent)
             print("📥 [INBOUND] tool '\(toolCall.name)' result sent")
+
+            // For inbound convo.setState tool calls, sync appState from the store —
+            // but guard against a stale idle/speaking overwriting an active or pending barge-in.
+            //
+            // Timing of the race:
+            //   1. micTapped() sets appState = .listening optimistically (sync)
+            //   2. bargeIn() task is spawned; it suspends at await tts.stop
+            //   3. Main actor is free — inbound loop processes convo.setState(idle) from
+            //      the conductor BEFORE startListening() has run, so transcriber.isListening
+            //      is still false and isStartingRecording is still false at that moment.
+            //   4. Without the appState guard below, appState gets clobbered to .idle,
+            //      causing the waveform to flash briefly then disappear.
+            //
+            // Fix: reject any server-requested state that would downgrade from .listening,
+            // unless the transcriber and bargeIn are both clearly inactive.
+            if toolCall.name == ConvoSetStateTool.name {
+                let requestedState = appStateStore.current
+                let isDowngrade = (requestedState == .idle || requestedState == .thinking)
+                    && (appState == .listening || appState == .transcribing)
+                let listeningIsActive = transcriber.isListening || isStartingRecording
+
+                if isDowngrade && (listeningIsActive || appState == .listening) {
+                    // Conductor sent a stale state transition. Hold .listening.
+                    appStateStore.current = .listening
+                    appState = .listening
+                } else {
+                    appState = requestedState
+                }
+            }
 
         case .assistantUIPatch, .agentStatus, .sessionStart, .toolResult, .error,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,

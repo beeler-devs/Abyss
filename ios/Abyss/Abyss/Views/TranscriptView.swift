@@ -21,6 +21,16 @@ struct TranscriptView: View {
                             .id(message.id)
                     }
 
+                    // Live user speech being transcribed
+                    if !partialTranscript.isEmpty {
+                        MessageBubble(message: ConversationMessage(
+                            role: .user,
+                            text: partialTranscript,
+                            isPartial: true
+                        ))
+                        .id("partial_user")
+                    }
+
                     // Live AI response building up
                     if !assistantPartialSpeech.isEmpty {
                         MessageBubble(message: ConversationMessage(
@@ -59,6 +69,12 @@ struct TranscriptView: View {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
+                }
+            }
+            .onChange(of: partialTranscript) { _, newValue in
+                guard !newValue.isEmpty else { return }
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("partial_user", anchor: .bottom)
                 }
             }
             .onChange(of: assistantPartialSpeech) { _, _ in
