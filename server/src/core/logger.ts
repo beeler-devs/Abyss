@@ -3,6 +3,8 @@ interface LogContext {
   eventId?: string;
   callId?: string;
   trace?: string;
+  agentId?: string;
+  status?: string;
 }
 
 function contextPrefix(context?: LogContext): string {
@@ -15,6 +17,8 @@ function contextPrefix(context?: LogContext): string {
   if (context.eventId) parts.push(`event=${context.eventId}`);
   if (context.callId) parts.push(`call=${context.callId}`);
   if (context.trace) parts.push(`trace=${context.trace}`);
+  if (context.agentId) parts.push(`agent=${context.agentId}`);
+  if (context.status) parts.push(`status=${context.status}`);
 
   return parts.length ? `[${parts.join(" ")}] ` : "";
 }

@@ -74,6 +74,14 @@ const AGENT_TOOLS = [
             },
         },
     },
+    {
+        name: "repositories.list",
+        description: "List all GitHub repositories the user has connected to Cursor. Call this before agent.spawn when you do not know the exact owner/repo string, or when the user refers to a repo by name. Returns a list of {repository, owner, name} objects. Always prefer a repository from this list over guessing.",
+        input_schema: {
+            type: "object",
+            properties: {},
+        },
+    },
 ];
 function waitForToolResult(session, callId, timeoutMs) {
     return new Promise((resolve) => {
@@ -102,6 +110,9 @@ export class ConductorService {
         const session = this.sessions.getOrCreate(event.sessionId);
         switch (event.type) {
             case "session.start": {
+                if (typeof event.payload.githubToken === "string" && event.payload.githubToken) {
+                    session.githubToken = event.payload.githubToken;
+                }
                 emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
                 logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
                 return;
@@ -145,6 +156,34 @@ export class ConductorService {
                 });
                 return;
             }
+            case "agent.completed": {
+                const agentId = asString(event.payload.agentId) ?? "unknown";
+                const status = asString(event.payload.status) ?? "UNKNOWN";
+                const summary = asString(event.payload.summary) ?? "";
+                const name = asString(event.payload.name);
+                const prompt = asString(event.payload.prompt);
+                const outcome = status === "FINISHED" ? "finished successfully" : "failed";
+                const agentRef = name ? `"${name}"` : `agent ${agentId}`;
+                const taskDesc = prompt ? `Task: "${prompt}". ` : "";
+                const summaryDesc = summary ? `Summary: ${summary}` : "No summary was provided.";
+                const contextText = [
+                    `[Agent Update] Cursor agent ${agentRef} just ${outcome}.`,
+                    taskDesc,
+                    summaryDesc,
+                    `Tell the user what the agent accomplished (or what went wrong if it failed),`,
+                    `in a concise, natural sentence or two. Do not repeat the raw summary verbatim.`,
+                ].join(" ").trim();
+                logger.info("agent.completed received", {
+                    sessionId: session.sessionId,
+                    eventId: event.id,
+                    agentId,
+                    status,
+                });
+                await this.runConductorLoop(session, contextText, emit, event.id, {
+                    suppressUserMessage: true,
+                });
+                return;
+            }
             default:
                 logger.info(`ignored event type: ${event.type}`, {
                     sessionId: session.sessionId,
@@ -153,7 +192,7 @@ export class ConductorService {
                 return;
         }
     }
-    async runConductorLoop(session, transcript, emit, sourceEventId) {
+    async runConductorLoop(session, transcript, emit, sourceEventId, options = {}) {
         session.transcriptCount += 1;
         session.recentTranscriptTrace = [];
         const tracePush = (value) => {
@@ -180,11 +219,13 @@ export class ConductorService {
             content: transcript,
         });
         emitToolCall("convo.setState", { state: "thinking" });
-        emitToolCall("convo.appendMessage", {
-            role: "user",
-            text: transcript,
-            isPartial: false,
-        });
+        if (!options.suppressUserMessage) {
+            emitToolCall("convo.appendMessage", {
+                role: "user",
+                text: transcript,
+                isPartial: false,
+            });
+        }
         const MAX_TOOL_ROUNDS = 8;
         let toolRound = 0;
         let emittedFinalResponse = false;
@@ -201,7 +242,7 @@ export class ConductorService {
                     message,
                 }));
                 emitToolCall("convo.setState", { state: "idle" });
-                logger.error("model provider failed", {
+                logger.error(`model provider failed: ${message}`, {
                     sessionId: session.sessionId,
                     eventId: sourceEventId,
                 });
@@ -274,6 +315,9 @@ export class ConductorService {
                 eventId: sourceEventId,
             });
         }
-        logger.info(`transcript.final trace #${session.transcriptCount}: ${session.recentTranscriptTrace.join(" -> ")}`, { sessionId: session.sessionId, eventId: sourceEventId });
+        const traceLabel = options.suppressUserMessage
+            ? `agent.completed trace #${session.transcriptCount}`
+            : `transcript.final trace #${session.transcriptCount}`;
+        logger.info(`${traceLabel}: ${session.recentTranscriptTrace.join(" -> ")}`, { sessionId: session.sessionId, eventId: sourceEventId });
     }
 }
