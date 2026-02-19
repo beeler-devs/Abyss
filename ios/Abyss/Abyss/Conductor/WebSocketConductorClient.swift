@@ -137,6 +137,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var reconnectAttempt: Int = 0
     private var shouldReconnect: Bool = false
     private var currentSessionId: String?
+    private var currentGithubToken: String?
 
     private var seenInboundEventIDs: Set<String> = []
     private var seenInboundEventOrder: [String] = []
@@ -201,12 +202,13 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         self.init(backendURL: url)
     }
 
-    func connect(sessionId: String) async throws {
+    func connect(sessionId: String, githubToken: String? = nil) async throws {
         currentSessionId = sessionId
+        currentGithubToken = githubToken
         shouldReconnect = true
 
         try await openSocketAndStartListening()
-        try await send(event: Event.sessionStart(sessionId: sessionId))
+        try await send(event: Event.sessionStart(sessionId: sessionId, githubToken: githubToken))
     }
 
     func disconnect() async {
@@ -329,7 +331,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
 
             do {
                 try await self.openSocketAndStartListening()
-                try await self.send(event: Event.sessionStart(sessionId: sessionId))
+                let token = self.currentGithubToken
+                try await self.send(event: Event.sessionStart(sessionId: sessionId, githubToken: token))
             } catch {
                 await self.scheduleReconnect()
             }

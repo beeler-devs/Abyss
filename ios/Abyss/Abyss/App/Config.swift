@@ -115,6 +115,27 @@ enum Config {
         backendWSURL != nil
     }
 
+    // MARK: - GitHub
+
+    /// GitHub OAuth App client ID.
+    static var githubClientId: String? {
+        valueFromSecretsPlist("GITHUB_CLIENT_ID")
+            ?? valueFromInfoPlist("GITHUB_CLIENT_ID")
+            ?? valueFromEnvironment("GITHUB_CLIENT_ID")
+    }
+
+    /// HTTP base URL of the backend, derived from the WebSocket URL by swapping scheme.
+    /// e.g. ws://192.168.1.20:8080/ws → http://192.168.1.20:8080
+    static var backendBaseURL: URL? {
+        guard let wsURL = backendWSURL,
+              var components = URLComponents(url: wsURL, resolvingAgainstBaseURL: false) else {
+            return nil
+        }
+        components.scheme = (wsURL.scheme == "wss") ? "https" : "http"
+        components.path = ""
+        return components.url
+    }
+
     // MARK: - Backward Compatibility
 
     static var isAPIKeyConfigured: Bool {
