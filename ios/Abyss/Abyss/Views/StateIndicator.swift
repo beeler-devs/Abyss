@@ -20,7 +20,7 @@ struct StateIndicator: View {
         case .idle: return "Ready"
         case .listening: return "Listening..."
         case .transcribing: return "Transcribing..."
-        case .thinking: return "Thinking..."
+        case .thinking: return "Typing..."
         case .speaking: return "Speaking..."
         case .error: return "Error"
         }
