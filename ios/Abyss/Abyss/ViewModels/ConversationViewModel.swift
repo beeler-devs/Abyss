@@ -160,6 +160,7 @@ final class ConversationViewModel: ObservableObject {
         registry.register(AgentCancelTool(client: cursorClient))
         registry.register(AgentFollowUpTool(client: cursorClient))
         registry.register(AgentListTool(client: cursorClient))
+        registry.register(RepositoriesListTool(client: cursorClient))
 
         self.toolRegistry = registry
         self.toolRouter = ToolRouter(registry: registry, eventBus: eventBus)
@@ -347,6 +348,10 @@ final class ConversationViewModel: ObservableObject {
         Task {
             await requestAgentStatus(agentID: agentID)
         }
+    }
+
+    func dismissAgentCard(cardID: UUID) {
+        agentProgressCards.removeAll { $0.id == cardID }
     }
 
     func cancelAgent(cardID: UUID) {

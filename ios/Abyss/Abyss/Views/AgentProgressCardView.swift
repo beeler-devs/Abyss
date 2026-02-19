@@ -5,6 +5,7 @@ struct AgentProgressCardView: View {
     let card: AgentProgressCard
     let onRefresh: () -> Void
     let onCancel: () -> Void
+    let onDismiss: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -30,6 +31,16 @@ struct AgentProgressCardView: View {
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .background(statusBadgeBackground)
+
+                Button(action: onDismiss) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                        .frame(width: 24, height: 24)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
             }
 
             VStack(alignment: .leading, spacing: 12) {
