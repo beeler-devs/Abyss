@@ -285,7 +285,8 @@ private struct ChatContentView: View {
             TranscriptView(
                 messages: viewModel.messages,
                 partialTranscript: viewModel.partialTranscript,
-                assistantPartialSpeech: viewModel.assistantPartialSpeech
+                assistantPartialSpeech: viewModel.assistantPartialSpeech,
+                appState: viewModel.appState
             )
 
             // Agent progress cards
