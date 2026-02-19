@@ -40,20 +40,16 @@ struct StateIndicator: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: iconName)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(color)
                 .symbolEffect(.pulse, isActive: state == .listening || state == .thinking)
 
             Text(label)
-                .font(.caption)
+                .font(.subheadline)
                 .foregroundStyle(color)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.1))
-        )
         .animation(.easeInOut(duration: 0.2), value: state)
     }
 }

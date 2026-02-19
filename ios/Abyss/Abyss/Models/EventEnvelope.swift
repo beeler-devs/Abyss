@@ -26,7 +26,11 @@ struct EventEnvelope: Codable, Sendable {
         switch event.kind {
         case .sessionStart(let value):
             type = "session.start"
-            payload = ["sessionId": .string(value.sessionId)]
+            var sessionPayload: [String: JSONValue] = ["sessionId": .string(value.sessionId)]
+            if let token = value.githubToken {
+                sessionPayload["githubToken"] = .string(token)
+            }
+            payload = sessionPayload
         case .userAudioTranscriptPartial(let value):
             type = "user.audio.transcript.partial"
             payload = Self.withEnvelopeMetadata(base: ["text": .string(value.text)], sessionId: event.sessionId, timestamp: isoTimestamp)
@@ -77,10 +81,10 @@ struct EventEnvelope: Codable, Sendable {
         switch type {
         case "session.start":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil))
         case "session.started":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil))
         case "user.audio.transcript.partial":
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":

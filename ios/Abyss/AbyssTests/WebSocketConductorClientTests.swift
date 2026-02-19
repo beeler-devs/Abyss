@@ -29,7 +29,7 @@ final class WebSocketConductorClientTests: XCTestCase {
             }
         }
 
-        try await client.connect(sessionId: "session-1")
+        try await client.connect(sessionId: "session-1", githubToken: nil)
 
         let duplicateEvent = Event(
             id: "evt-1",

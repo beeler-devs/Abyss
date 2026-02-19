@@ -8,9 +8,6 @@ import AppKit
 /// Displays the conversation transcript with auto-scrolling.
 struct TranscriptView: View {
     let messages: [ConversationMessage]
-    let partialTranscript: String
-    let assistantPartialSpeech: String
-    let appState: AppState
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -21,38 +18,8 @@ struct TranscriptView: View {
                             .id(message.id)
                     }
 
-                    // Show partial transcript while listening
-                    if !partialTranscript.isEmpty && (appState == .listening || appState == .transcribing) {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "waveform")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                            Text(partialTranscript)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .italic()
-                        }
-                        .padding(.horizontal)
-                        .id("partial")
-                    }
-
-                    // Show streamed assistant partial without appending permanent messages.
-                    if !assistantPartialSpeech.isEmpty {
-                        HStack(alignment: .top, spacing: 8) {
-                            Image(systemName: "text.bubble")
-                                .foregroundStyle(.purple)
-                                .font(.caption)
-                            Text(assistantPartialSpeech)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                                .italic()
-                        }
-                        .padding(.horizontal)
-                        .id("assistant-partial")
-                    }
-
                     // Empty state
-                    if messages.isEmpty && partialTranscript.isEmpty && assistantPartialSpeech.isEmpty {
+                    if messages.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -72,16 +39,6 @@ struct TranscriptView: View {
                     withAnimation(.easeOut(duration: 0.2)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
-                }
-            }
-            .onChange(of: partialTranscript) { _, _ in
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo("partial", anchor: .bottom)
-                }
-            }
-            .onChange(of: assistantPartialSpeech) { _, _ in
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo("assistant-partial", anchor: .bottom)
                 }
             }
         }
