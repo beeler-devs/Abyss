@@ -10,6 +10,7 @@ struct TranscriptView: View {
     let messages: [ConversationMessage]
     var partialTranscript: String = ""
     var assistantPartialSpeech: String = ""
+    var appState: AppState = .idle
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -28,6 +29,13 @@ struct TranscriptView: View {
                             isPartial: true
                         ))
                         .id("partial_assistant")
+                    } else if appState == .thinking {
+                        MessageBubble(message: ConversationMessage(
+                            role: .assistant,
+                            text: "Typing...",
+                            isPartial: true
+                        ))
+                        .id("typing_assistant")
                     }
 
                     // Empty state
@@ -56,6 +64,12 @@ struct TranscriptView: View {
             .onChange(of: assistantPartialSpeech) { _, _ in
                 withAnimation(.easeOut(duration: 0.1)) {
                     proxy.scrollTo("partial_assistant", anchor: .bottom)
+                }
+            }
+            .onChange(of: appState) { _, newValue in
+                guard newValue == .thinking else { return }
+                withAnimation(.easeOut(duration: 0.1)) {
+                    proxy.scrollTo("typing_assistant", anchor: .bottom)
                 }
             }
         }
