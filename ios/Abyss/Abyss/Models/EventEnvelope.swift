@@ -72,6 +72,16 @@ struct EventEnvelope: Codable, Sendable {
         case .error(let value):
             type = "error"
             payload = ["code": .string(value.code), "message": .string(value.message)]
+        case .agentCompleted(let value):
+            type = "agent.completed"
+            var p: [String: JSONValue] = [
+                "agentId": .string(value.agentId),
+                "status":  .string(value.status),
+                "summary": .string(value.summary),
+            ]
+            if let name   = value.name   { p["name"]   = .string(name) }
+            if let prompt = value.prompt { p["prompt"] = .string(prompt) }
+            payload = p
         }
     }
 

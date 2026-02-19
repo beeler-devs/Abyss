@@ -195,6 +195,39 @@ export class ConductorService {
         return;
       }
 
+      case "agent.completed": {
+        const agentId = asString(event.payload.agentId) ?? "unknown";
+        const status  = asString(event.payload.status)  ?? "UNKNOWN";
+        const summary = asString(event.payload.summary) ?? "";
+        const name    = asString(event.payload.name);
+        const prompt  = asString(event.payload.prompt);
+
+        const outcome  = status === "FINISHED" ? "finished successfully" : "failed";
+        const agentRef = name ? `"${name}"` : `agent ${agentId}`;
+        const taskDesc = prompt ? `Task: "${prompt}". ` : "";
+        const summaryDesc = summary ? `Summary: ${summary}` : "No summary was provided.";
+
+        const contextText = [
+          `[Agent Update] Cursor agent ${agentRef} just ${outcome}.`,
+          taskDesc,
+          summaryDesc,
+          `Tell the user what the agent accomplished (or what went wrong if it failed),`,
+          `in a concise, natural sentence or two. Do not repeat the raw summary verbatim.`,
+        ].join(" ").trim();
+
+        logger.info("agent.completed received", {
+          sessionId: session.sessionId,
+          eventId: event.id,
+          agentId,
+          status,
+        });
+
+        await this.runConductorLoop(session, contextText, emit, event.id, {
+          suppressUserMessage: true,
+        });
+        return;
+      }
+
       default:
         logger.info(`ignored event type: ${event.type}`, {
           sessionId: session.sessionId,
@@ -209,6 +242,7 @@ export class ConductorService {
     transcript: string,
     emit: (event: EventEnvelope) => void,
     sourceEventId: string,
+    options: { suppressUserMessage?: boolean } = {},
   ): Promise<void> {
     session.transcriptCount += 1;
     session.recentTranscriptTrace = [];
@@ -242,11 +276,13 @@ export class ConductorService {
     });
 
     emitToolCall("convo.setState", { state: "thinking" });
-    emitToolCall("convo.appendMessage", {
-      role: "user",
-      text: transcript,
-      isPartial: false,
-    });
+    if (!options.suppressUserMessage) {
+      emitToolCall("convo.appendMessage", {
+        role: "user",
+        text: transcript,
+        isPartial: false,
+      });
+    }
 
     const MAX_TOOL_ROUNDS = 8;
     let toolRound = 0;
@@ -354,8 +390,11 @@ export class ConductorService {
       });
     }
 
+    const traceLabel = options.suppressUserMessage
+      ? `agent.completed trace #${session.transcriptCount}`
+      : `transcript.final trace #${session.transcriptCount}`;
     logger.info(
-      `transcript.final trace #${session.transcriptCount}: ${session.recentTranscriptTrace.join(" -> ")}`,
+      `${traceLabel}: ${session.recentTranscriptTrace.join(" -> ")}`,
       { sessionId: session.sessionId, eventId: sourceEventId },
     );
   }
