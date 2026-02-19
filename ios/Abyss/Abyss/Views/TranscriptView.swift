@@ -79,6 +79,7 @@ struct TranscriptView: View {
 
 struct MessageBubble: View {
     let message: ConversationMessage
+    @Environment(\.colorScheme) private var colorScheme
     @State private var didCopy = false
 
     private var isUser: Bool { message.role == .user }
@@ -164,7 +165,7 @@ struct MessageBubble: View {
         Group {
             if isUser {
                 RoundedRectangle(cornerRadius: 16)
-                    .fill(Color(red: 33 / 255, green: 33 / 255, blue: 33 / 255))
+                    .fill(AppTheme.userBubbleBackground(for: colorScheme))
             } else {
                 Color.clear
             }
@@ -173,7 +174,7 @@ struct MessageBubble: View {
 
     private var textColor: Color {
         if isUser {
-            return .white
+            return AppTheme.userBubbleText(for: colorScheme)
         }
         return message.isPartial ? .secondary : .primary
     }

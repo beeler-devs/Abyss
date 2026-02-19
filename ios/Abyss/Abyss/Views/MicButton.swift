@@ -43,7 +43,7 @@ struct MicButton: View {
                         .frame(width: UIConstants.actionBarVoiceSpacerWidth, height: UIConstants.actionBarVoiceSpacerHeight)
                     Image(systemName: "mic.fill")
                         .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                        .foregroundStyle(iconTint)
+                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                     Color.clear
                         .frame(width: UIConstants.actionBarVoiceSpacerWidth, height: UIConstants.actionBarVoiceSpacerHeight)
                 }
@@ -53,11 +53,11 @@ struct MicButton: View {
         .frame(height: UIConstants.actionBarControlHeight)
         .background(
             RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                .fill(barColor)
+                .fill(AppTheme.pillBackground(for: colorScheme))
         )
         .overlay(
             RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
         )
         .contentShape(RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2))
         .gesture(voiceGesture)
@@ -74,7 +74,7 @@ struct MicButton: View {
             } label: {
                 Image(systemName: "mic.fill")
                     .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                    .foregroundStyle(iconTint)
+                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
             }
             .buttonStyle(.plain)
 
@@ -87,7 +87,7 @@ struct MicButton: View {
             Button(action: submitTypedText) {
                 Image(systemName: "arrow.up.circle.fill")
                     .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                    .foregroundStyle(canSubmitText ? iconTint : iconTint.opacity(0.35))
+                    .foregroundStyle(canSubmitText ? AppTheme.actionBarIconTint(for: colorScheme) : AppTheme.actionBarIconTint(for: colorScheme).opacity(0.35))
             }
             .buttonStyle(.plain)
             .disabled(!canSubmitText)
@@ -97,11 +97,11 @@ struct MicButton: View {
         .frame(height: UIConstants.actionBarControlHeight)
         .background(
             RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                .fill(barColor)
+                .fill(AppTheme.pillBackground(for: colorScheme))
         )
         .overlay(
             RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
         )
     }
 
