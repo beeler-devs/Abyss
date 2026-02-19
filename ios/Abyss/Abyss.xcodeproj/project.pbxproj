@@ -43,6 +43,7 @@
 		A10000000000000100000021 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000021 /* AgentTools.swift */; };
 		A10000000000000100000022 /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000022 /* ChatSession.swift */; };
 		A10000000000000100000023 /* UIConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000023 /* UIConstants.swift */; };
+		A10000000000000100000024 /* AppTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000024 /* AppTheme.swift */; };
 		A1000000000000010000002A /* LocalConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002A /* LocalConductorClient.swift */; };
 		A1000000000000010000002B /* WebSocketConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002B /* WebSocketConductorClient.swift */; };
 		A1000000000000010000002C /* EventEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002C /* EventEnvelope.swift */; };
@@ -88,6 +89,7 @@
 		A20000000000000100000021 /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
 		A20000000000000100000022 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSession.swift; sourceTree = "<group>"; };
 		A20000000000000100000023 /* UIConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIConstants.swift; sourceTree = "<group>"; };
+		A20000000000000100000024 /* AppTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTheme.swift; sourceTree = "<group>"; };
 		A2000000000000010000002A /* LocalConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorClient.swift; sourceTree = "<group>"; };
 		A2000000000000010000002B /* WebSocketConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketConductorClient.swift; sourceTree = "<group>"; };
 		A2000000000000010000002C /* EventEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEnvelope.swift; sourceTree = "<group>"; };
@@ -140,6 +142,7 @@
 				A20000000000000100000001 /* AbyssApp.swift */,
 				A20000000000000100000002 /* Config.swift */,
 				A20000000000000100000023 /* UIConstants.swift */,
+				A20000000000000100000024 /* AppTheme.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -353,6 +356,7 @@
 				A10000000000000100000001 /* AbyssApp.swift in Sources */,
 				A10000000000000100000002 /* Config.swift in Sources */,
 				A10000000000000100000023 /* UIConstants.swift in Sources */,
+				A10000000000000100000024 /* AppTheme.swift in Sources */,
 				A10000000000000100000003 /* ContentView.swift in Sources */,
 				A10000000000000100000004 /* MicButton.swift in Sources */,
 				A10000000000000100000005 /* TranscriptView.swift in Sources */,
@@ -504,7 +508,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				DEVELOPMENT_TEAM = 8H757N372W;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -517,7 +521,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -532,7 +536,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				DEVELOPMENT_TEAM = 8H757N372W;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -545,7 +549,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
