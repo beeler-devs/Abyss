@@ -89,6 +89,15 @@ enum Config {
         cursorAPIKey != nil
     }
 
+    /// Default Cursor Cloud Agent model for agent.spawn when the LLM omits it.
+    static var cursorAgentModel: String? {
+        if let v = UserDefaults.standard.string(forKey: "cursorAgentModel")?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty {
+            return v
+        }
+        return nil
+    }
+
     // MARK: - Conductor Backend
 
     /// WebSocket URL used by the Phase 2 server conductor (e.g. ws://192.168.1.20:8080/ws).

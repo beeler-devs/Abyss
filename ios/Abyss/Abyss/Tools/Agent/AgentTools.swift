@@ -70,9 +70,12 @@ struct AgentSpawnTool: Tool, @unchecked Sendable {
             )
             : nil
 
+        let modelFromArgs = arguments.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let modelToUse = (modelFromArgs.map { $0.isEmpty ? nil : $0 } ?? nil) ?? Config.cursorAgentModel
+
         let request = CursorLaunchAgentRequest(
             prompt: .init(text: promptText, images: nil),
-            model: arguments.model,
+            model: modelToUse,
             source: source,
             target: target
         )
