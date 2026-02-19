@@ -20,6 +20,9 @@ Package.resolved
 # CocoaPods
 Pods/
 
+# ML model files (large binaries — download at runtime, do not commit)
+**/Resources/models/
+
 # Secrets / Config (never commit secrets)
 **/Secrets.plist
 **/Secrets.xcconfig
@@ -34,3 +37,13 @@ Pods/
 # Environment
 .env
 .env.local
+
+# Node / TypeScript
+node_modules/
+
+# Backend (TypeScript compiled output)
+backend/dist/
+
+# AWS CDK
+infra/cdk.out/
+.cdk.staging

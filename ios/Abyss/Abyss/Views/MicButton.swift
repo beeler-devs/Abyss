@@ -14,7 +14,6 @@ struct MicButton: View {
     @State private var isPressing = false
     @State private var didSwitchToTyping = false
 
-    private let controlHeight: CGFloat = 56
     private let iconTint = Color(red: 156 / 255, green: 156 / 255, blue: 156 / 255)
     private let barColor = Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255)
 
@@ -30,51 +29,53 @@ struct MicButton: View {
                 voiceBar
             }
         }
-        .frame(height: controlHeight)
+        .frame(height: UIConstants.actionBarControlHeight)
     }
 
     private var voiceBar: some View {
-        HStack(spacing: 12) {
+        Group {
             if isListening {
+                // Bar turns into waveform view when recording
                 LiveWaveformView(tint: iconTint)
-                    .frame(width: 58, height: 24)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: UIConstants.actionBarWaveformHeight)
             } else {
-                Color.clear
-                    .frame(width: 58, height: 24)
+                HStack(spacing: UIConstants.actionBarSpacing) {
+                    Color.clear
+                        .frame(width: UIConstants.actionBarVoiceSpacerWidth, height: UIConstants.actionBarVoiceSpacerHeight)
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                        .foregroundStyle(iconTint)
+                    Color.clear
+                        .frame(width: UIConstants.actionBarVoiceSpacerWidth, height: UIConstants.actionBarVoiceSpacerHeight)
+                }
+                .frame(maxWidth: .infinity)
             }
-
-            Image(systemName: "mic.fill")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundStyle(iconTint)
-
-            Color.clear
-                .frame(width: 58, height: 24)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: controlHeight)
+        .frame(height: UIConstants.actionBarControlHeight)
         .background(
-            RoundedRectangle(cornerRadius: controlHeight / 2)
+            RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
                 .fill(barColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: controlHeight / 2)
+            RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
-        .contentShape(RoundedRectangle(cornerRadius: controlHeight / 2))
+        .contentShape(RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2))
         .gesture(voiceGesture)
         .accessibilityLabel(accessibilityLabel)
         .accessibilityHint("Tap to record or hold and swipe up to type")
     }
 
     private var typingBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: UIConstants.actionBarSpacing) {
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     isTypingMode = false
                 }
             } label: {
                 Image(systemName: "mic.fill")
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
                     .foregroundStyle(iconTint)
             }
             .buttonStyle(.plain)
@@ -87,21 +88,21 @@ struct MicButton: View {
 
             Button(action: submitTypedText) {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
                     .foregroundStyle(canSubmitText ? iconTint : iconTint.opacity(0.35))
             }
             .buttonStyle(.plain)
             .disabled(!canSubmitText)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
         .frame(maxWidth: .infinity)
-        .frame(height: controlHeight)
+        .frame(height: UIConstants.actionBarControlHeight)
         .background(
-            RoundedRectangle(cornerRadius: controlHeight / 2)
+            RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
                 .fill(barColor)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: controlHeight / 2)
+            RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
                 .stroke(Color.white.opacity(0.08), lineWidth: 1)
         )
     }
@@ -186,15 +187,18 @@ private struct LiveWaveformView: View {
     let tint: Color
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.12, paused: false)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-
-            HStack(spacing: 3) {
-                ForEach(0..<6, id: \.self) { index in
-                    Capsule()
-                        .fill(tint.opacity(0.9))
-                        .frame(width: 4, height: barHeight(time: time, index: index))
+        GeometryReader { geo in
+            let barCount = max(6, Int(geo.size.width / 10))
+            TimelineView(.animation(minimumInterval: 0.12, paused: false)) { context in
+                let time = context.date.timeIntervalSinceReferenceDate
+                HStack(spacing: 3) {
+                    ForEach(0..<barCount, id: \.self) { index in
+                        Capsule()
+                            .fill(tint.opacity(0.9))
+                            .frame(width: 4, height: barHeight(time: time, index: index))
+                    }
                 }
+                .frame(maxWidth: .infinity)
             }
         }
     }
