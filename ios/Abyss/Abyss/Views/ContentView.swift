@@ -46,7 +46,12 @@ struct ContentView: View {
                             AgentProgressCardView(
                                 card: card,
                                 onRefresh: { viewModel.refreshAgentStatus(cardID: card.id) },
-                                onCancel: { viewModel.cancelAgent(cardID: card.id) }
+                                onCancel: { viewModel.cancelAgent(cardID: card.id) },
+                                onDismiss: {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        viewModel.dismissAgentCard(cardID: card.id)
+                                    }
+                                }
                             )
                         }
                     }

@@ -21,6 +21,7 @@ export class SessionStore {
       sessionId,
       history: [],
       pendingToolCalls: new Map(),
+      toolResultResolvers: new Map(),
       recentTranscriptTrace: [],
       transcriptCount: 0,
     };

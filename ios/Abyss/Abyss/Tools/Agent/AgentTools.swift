@@ -197,6 +197,40 @@ struct AgentFollowUpTool: Tool, @unchecked Sendable {
     }
 }
 
+/// Tool: repositories.list
+/// Lists GitHub repositories the Cursor GitHub App has access to.
+struct RepositoriesListTool: Tool, @unchecked Sendable {
+    static let name = "repositories.list"
+
+    struct Arguments: Codable, Sendable {}
+
+    struct Result: Codable, Sendable {
+        struct Repository: Codable, Sendable {
+            let repository: String
+            let owner: String
+            let name: String
+        }
+
+        let repositories: [Repository]
+        let count: Int
+    }
+
+    private let client: CursorCloudAgentsProviding
+
+    init(client: CursorCloudAgentsProviding) {
+        self.client = client
+    }
+
+    @MainActor
+    func execute(_ arguments: Arguments) async throws -> Result {
+        let response = try await client.repositories()
+        let repos = response.repositories.map {
+            Result.Repository(repository: $0.repository, owner: $0.owner, name: $0.name)
+        }
+        return Result(repositories: repos, count: repos.count)
+    }
+}
+
 /// Tool: agent.list
 /// Lists Cursor Cloud Agents for the authenticated user.
 struct AgentListTool: Tool, @unchecked Sendable {
