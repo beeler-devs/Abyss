@@ -451,16 +451,33 @@ final class ConversationViewModel: ObservableObject {
         // Use partial if final is empty, but skip placeholder text
         if finalTranscript.isEmpty {
             let trimmed = partialTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Don't use the "Listening…" placeholder as actual speech
             if trimmed != "Listening…" && !trimmed.isEmpty {
                 finalTranscript = trimmed
                 print("⏹️ [STEP 5a] empty final — fell back to partial: '\(finalTranscript)'")
             } else {
-                print("⏹️ [STEP 5b] both final and partial are empty/placeholder — sending empty transcript")
+                print("⏹️ [STEP 5b] both final and partial are empty/placeholder — resetting to idle without sending")
             }
         }
 
         let normalizedTranscript = transcriptFormatter.normalizeForAgent(finalTranscript)
+
+        // Don't send an empty transcript to the conductor — it will reject it and the
+        // conversation never advances. Instead, quietly reset back to idle.
+        guard !normalizedTranscript.isEmpty else {
+            print("⏹️ [STEP 6-SKIP] normalized transcript is empty — skipping send, resetting to idle")
+            let resetEvent = Event.toolCall(
+                name: "convo.setState",
+                arguments: encode(ConvoSetStateTool.Arguments(state: "idle")),
+                sessionId: sessionId
+            )
+            eventBus.emit(resetEvent)
+            if case .toolCall(let tc) = resetEvent.kind {
+                await toolRouter.dispatch(tc)
+            }
+            partialTranscript = ""
+            return
+        }
+
         print("⏹️ [STEP 6] sending to conductor — normalizedTranscript='\(normalizedTranscript)'")
 
         // Emit normalized transcript and send to conductor.
