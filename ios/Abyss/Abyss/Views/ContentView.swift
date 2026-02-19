@@ -2,12 +2,11 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
+    @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = false
     @State private var showEventTimeline = false
     @State private var isTypingMode = false
     @State private var typedMessage = ""
-
-    private let iconColor = Color(red: 156 / 255, green: 156 / 255, blue: 156 / 255)
 
     private var viewModel: ConversationViewModel? {
         chatList.selectedChat?.viewModel
@@ -34,8 +33,7 @@ struct ContentView: View {
                             viewModel: vm,
                             showEventTimeline: $showEventTimeline,
                             isTypingMode: $isTypingMode,
-                            typedMessage: $typedMessage,
-                            iconColor: iconColor
+                            typedMessage: $typedMessage
                         )
                     } else {
                         emptyState
@@ -47,7 +45,7 @@ struct ContentView: View {
                             showSettings = true
                         } label: {
                             Image(systemName: "gearshape.fill")
-                                .foregroundStyle(iconColor)
+                                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                         }
                     }
                     ToolbarItem(placement: .principal) {
@@ -60,7 +58,7 @@ struct ContentView: View {
                             chatList.createChat()
                         } label: {
                             Image(systemName: "square.and.pencil")
-                                .foregroundStyle(iconColor)
+                                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                         }
                     }
                 }
@@ -120,7 +118,7 @@ private struct ChatContentView: View {
     @Binding var showEventTimeline: Bool
     @Binding var isTypingMode: Bool
     @Binding var typedMessage: String
-    let iconColor: Color
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -135,7 +133,7 @@ private struct ChatContentView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
-                .background(Color.yellow.opacity(0.15))
+                .background(AppTheme.warningBannerBackground(for: colorScheme))
             }
 
             // Conversation transcript
@@ -197,11 +195,11 @@ private struct ChatContentView: View {
                     } label: {
                         Image(systemName: showEventTimeline ? "list.bullet.circle.fill" : "list.bullet.circle")
                             .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                            .foregroundStyle(iconColor)
+                            .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                             .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
                             .background(
                                 RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                                    .fill(Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255))
+                                    .fill(AppTheme.pillBackground(for: colorScheme))
                             )
                     }
                     .buttonStyle(.plain)

@@ -11,11 +11,9 @@ struct MicButton: View {
     let onPressUp: () -> Void
     let onSendTyped: (String) -> Void
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isPressing = false
     @State private var didSwitchToTyping = false
-
-    private let iconTint = Color(red: 156 / 255, green: 156 / 255, blue: 156 / 255)
-    private let barColor = Color(red: 30 / 255, green: 30 / 255, blue: 30 / 255)
 
     private var isListening: Bool {
         appState == .listening || appState == .transcribing
@@ -36,7 +34,7 @@ struct MicButton: View {
         Group {
             if isListening {
                 // Bar turns into waveform view when recording
-                LiveWaveformView(tint: iconTint)
+                LiveWaveformView(tint: AppTheme.actionBarIconTint(for: colorScheme))
                     .frame(maxWidth: .infinity)
                     .frame(height: UIConstants.actionBarWaveformHeight)
             } else {

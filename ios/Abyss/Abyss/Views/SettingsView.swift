@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Binding var useServerConductor: Bool
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
     @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
@@ -18,6 +19,16 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Appearance") {
+                    Picker("Theme", selection: $appAppearanceRaw) {
+                        ForEach(AppAppearance.allCases, id: \.rawValue) { mode in
+                            Label(mode.displayName, systemImage: mode.iconName)
+                                .tag(mode.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
                 Section("Recording Mode") {
                     Picker("Mode", selection: $recordingMode) {
                         Text("Tap to Toggle").tag(RecordingMode.tapToToggle)
