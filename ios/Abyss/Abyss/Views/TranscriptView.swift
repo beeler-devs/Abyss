@@ -101,7 +101,7 @@ struct MessageBubble: View {
             Button {
                 copyAssistantMessage()
             } label: {
-                Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                Image(systemName: didCopy ? "checkmark" : "square.on.square")
             }
             .accessibilityLabel("Copy assistant response")
 

@@ -8,25 +8,59 @@ struct SettingsView: View {
 
     @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
-    @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
     @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
     @AppStorage("elevenLabsModelId") private var modelId = "eleven_turbo_v2_5"
-    @State private var showCursorKey = false
+    @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
+
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
     @State private var modelsLoadError: String? = nil
 
+    @State private var showCursorAPIKeyModal = false
+    @State private var cursorAPIKeyInput = ""
+
     var body: some View {
         NavigationStack {
             Form {
-                Section("Appearance") {
-                    Picker("Theme", selection: $appAppearanceRaw) {
-                        ForEach(AppAppearance.allCases, id: \.rawValue) { mode in
-                            Label(mode.displayName, systemImage: mode.iconName)
-                                .tag(mode.rawValue)
-                        }
+                Section("App") {
+                    NavigationLink {
+                        AppLanguagePickerView()
+                    } label: {
+                        Label("App language", systemImage: "globe")
+                        Spacer()
+                        Text("English")
+                            .foregroundStyle(.secondary)
                     }
-                    .pickerStyle(.segmented)
+
+                    Picker(selection: $appAppearanceRaw) {
+                        ForEach(AppAppearance.allCases, id: \.rawValue) { mode in
+                            Text(mode.displayName).tag(mode.rawValue)
+                        }
+                    } label: {
+                        Label("Appearance", systemImage: "sun.max")
+                    }
+                    .pickerStyle(.menu)
+
+                    Toggle(isOn: $useServerConductor) {
+                        Label("Use Server Conductor", systemImage: "server.rack")
+                    }
+                    .disabled(!Config.isBackendWSConfigured)
+
+                    if Config.isBackendWSConfigured {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("BACKEND_WS_URL")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(Config.backendWSURLString ?? "")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Recording Mode") {
@@ -43,27 +77,6 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     case .pressAndHold:
                         Label("Hold mic to record, release to stop", systemImage: "hand.tap.fill")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Conductor") {
-                    Toggle("Use Server Conductor", isOn: $useServerConductor)
-                        .disabled(!Config.isBackendWSConfigured)
-
-                    if Config.isBackendWSConfigured {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("BACKEND_WS_URL")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(Config.backendWSURLString ?? "")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    } else {
-                        Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -97,31 +110,22 @@ struct SettingsView: View {
 
                 Section("Cursor Cloud Agents") {
                     HStack {
-                        Text("API Key")
-                        Spacer()
                         if Config.isCursorAPIKeyConfigured {
                             Label("Configured", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(.green)
+                            Spacer()
+                            Button("Change key") {
+                                cursorAPIKeyInput = cursorAPIKey
+                                showCursorAPIKeyModal = true
+                            }
                         } else {
-                            Label("Not Set", systemImage: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.red)
+                            Button("Enter API key") {
+                                cursorAPIKeyInput = ""
+                                showCursorAPIKeyModal = true
+                            }
                         }
                     }
-
-                    Group {
-                        if showCursorKey {
-                            TextField("Cursor API Key", text: $cursorAPIKey)
-                        } else {
-                            SecureField("Cursor API Key", text: $cursorAPIKey)
-                        }
-                    }
-                    .font(.system(.body, design: .monospaced))
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-
-                    Toggle("Show Key", isOn: $showCursorKey)
 
                     Picker("Default Model", selection: $cursorAgentModel) {
                         Text("Cursor's default").tag("")
@@ -130,6 +134,7 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.navigationLink)
+                    .disabled(!Config.isCursorAPIKeyConfigured)
 
                     if isLoadingModels {
                         HStack {
@@ -142,26 +147,7 @@ struct SettingsView: View {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .font(.caption)
                             .foregroundStyle(.orange)
-                    } else {
-                        Text("Model used for agent.spawn when not specified by the assistant.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                     }
-
-                    Button("Refresh Models") { Task { await loadModels() } }
-                        .font(.caption)
-                        .disabled(isLoadingModels || !Config.isCursorAPIKeyConfigured)
-
-                    Text("Used by agent tools: agent.spawn, agent.status, agent.cancel, agent.followup, and agent.list.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("About") {
-                    LabeledContent("Version", value: "Phase 2")
-                    LabeledContent("Architecture", value: "Tool-Calling + WS Conductor")
-                    LabeledContent("STT Engine", value: "WhisperKit")
-                    LabeledContent("TTS Engine", value: "ElevenLabs")
                 }
 
                 if !Config.isElevenLabsAPIKeyConfigured {
@@ -185,6 +171,22 @@ struct SettingsView: View {
                 }
             }
             .task { await loadModels() }
+            .onChange(of: cursorAPIKey) { _, _ in Task { await loadModels() } }
+            .sheet(isPresented: $showCursorAPIKeyModal) {
+                CursorAPIKeyModalView(
+                    apiKey: $cursorAPIKeyInput,
+                    onSave: {
+                        let trimmed = cursorAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            cursorAPIKey = trimmed
+                        }
+                        showCursorAPIKeyModal = false
+                    },
+                    onCancel: {
+                        showCursorAPIKeyModal = false
+                    }
+                )
+            }
         }
     }
 
@@ -205,5 +207,54 @@ struct SettingsView: View {
             modelsLoadError = error.localizedDescription
         }
         isLoadingModels = false
+    }
+}
+
+// MARK: - App Language Picker (placeholder for future localization)
+private struct AppLanguagePickerView: View {
+    @AppStorage("appLanguage") private var appLanguage = "en"
+
+    var body: some View {
+        Form {
+            Picker("App language", selection: $appLanguage) {
+                Text("English").tag("en")
+            }
+            .pickerStyle(.inline)
+        }
+        .navigationTitle("App language")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - Cursor API Key Modal
+private struct CursorAPIKeyModalView: View {
+    @Binding var apiKey: String
+    let onSave: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    SecureField("Cursor API Key", text: $apiKey)
+                        .font(.system(.body, design: .monospaced))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+            }
+            .navigationTitle("Cursor API Key")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save key") {
+                        onSave()
+                    }
+                    .disabled(apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
     }
 }
