@@ -34,7 +34,9 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
     init(url: URL) {
         self.url = url
         let config = URLSessionConfiguration.default
-        config.waitsForConnectivity = true
+        config.waitsForConnectivity = false
+        config.timeoutIntervalForRequest = 5
+        config.timeoutIntervalForResource = 10
         self.session = URLSession(configuration: config)
         let (stream, continuation) = AsyncStream<String>.makeStream()
         self.stream = stream
@@ -71,7 +73,7 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { try await task.send(.string(text)) }
             group.addTask {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
+                try await Task.sleep(nanoseconds: 2_000_000_000)
                 throw WebSocketConductorClient.Error.sendTimeout
             }
             // First to finish wins; cancel the loser.

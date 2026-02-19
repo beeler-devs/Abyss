@@ -139,7 +139,11 @@ private struct ChatContentView: View {
             }
 
             // Conversation transcript
-            TranscriptView(messages: viewModel.messages)
+            TranscriptView(
+                messages: viewModel.messages,
+                partialTranscript: viewModel.partialTranscript,
+                assistantPartialSpeech: viewModel.assistantPartialSpeech
+            )
 
             // Agent progress cards
             if !viewModel.agentProgressCards.isEmpty {
