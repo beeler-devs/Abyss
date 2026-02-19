@@ -19,6 +19,7 @@ export interface PendingToolCall {
 
 export interface SessionState {
   sessionId: string;
+  githubToken?: string;
   history: ConversationTurn[];
   pendingToolCalls: Map<string, PendingToolCall>;
   recentTranscriptTrace: string[];
@@ -30,7 +31,11 @@ export interface ModelResponse {
   chunks: AsyncIterable<string>;
 }
 
+export interface GenerateOptions {
+  githubToken?: string;
+}
+
 export interface ModelProvider {
   readonly name: string;
-  generateResponse(conversation: ConversationTurn[]): Promise<ModelResponse>;
+  generateResponse(conversation: ConversationTurn[], options?: GenerateOptions): Promise<ModelResponse>;
 }

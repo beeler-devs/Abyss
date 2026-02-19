@@ -1,4 +1,4 @@
-import { ConversationTurn, ModelProvider, ModelResponse } from "../core/types.js";
+import { ConversationTurn, GenerateOptions, ModelProvider, ModelResponse } from "../core/types.js";
 import { streamSingle } from "./chunking.js";
 
 export interface BedrockConfig {
@@ -17,7 +17,7 @@ export class BedrockNovaProvider implements ModelProvider {
     this.config = config;
   }
 
-  async generateResponse(_conversation: ConversationTurn[]): Promise<ModelResponse> {
+  async generateResponse(_conversation: ConversationTurn[], _options?: GenerateOptions): Promise<ModelResponse> {
     // TODO(phase3): Integrate AWS Bedrock Runtime InvokeModelWithResponseStream for Nova.
     const fullText = [
       "Bedrock provider is scaffolded but not enabled in this environment.",

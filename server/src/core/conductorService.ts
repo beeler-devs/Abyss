@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { asString, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
-import { EventEnvelope, ModelProvider, SessionState } from "./types.js";
+import { EventEnvelope, GenerateOptions, ModelProvider, SessionState } from "./types.js";
 
 export interface ConductorServiceConfig {
   maxTurns: number;
@@ -30,8 +30,13 @@ export class ConductorService {
 
     switch (event.type) {
       case "session.start": {
+        if (typeof event.payload.githubToken === "string" && event.payload.githubToken) {
+          session.githubToken = event.payload.githubToken;
+          logger.info("session started with github token", { sessionId: event.sessionId, eventId: event.id });
+        } else {
+          logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
+        }
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
-        logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;
       }
 
@@ -132,8 +137,12 @@ export class ConductorService {
 
     let responseText = "";
 
+    const generateOptions: GenerateOptions = {
+      githubToken: session.githubToken,
+    };
+
     try {
-      const modelResponse = await this.provider.generateResponse(session.history);
+      const modelResponse = await this.provider.generateResponse(session.history, generateOptions);
       for await (const chunk of modelResponse.chunks) {
         responseText += chunk;
         emit(makeEvent("assistant.speech.partial", session.sessionId, { text: responseText }));

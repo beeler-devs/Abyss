@@ -262,7 +262,8 @@ final class ConversationViewModel: ObservableObject {
 
     private func connectConductorClient(_ client: ConductorClient) async throws {
         activeConductorClient = client
-        try await client.connect(sessionId: sessionId)
+        let githubToken = GitHubAuthManager.loadToken()
+        try await client.connect(sessionId: sessionId, githubToken: githubToken)
 
         inboundEventsTask?.cancel()
         inboundEventsTask = Task { [weak self] in
@@ -287,36 +288,31 @@ final class ConversationViewModel: ObservableObject {
 
     /// User tapped the mic button (tap-to-toggle mode).
     func micTapped() {
-        print("🔔 [STEP 1] micTapped() — appState=\(appState.rawValue), isStoppingRecording=\(isStoppingRecording)")
-        Task {
-            print("🔔 [STEP 1-TASK] micTapped Task running — appState=\(appState.rawValue)")
-            switch appState {
-            case .idle, .error:
-                await startListening()
-            case .listening, .transcribing:
-                guard !isStoppingRecording else {
-                    print("🚫 [STEP 1a] tap ignored — isStoppingRecording=true, bailing out")
-                    return
-                }
-                await stopListeningAndProcess()
-            case .speaking:
-                // Barge-in: stop TTS, then start listening
-                await bargeIn()
-            case .thinking:
-                print("🚫 [STEP 1b] tap ignored — appState=.thinking")
-                break // Can't interrupt thinking
-            }
+        switch appState {
+        case .idle, .error:
+            // Optimistic update so waveform appears immediately
+            appState = .listening
+            appStateStore.current = .listening
+            Task { await startListening() }
+        case .listening, .transcribing:
+            guard !isStoppingRecording else { return }
+            Task { await stopListeningAndProcess() }
+        case .speaking:
+            Task { await bargeIn() }
+        case .thinking:
+            break // Can't interrupt thinking
         }
     }
 
     /// User pressed down (press-and-hold mode).
     func micPressed() {
-        Task {
-            if appState == .speaking {
-                await bargeIn()
-            } else {
-                await startListening()
-            }
+        if appState == .speaking {
+            Task { await bargeIn() }
+        } else {
+            // Optimistic update so waveform appears immediately
+            appState = .listening
+            appStateStore.current = .listening
+            Task { await startListening() }
         }
     }
 

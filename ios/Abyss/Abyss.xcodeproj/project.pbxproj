@@ -36,14 +36,18 @@
 		A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */; };
 		A1000000000000010000001B /* ConductorProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001B /* ConductorProtocol.swift */; };
 		A1000000000000010000001C /* LocalConductorStub.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001C /* LocalConductorStub.swift */; };
-		A1000000000000010000002A /* LocalConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002A /* LocalConductorClient.swift */; };
-		A1000000000000010000002B /* WebSocketConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002B /* WebSocketConductorClient.swift */; };
-		A1000000000000010000002C /* EventEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002C /* EventEnvelope.swift */; };
 		A1000000000000010000001D /* WhisperKit in Frameworks */ = {isa = PBXBuildFile; productRef = A30000000000000100000001 /* WhisperKit */; };
 		A1000000000000010000001E /* AgentProgressCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001D /* AgentProgressCard.swift */; };
 		A1000000000000010000001F /* AgentProgressCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000001F /* AgentProgressCardView.swift */; };
 		A10000000000000100000020 /* CursorCloudAgentsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000020 /* CursorCloudAgentsClient.swift */; };
 		A10000000000000100000021 /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000021 /* AgentTools.swift */; };
+		A10000000000000100000022 /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000022 /* ChatSession.swift */; };
+		A10000000000000100000023 /* UIConstants.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000023 /* UIConstants.swift */; };
+		A1000000000000010000002A /* LocalConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002A /* LocalConductorClient.swift */; };
+		A1000000000000010000002B /* WebSocketConductorClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002B /* WebSocketConductorClient.swift */; };
+		A1000000000000010000002C /* EventEnvelope.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002C /* EventEnvelope.swift */; };
+		A1000000000000010000002D /* GitHubAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002D /* GitHubAuthManager.swift */; };
+		A1000000000000010000002E /* GitHubLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000002E /* GitHubLoginView.swift */; };
 		B10000000000000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000100000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -77,14 +81,18 @@
 		A2000000000000010000001A /* WhisperKitSpeechTranscriber.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperKitSpeechTranscriber.swift; sourceTree = "<group>"; };
 		A2000000000000010000001B /* ConductorProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConductorProtocol.swift; sourceTree = "<group>"; };
 		A2000000000000010000001C /* LocalConductorStub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorStub.swift; sourceTree = "<group>"; };
-		A2000000000000010000002A /* LocalConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorClient.swift; sourceTree = "<group>"; };
-		A2000000000000010000002B /* WebSocketConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketConductorClient.swift; sourceTree = "<group>"; };
-		A2000000000000010000002C /* EventEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEnvelope.swift; sourceTree = "<group>"; };
 		A2000000000000010000001D /* AgentProgressCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProgressCard.swift; sourceTree = "<group>"; };
 		A2000000000000010000001E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000000000000010000001F /* AgentProgressCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentProgressCardView.swift; sourceTree = "<group>"; };
 		A20000000000000100000020 /* CursorCloudAgentsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CursorCloudAgentsClient.swift; sourceTree = "<group>"; };
 		A20000000000000100000021 /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
+		A20000000000000100000022 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSession.swift; sourceTree = "<group>"; };
+		A20000000000000100000023 /* UIConstants.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIConstants.swift; sourceTree = "<group>"; };
+		A2000000000000010000002A /* LocalConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalConductorClient.swift; sourceTree = "<group>"; };
+		A2000000000000010000002B /* WebSocketConductorClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketConductorClient.swift; sourceTree = "<group>"; };
+		A2000000000000010000002C /* EventEnvelope.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventEnvelope.swift; sourceTree = "<group>"; };
+		A2000000000000010000002D /* GitHubAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubAuthManager.swift; sourceTree = "<group>"; };
+		A2000000000000010000002E /* GitHubLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubLoginView.swift; sourceTree = "<group>"; };
 		A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -131,6 +139,7 @@
 			children = (
 				A20000000000000100000001 /* AbyssApp.swift */,
 				A20000000000000100000002 /* Config.swift */,
+				A20000000000000100000023 /* UIConstants.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -142,6 +151,7 @@
 				A2000000000000010000000B /* EventBus.swift */,
 				A2000000000000010000001D /* AgentProgressCard.swift */,
 				A2000000000000010000000C /* AppState.swift */,
+				A20000000000000100000022 /* ChatSession.swift */,
 				A2000000000000010000000D /* ConversationMessage.swift */,
 				A2000000000000010000002C /* EventEnvelope.swift */,
 			);
@@ -153,6 +163,7 @@
 			children = (
 				A20000000000000100000003 /* ContentView.swift */,
 				A2000000000000010000001F /* AgentProgressCardView.swift */,
+				A2000000000000010000002E /* GitHubLoginView.swift */,
 				A20000000000000100000004 /* MicButton.swift */,
 				A20000000000000100000005 /* TranscriptView.swift */,
 				A20000000000000100000006 /* EventTimelineView.swift */,
@@ -187,6 +198,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000100000020 /* CursorCloudAgentsClient.swift */,
+				A2000000000000010000002D /* GitHubAuthManager.swift */,
 				A20000000000000100000017 /* SpeechTranscriber.swift */,
 				A20000000000000100000018 /* TextToSpeech.swift */,
 				A20000000000000100000019 /* ElevenLabsTTS.swift */,
@@ -340,6 +352,7 @@
 			files = (
 				A10000000000000100000001 /* AbyssApp.swift in Sources */,
 				A10000000000000100000002 /* Config.swift in Sources */,
+				A10000000000000100000023 /* UIConstants.swift in Sources */,
 				A10000000000000100000003 /* ContentView.swift in Sources */,
 				A10000000000000100000004 /* MicButton.swift in Sources */,
 				A10000000000000100000005 /* TranscriptView.swift in Sources */,
@@ -370,9 +383,12 @@
 				A1000000000000010000001A /* WhisperKitSpeechTranscriber.swift in Sources */,
 				A1000000000000010000001B /* ConductorProtocol.swift in Sources */,
 				A1000000000000010000001C /* LocalConductorStub.swift in Sources */,
+				A10000000000000100000022 /* ChatSession.swift in Sources */,
 				A1000000000000010000002A /* LocalConductorClient.swift in Sources */,
 				A1000000000000010000002B /* WebSocketConductorClient.swift in Sources */,
 				A1000000000000010000002C /* EventEnvelope.swift in Sources */,
+				A1000000000000010000002D /* GitHubAuthManager.swift in Sources */,
+				A1000000000000010000002E /* GitHubLoginView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -488,7 +504,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				DEVELOPMENT_TEAM = 8H757N372W;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -501,7 +517,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyss;
+				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -516,7 +532,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				DEVELOPMENT_TEAM = 8H757N372W;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -529,7 +545,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyss;
+				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
