@@ -55,6 +55,27 @@ struct MicButton: View {
             .buttonStyle(.plain)
             .accessibilityLabel(isMuted ? "Unmute microphone" : "Mute microphone")
 
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isTypingMode = true
+                }
+            } label: {
+                Image(systemName: "keyboard")
+                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                    .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
+                    .background(
+                        RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                            .fill(AppTheme.pillBackground(for: colorScheme))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                            .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Switch to typing mode")
+
             if isSpeaking {
                 Button(action: onInterruptSpeaking) {
                     Image(systemName: "stop.fill")
