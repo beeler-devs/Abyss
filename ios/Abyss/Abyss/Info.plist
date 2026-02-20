@@ -33,6 +33,11 @@
 	<string>$(GITHUB_CLIENT_ID)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Abyss uses the microphone to listen to your voice for speech-to-text and voice commands.</string>
 	<key>UILaunchScreen</key>
