@@ -54,7 +54,7 @@ struct TranscriptView: View {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
                                 .foregroundStyle(.tertiary)
-                            Text("Tap the mic to start talking")
+                            Text("Live conversation is on. Tap mute when needed.")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
