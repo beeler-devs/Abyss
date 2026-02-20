@@ -44,7 +44,7 @@ struct ContentView: View {
                     }
                     ToolbarItem(placement: .principal) {
                         if let vm = viewModel {
-                            StateIndicator(state: vm.appState)
+                            StateIndicator(state: vm.appState, isMuted: vm.isMuted)
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {

@@ -49,7 +49,14 @@ final class ConversationViewModel: ObservableObject {
     private var isStartingRecording = false
     private var isChatActive = false
     private var notifiedTerminalAgentIDs: Set<String> = []
-    private let voiceActivityDetector = VoiceActivityDetector()
+    private let voiceActivityDetector = VoiceActivityDetector(
+        config: VoiceActivityDetector.Config(
+            silenceThreshold: -37.0,
+            speechThreshold: -35.0,
+            silenceDuration: 0.9,
+            minSpeechDuration: 0.25
+        )
+    )
 
     private static let useServerConductorKey = "useServerConductor"
 
@@ -344,7 +351,13 @@ final class ConversationViewModel: ObservableObject {
     func setMuted(_ muted: Bool) {
         guard isMuted != muted else { return }
         isMuted = muted
-        Task { await refreshLiveConversationState() }
+        Task {
+            if muted {
+                await handleMuteActivated()
+            } else {
+                await refreshLiveConversationState()
+            }
+        }
     }
 
     func interruptAssistantSpeech() {
@@ -426,6 +439,20 @@ final class ConversationViewModel: ObservableObject {
         }
 
         if appState != .speaking && appState != .thinking {
+            appStateStore.current = .idle
+            appState = .idle
+        }
+    }
+
+    private func handleMuteActivated() async {
+        voiceActivityDetector.stopMonitoring()
+
+        if transcriber.isListening && !isStoppingRecording {
+            await stopListeningAndProcess()
+            return
+        }
+
+        if appState == .listening || appState == .transcribing || appState == .idle {
             appStateStore.current = .idle
             appState = .idle
         }
@@ -720,9 +747,17 @@ final class ConversationViewModel: ObservableObject {
 
             if toolCall.name == ConvoSetStateTool.name {
                 let requestedState = appStateStore.current
-                appState = requestedState
+                let effectiveState: AppState
+                if isMuted && (requestedState == .listening || requestedState == .transcribing) {
+                    effectiveState = .idle
+                } else {
+                    effectiveState = requestedState
+                }
 
-                switch requestedState {
+                appStateStore.current = effectiveState
+                appState = effectiveState
+
+                switch effectiveState {
                 case .idle:
                     await refreshLiveConversationState()
                 case .thinking, .speaking, .error:
