@@ -15,10 +15,9 @@ final class ConversationViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
+    @Published var isMuted: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
-
-    @AppStorage("recordingMode") var recordingMode: RecordingMode = .tapToToggle
 
     // MARK: - Event Bus (observable timeline)
 
@@ -48,7 +47,9 @@ final class ConversationViewModel: ObservableObject {
     private var agentStatusPollingTask: Task<Void, Never>?
     private var isStoppingRecording = false
     private var isStartingRecording = false
+    private var isChatActive = false
     private var notifiedTerminalAgentIDs: Set<String> = []
+    private let voiceActivityDetector = VoiceActivityDetector()
 
     private static let useServerConductorKey = "useServerConductor"
 
@@ -81,6 +82,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem()
         observeStores()
+        configureVoicePipeline()
         preloadTranscriber()
         startSession()
     }
@@ -101,6 +103,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
+        configureVoicePipeline()
     }
 
     /// Initializer for testing with an explicit conductor client.
@@ -122,6 +125,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         observeStores()
+        configureVoicePipeline()
 
         if autoStartSession {
             startSession(using: conductorClient)
@@ -130,12 +134,44 @@ final class ConversationViewModel: ObservableObject {
 
     deinit {
         inboundEventsTask?.cancel()
+        voiceActivityDetector.stopMonitoring()
+        if let whisperTranscriber = transcriber as? WhisperKitSpeechTranscriber {
+            whisperTranscriber.onAudioLevel = nil
+        }
     }
 
     private func preloadTranscriber() {
         let transcriber = self.transcriber
         Task {
             await transcriber.preload()
+        }
+    }
+
+    private func configureVoicePipeline() {
+        voiceActivityDetector.onSpeechStarted = { [weak self] in
+            guard let self else { return }
+            guard self.canRunLiveConversation else { return }
+
+            if self.appState == .idle || self.appState == .transcribing {
+                self.appStateStore.current = .listening
+                self.appState = .listening
+            }
+        }
+
+        voiceActivityDetector.onSpeechEnded = { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.canRunLiveConversation else { return }
+                guard self.transcriber.isListening else { return }
+                guard !self.isStoppingRecording else { return }
+                await self.stopListeningAndProcess()
+            }
+        }
+
+        if let whisperTranscriber = transcriber as? WhisperKitSpeechTranscriber {
+            whisperTranscriber.onAudioLevel = { [weak self] level in
+                self?.voiceActivityDetector.processAudioLevel(level)
+            }
         }
     }
 
@@ -295,52 +331,26 @@ final class ConversationViewModel: ObservableObject {
 
     // MARK: - User Intents (UI calls these)
 
-    /// User tapped the mic button (tap-to-toggle mode).
-    func micTapped() {
-        switch appState {
-        case .idle, .error:
-            guard !isStartingRecording, !isStoppingRecording else { return }
-            // Optimistic update so waveform appears immediately
-            appState = .listening
-            appStateStore.current = .listening
-            Task { await startListening() }
-        case .listening, .transcribing:
-            if !transcriber.isListening {
-                guard !isStartingRecording, !isStoppingRecording else { return }
-                Task { await startListening() }
-                return
-            }
-            guard !isStoppingRecording else { return }
-            Task { await stopListeningAndProcess() }
-        case .speaking:
-            appState = .listening
-            appStateStore.current = .listening
-            Task { await bargeIn() }
-        case .thinking:
-            break // Can't interrupt thinking
-        }
+    func setChatActive(_ isActive: Bool) {
+        guard isChatActive != isActive else { return }
+        isChatActive = isActive
+        Task { await refreshLiveConversationState() }
     }
 
-    /// User pressed down (press-and-hold mode).
-    func micPressed() {
-        if appState == .speaking {
-            appState = .listening
-            appStateStore.current = .listening
-            Task { await bargeIn() }
-        } else {
-            guard !isStartingRecording, !isStoppingRecording else { return }
-            // Optimistic update so waveform appears immediately
-            appState = .listening
-            appStateStore.current = .listening
-            Task { await startListening() }
-        }
+    func toggleMute() {
+        setMuted(!isMuted)
     }
 
-    /// User released (press-and-hold mode).
-    func micReleased() {
+    func setMuted(_ muted: Bool) {
+        guard isMuted != muted else { return }
+        isMuted = muted
+        Task { await refreshLiveConversationState() }
+    }
+
+    func interruptAssistantSpeech() {
+        guard appState == .speaking else { return }
         Task {
-            guard (appState == .listening || appState == .transcribing), !isStoppingRecording else { return }
-            await stopListeningAndProcess()
+            await bargeIn(reason: "button_interrupt")
         }
     }
 
@@ -398,14 +408,40 @@ final class ConversationViewModel: ObservableObject {
 
     // MARK: - Tool-Call–Based Actions
 
+    private var canRunLiveConversation: Bool {
+        isChatActive && !isMuted
+    }
+
+    private func refreshLiveConversationState() async {
+        if canRunLiveConversation {
+            guard appState != .speaking, appState != .thinking else { return }
+            await startListening()
+            return
+        }
+
+        voiceActivityDetector.stopMonitoring()
+
+        if transcriber.isListening && !isStoppingRecording {
+            await stopListeningSilently()
+        }
+
+        if appState != .speaking && appState != .thinking {
+            appStateStore.current = .idle
+            appState = .idle
+        }
+    }
+
     /// Start listening via tool calls.
     private func startListening() async {
+        guard canRunLiveConversation else { return }
         guard !isStartingRecording else { return }
         isStartingRecording = true
         defer { isStartingRecording = false }
 
         partialTranscript = ""
         assistantPartialSpeech = ""
+        appStateStore.current = .listening
+        appState = .listening
 
         // Always assert the listening state, even if the transcriber is already running.
         // Without this, a stale convo.setState(idle) arriving from the conductor after a
@@ -422,13 +458,16 @@ final class ConversationViewModel: ObservableObject {
         }
 
         if transcriber.isListening {
+            if !voiceActivityDetector.isMonitoring {
+                voiceActivityDetector.startMonitoring()
+            }
             return
         }
 
         // Start STT
         let sttEvent = Event.toolCall(
             name: "stt.start",
-            arguments: encode(STTStartTool.Arguments(mode: recordingMode.rawValue)),
+            arguments: encode(STTStartTool.Arguments()),
             sessionId: sessionId
         )
         eventBus.emit(sttEvent)
@@ -437,18 +476,45 @@ final class ConversationViewModel: ObservableObject {
             // Check for errors
             if case .toolResult(let tr) = result.kind, tr.isError {
                 await handleToolError(tr.error ?? "STT start failed")
+                return
             }
         }
+
+        if !voiceActivityDetector.isMonitoring {
+            voiceActivityDetector.startMonitoring()
+        }
+    }
+
+    private func stopListeningSilently() async {
+        guard transcriber.isListening else { return }
+
+        isStoppingRecording = true
+        defer { isStoppingRecording = false }
+
+        let sttStopEvent = Event.toolCall(
+            name: "stt.stop",
+            arguments: encode(STTStopTool.Arguments()),
+            sessionId: sessionId
+        )
+        eventBus.emit(sttStopEvent)
+        if case .toolCall(let tc) = sttStopEvent.kind {
+            _ = await toolRouter.dispatch(tc)
+        }
+        partialTranscript = ""
     }
 
     /// Stop listening and send transcript to conductor.
     private func stopListeningAndProcess() async {
+        guard transcriber.isListening else { return }
         print("⏹️ [STEP 2] stopListeningAndProcess() ENTER — appState=\(appState.rawValue)")
         isStoppingRecording = true
         defer {
             print("⏹️ [STEP 2-EXIT] stopListeningAndProcess() EXIT — resetting isStoppingRecording")
             isStoppingRecording = false
         }
+        voiceActivityDetector.stopMonitoring()
+        appStateStore.current = .transcribing
+        appState = .transcribing
 
         // Set state to transcribing
         let setTranscribingEvent = Event.toolCall(
@@ -515,7 +581,10 @@ final class ConversationViewModel: ObservableObject {
             if case .toolCall(let tc) = resetEvent.kind {
                 await toolRouter.dispatch(tc)
             }
+            appStateStore.current = .idle
+            appState = .idle
             partialTranscript = ""
+            await refreshLiveConversationState()
             return
         }
 
@@ -531,7 +600,9 @@ final class ConversationViewModel: ObservableObject {
     }
 
     /// Barge-in: stop TTS then start listening.
-    private func bargeIn() async {
+    private func bargeIn(reason: String = "barge_in") async {
+        voiceActivityDetector.stopMonitoring()
+
         // 1. Stop TTS via tool call
         let ttsStopEvent = Event.toolCall(
             name: "tts.stop",
@@ -544,18 +615,21 @@ final class ConversationViewModel: ObservableObject {
         }
 
         // 2. Notify server best-effort (non-blocking)
-        let interruptedEvent = Event.audioOutputInterrupted("barge_in", sessionId: sessionId)
+        let interruptedEvent = Event.audioOutputInterrupted(reason, sessionId: sessionId)
         eventBus.emit(interruptedEvent)
         Task {
             await sendEventToConductor(interruptedEvent, surfaceErrors: false)
         }
 
         // 3. Start listening immediately
-        await startListening()
+        await refreshLiveConversationState()
     }
 
     /// Handle partial transcript from STT.
     private func handlePartialTranscript(_ text: String) {
+        if isPlaceholderTranscript(text) {
+            return
+        }
         partialTranscript = text
         eventBus.emit(Event.transcriptPartial(text, sessionId: sessionId))
 
@@ -643,32 +717,20 @@ final class ConversationViewModel: ObservableObject {
             await sendEventToConductor(toolResultEvent)
             print("📥 [INBOUND] tool '\(toolCall.name)' result sent")
 
-            // For inbound convo.setState tool calls, sync appState from the store —
-            // but guard against a stale idle/speaking overwriting an active or pending barge-in.
-            //
-            // Timing of the race:
-            //   1. micTapped() sets appState = .listening optimistically (sync)
-            //   2. bargeIn() task is spawned; it suspends at await tts.stop
-            //   3. Main actor is free — inbound loop processes convo.setState(idle) from
-            //      the conductor BEFORE startListening() has run, so transcriber.isListening
-            //      is still false and isStartingRecording is still false at that moment.
-            //   4. Without the appState guard below, appState gets clobbered to .idle,
-            //      causing the waveform to flash briefly then disappear.
-            //
-            // Fix: reject any server-requested state that would downgrade from .listening,
-            // unless the transcriber and bargeIn are both clearly inactive.
             if toolCall.name == ConvoSetStateTool.name {
                 let requestedState = appStateStore.current
-                let isDowngrade = (requestedState == .idle || requestedState == .thinking)
-                    && (appState == .listening || appState == .transcribing)
-                let listeningIsActive = transcriber.isListening || isStartingRecording
+                appState = requestedState
 
-                if isDowngrade && (listeningIsActive || appState == .listening) {
-                    // Conductor sent a stale state transition. Hold .listening.
-                    appStateStore.current = .listening
-                    appState = .listening
-                } else {
-                    appState = requestedState
+                switch requestedState {
+                case .idle:
+                    await refreshLiveConversationState()
+                case .thinking, .speaking, .error:
+                    voiceActivityDetector.stopMonitoring()
+                    if transcriber.isListening && !isStoppingRecording {
+                        await stopListeningSilently()
+                    }
+                case .listening, .transcribing:
+                    break
                 }
             }
 
@@ -682,6 +744,10 @@ final class ConversationViewModel: ObservableObject {
 
     /// Surface an error to the UI.
     private func handleToolError(_ message: String) async {
+        voiceActivityDetector.stopMonitoring()
+        appStateStore.current = .error
+        appState = .error
+
         let setErrorEvent = Event.toolCall(
             name: "convo.setState",
             arguments: encode(ConvoSetStateTool.Arguments(state: "error")),

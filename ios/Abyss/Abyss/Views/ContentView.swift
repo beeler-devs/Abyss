@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var isTypingMode = false
     @State private var typedMessage = ""
     @State private var showSidebar = false
+    @State private var activeChatId: UUID?
 
     private var viewModel: ConversationViewModel? {
         chatList.selectedChat?.viewModel
@@ -59,10 +60,6 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 if let vm = viewModel {
                     SettingsView(
-                        recordingMode: Binding(
-                            get: { vm.recordingMode },
-                            set: { vm.recordingMode = $0 }
-                        ),
                         useServerConductor: Binding(
                             get: { vm.useServerConductor },
                             set: { vm.setUseServerConductor($0) }
@@ -70,7 +67,6 @@ struct ContentView: View {
                     )
                 } else {
                     SettingsView(
-                        recordingMode: .constant(.tapToToggle),
                         useServerConductor: .constant(false)
                     )
                 }
@@ -100,6 +96,17 @@ struct ContentView: View {
             if chatList.chats.isEmpty {
                 chatList.createChat()
             }
+            syncActiveChat(with: chatList.selectedChatId)
+        }
+        .onChange(of: chatList.selectedChatId) { _, newValue in
+            syncActiveChat(with: newValue)
+        }
+        .onDisappear {
+            if let activeChatId,
+               let vm = chatList.chats.first(where: { $0.id == activeChatId })?.viewModel {
+                vm.setChatActive(false)
+            }
+            self.activeChatId = nil
         }
     }
 
@@ -121,6 +128,23 @@ struct ContentView: View {
             .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func syncActiveChat(with newSelectedId: UUID?) {
+        if let currentActive = activeChatId,
+           currentActive != newSelectedId,
+           let vm = chatList.chats.first(where: { $0.id == currentActive })?.viewModel {
+            vm.setChatActive(false)
+        }
+
+        guard let newSelectedId,
+              let vm = chatList.chats.first(where: { $0.id == newSelectedId })?.viewModel else {
+            activeChatId = nil
+            return
+        }
+
+        activeChatId = newSelectedId
+        vm.setChatActive(true)
     }
 
 }
@@ -333,13 +357,12 @@ private struct ChatContentView: View {
             // Bottom controls
             HStack(alignment: .center, spacing: UIConstants.actionBarSpacing) {
                 MicButton(
-                    appState: viewModel.appState,
-                    recordingMode: viewModel.recordingMode,
+                    isMuted: viewModel.isMuted,
+                    isSpeaking: viewModel.appState == .speaking,
                     isTypingMode: $isTypingMode,
                     typedText: $typedMessage,
-                    onTap: { viewModel.micTapped() },
-                    onPressDown: { viewModel.micPressed() },
-                    onPressUp: { viewModel.micReleased() },
+                    onToggleMute: { viewModel.toggleMute() },
+                    onInterruptSpeaking: { viewModel.interruptAssistantSpeech() },
                     onSendTyped: { text in
                         viewModel.sendTypedMessage(text)
                     }
