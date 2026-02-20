@@ -16,6 +16,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
     @Published private(set) var useServerConductor: Bool = false
+    @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
 
     @AppStorage("recordingMode") var recordingMode: RecordingMode = .tapToToggle
 
@@ -163,6 +164,7 @@ final class ConversationViewModel: ObservableObject {
         registry.register(AgentFollowUpTool(client: cursorClient))
         registry.register(AgentListTool(client: cursorClient))
         registry.register(RepositoriesListTool(client: cursorClient))
+        registry.register(RepositoriesSelectTool(client: cursorClient, selectionManager: repositorySelectionManager))
 
         self.toolRegistry = registry
         self.toolRouter = ToolRouter(registry: registry, eventBus: eventBus)
@@ -382,6 +384,16 @@ final class ConversationViewModel: ObservableObject {
                 _ = await toolRouter.dispatch(tc)
             }
         }
+    }
+
+    // MARK: - Repository Selection
+
+    func selectRepository(_ repository: RepositorySelectionCard.Repository) {
+        repositorySelectionManager.completeSelection(repository: repository)
+    }
+
+    func cancelRepositorySelection() {
+        repositorySelectionManager.cancelSelection()
     }
 
     // MARK: - Tool-Call–Based Actions
