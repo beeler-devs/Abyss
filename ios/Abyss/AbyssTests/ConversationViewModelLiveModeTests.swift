@@ -21,14 +21,17 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
     }
 
     func testMutingStopsListeningAndBlocksAutoRestartUntilUnmuted() async {
+        let mockConductor = MockConductorClient()
         let mockSTT = MockSpeechTranscriber()
         let mockTTS = MockTextToSpeech()
         let viewModel = ConversationViewModel(
-            conductor: LocalConductorStub(),
+            conductorClient: mockConductor,
             transcriber: mockSTT,
-            tts: mockTTS
+            tts: mockTTS,
+            autoStartSession: true
         )
 
+        try? await Task.sleep(nanoseconds: 80_000_000)
         viewModel.setChatActive(true)
         await waitForCondition { mockSTT.startCallCount == 1 }
 
@@ -44,6 +47,61 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
         viewModel.setMuted(false)
         await waitForCondition { mockSTT.startCallCount == 2 }
         XCTAssertTrue(mockSTT.isListening)
+    }
+
+    func testMutedInboundListeningStateIsCoercedToIdle() async {
+        let mockConductor = MockConductorClient()
+        let mockSTT = MockSpeechTranscriber()
+        let mockTTS = MockTextToSpeech()
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: mockSTT,
+            tts: mockTTS,
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.setChatActive(true)
+        await waitForCondition { mockSTT.startCallCount == 1 }
+
+        viewModel.setMuted(true)
+        await waitForCondition { mockSTT.stopCallCount == 1 }
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.setState",
+            arguments: #"{"state":"listening"}"#,
+            callId: "state-listening-muted",
+            sessionId: "session-test"
+        ))
+
+        await waitForCondition { viewModel.appState == .idle }
+        XCTAssertEqual(viewModel.appState, .idle)
+    }
+
+    func testMutingFlushesPendingSpeechAndSendsFinalTranscriptEvent() async {
+        let mockConductor = MockConductorClient()
+        let mockSTT = MockSpeechTranscriber()
+        mockSTT.mockFinalTranscript = "flush pending speech"
+        let mockTTS = MockTextToSpeech()
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: mockSTT,
+            tts: mockTTS,
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.setChatActive(true)
+        await waitForCondition { mockSTT.startCallCount == 1 }
+
+        viewModel.setMuted(true)
+        await waitForCondition { mockSTT.stopCallCount == 1 }
+        await waitForCondition {
+            latestFinalTranscript(in: mockConductor.sentEvents) != nil
+        }
+
+        XCTAssertFalse(mockSTT.isListening)
+        XCTAssertEqual(latestFinalTranscript(in: mockConductor.sentEvents), "Flush pending speech.")
     }
 
     func testInboundIdleResumesOnlyWhenActiveAndUnmuted() async {
@@ -129,5 +187,14 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
             try? await Task.sleep(nanoseconds: pollNanoseconds)
             waited += pollNanoseconds
         }
+    }
+
+    private func latestFinalTranscript(in events: [Event]) -> String? {
+        for event in events.reversed() {
+            if case .userAudioTranscriptFinal(let transcript) = event.kind {
+                return transcript.text
+            }
+        }
+        return nil
     }
 }

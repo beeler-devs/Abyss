@@ -70,6 +70,28 @@ final class VoiceActivityDetectorTests: XCTestCase {
         XCTAssertFalse(vad.isSpeaking)
     }
 
+    func testBalancedSilenceThresholdEndsSpeechNearMinusThirtySevenDb() {
+        let config = VoiceActivityDetector.Config(
+            silenceThreshold: -37,
+            speechThreshold: -35,
+            silenceDuration: 0.06,
+            minSpeechDuration: 0.0
+        )
+        let vad = VoiceActivityDetector(config: config)
+        let ended = expectation(description: "speech ended at tuned threshold")
+
+        vad.onSpeechEnded = { _ in
+            ended.fulfill()
+        }
+
+        vad.startMonitoring()
+        vad.processAudioLevel(-25)
+        vad.processAudioLevel(-38)
+
+        wait(for: [ended], timeout: 0.3)
+        XCTAssertFalse(vad.isSpeaking)
+    }
+
     func testStopMonitoringResetsStateAndPreventsCallbacks() {
         let config = VoiceActivityDetector.Config(
             silenceThreshold: -40,
