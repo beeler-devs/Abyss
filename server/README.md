@@ -70,7 +70,7 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 - `MAX_TURNS` (default `20`)
 - `SESSION_RATE_LIMIT_PER_MIN` (default `30`)
 - `ANTHROPIC_API_KEY` (required for `anthropic`)
-- `ANTHROPIC_MODEL` (default `claude-3-5-haiku-latest`)
+- `ANTHROPIC_MODEL` (default `claude-haiku-4-5`)
 - `ANTHROPIC_MAX_TOKENS` (default `512`)
 - `ANTHROPIC_PARTIAL_DELAY_MS` (default `60`)
 - `BEDROCK_MODEL_ID` (for scaffold)
