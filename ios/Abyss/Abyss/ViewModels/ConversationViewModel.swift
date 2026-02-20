@@ -434,6 +434,7 @@ final class ConversationViewModel: ObservableObject {
     /// Start listening via tool calls.
     private func startListening() async {
         guard canRunLiveConversation else { return }
+        guard !isStoppingRecording else { return }
         guard !isStartingRecording else { return }
         isStartingRecording = true
         defer { isStartingRecording = false }
