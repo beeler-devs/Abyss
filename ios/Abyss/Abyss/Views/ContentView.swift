@@ -289,6 +289,18 @@ private struct ChatContentView: View {
                 appState: viewModel.appState
             )
 
+            // Repository selection card (takes priority)
+            if let selectionCard = viewModel.repositorySelectionManager.activeCard {
+                RepositorySelectionCardView(
+                    card: selectionCard,
+                    onSelect: { viewModel.selectRepository($0) },
+                    onCancel: { viewModel.cancelRepositorySelection() }
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
             // Agent progress cards
             if !viewModel.agentProgressCards.isEmpty {
                 VStack(spacing: 10) {

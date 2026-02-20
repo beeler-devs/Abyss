@@ -82,6 +82,23 @@ const AGENT_TOOLS = [
             properties: {},
         },
     },
+    {
+        name: "repositories.select",
+        description: "Present an interactive repository selection UI to the user. Use this when the user refers to a repository ambiguously, when you cannot confidently identify which repository they mean, or when multiple matches exist. The UI displays all connected repositories grouped by organization. Returns the user's selection. This tool blocks until the user makes a choice or cancels.",
+        input_schema: {
+            type: "object",
+            properties: {
+                prompt: {
+                    type: "string",
+                    description: "Optional message explaining what the selection is for, shown to the user",
+                },
+                filter: {
+                    type: "string",
+                    description: "Optional partial name to pre-filter the repository list",
+                },
+            },
+        },
+    },
 ];
 function waitForToolResult(session, callId, timeoutMs) {
     return new Promise((resolve) => {
