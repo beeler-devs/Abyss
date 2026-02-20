@@ -6,7 +6,11 @@ struct STTStartTool: Tool, @unchecked Sendable {
     static let name = "stt.start"
 
     struct Arguments: Codable, Sendable {
-        let mode: String // "tapToToggle" or "pressAndHold"
+        let mode: String?
+
+        init(mode: String? = nil) {
+            self.mode = mode
+        }
     }
 
     struct Result: Codable, Sendable {
