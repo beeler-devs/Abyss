@@ -22,6 +22,7 @@ export class SessionStore {
       history: [],
       pendingToolCalls: new Map(),
       toolResultResolvers: new Map(),
+      idempotencyResults: new Map(),
       recentTranscriptTrace: [],
       transcriptCount: 0,
     };

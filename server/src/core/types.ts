@@ -38,12 +38,17 @@ export interface PendingToolCall {
 export interface SessionState {
   sessionId: string;
   githubToken?: string;
+  selectedRepo?: string;
+  lastPrNumber?: number;
+  lastPrUrl?: string;
+  activeRunId?: string;
   history: ConversationTurn[];
   pendingToolCalls: Map<string, PendingToolCall>;
   toolResultResolvers: Map<
     string,
     (result: string | null, error: string | null) => void
   >;
+  idempotencyResults: Map<string, string>;
   recentTranscriptTrace: string[];
   transcriptCount: number;
 }

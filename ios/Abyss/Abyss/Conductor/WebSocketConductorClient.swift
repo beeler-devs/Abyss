@@ -140,6 +140,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var shouldReconnect: Bool = false
     private var currentSessionId: String?
     private var currentGithubToken: String?
+    private var currentSelectedRepo: String?
 
     private var seenInboundEventIDs: Set<String> = []
     private var seenInboundEventOrder: [String] = []
@@ -204,13 +205,18 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         self.init(backendURL: url)
     }
 
-    func connect(sessionId: String, githubToken: String? = nil) async throws {
+    func connect(sessionId: String, githubToken: String? = nil, selectedRepo: String? = nil) async throws {
         currentSessionId = sessionId
         currentGithubToken = githubToken
+        currentSelectedRepo = selectedRepo
         shouldReconnect = true
 
         try await openSocketAndStartListening()
-        try await send(event: Event.sessionStart(sessionId: sessionId, githubToken: githubToken))
+        try await send(event: Event.sessionStart(
+            sessionId: sessionId,
+            githubToken: githubToken,
+            selectedRepo: selectedRepo
+        ))
     }
 
     func disconnect() async {
@@ -334,7 +340,12 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
             do {
                 try await self.openSocketAndStartListening()
                 let token = self.currentGithubToken
-                try await self.send(event: Event.sessionStart(sessionId: sessionId, githubToken: token))
+                let selectedRepo = self.currentSelectedRepo
+                try await self.send(event: Event.sessionStart(
+                    sessionId: sessionId,
+                    githubToken: token,
+                    selectedRepo: selectedRepo
+                ))
             } catch {
                 await self.scheduleReconnect()
             }

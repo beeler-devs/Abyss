@@ -5,7 +5,7 @@ final class EventEnvelopeTests: XCTestCase {
 
     func testRoundTripEncodingAndDecoding() throws {
         let events: [Event] = [
-            Event.sessionStart(sessionId: "session-1"),
+            Event.sessionStart(sessionId: "session-1", githubToken: "gho_test", selectedRepo: "acme/repo"),
             Event.transcriptFinal("hello world", sessionId: "session-1"),
             Event.speechPartial("hello", sessionId: "session-1"),
             Event.speechFinal("hello world", sessionId: "session-1"),
@@ -41,5 +41,17 @@ final class EventEnvelopeTests: XCTestCase {
         XCTAssertEqual(envelope.payload["text"]?.stringValue, "hi")
         XCTAssertEqual(envelope.payload["sessionId"]?.stringValue, "session-abc")
         XCTAssertNotNil(envelope.payload["timestamp"]?.stringValue)
+    }
+
+    func testSessionStartCarriesSelectedRepo() {
+        let event = Event.sessionStart(
+            sessionId: "session-1",
+            githubToken: "gho_token",
+            selectedRepo: "owner/repo"
+        )
+        let envelope = EventEnvelope(event: event)
+
+        XCTAssertEqual(envelope.type, "session.start")
+        XCTAssertEqual(envelope.payload["selectedRepo"]?.stringValue, "owner/repo")
     }
 }

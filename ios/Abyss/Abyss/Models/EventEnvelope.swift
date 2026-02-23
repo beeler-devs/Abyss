@@ -30,6 +30,9 @@ struct EventEnvelope: Codable, Sendable {
             if let token = value.githubToken {
                 sessionPayload["githubToken"] = .string(token)
             }
+            if let selectedRepo = value.selectedRepo {
+                sessionPayload["selectedRepo"] = .string(selectedRepo)
+            }
             payload = sessionPayload
         case .userAudioTranscriptPartial(let value):
             type = "user.audio.transcript.partial"
@@ -91,10 +94,18 @@ struct EventEnvelope: Codable, Sendable {
         switch type {
         case "session.start":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil))
+            kind = .sessionStart(Event.SessionStart(
+                sessionId: session,
+                githubToken: payload["githubToken"]?.stringValue,
+                selectedRepo: payload["selectedRepo"]?.stringValue
+            ))
         case "session.started":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil))
+            kind = .sessionStart(Event.SessionStart(
+                sessionId: session,
+                githubToken: payload["githubToken"]?.stringValue,
+                selectedRepo: payload["selectedRepo"]?.stringValue
+            ))
         case "user.audio.transcript.partial":
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":

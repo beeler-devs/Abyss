@@ -37,6 +37,7 @@ struct Event: Identifiable, Codable, Sendable {
     struct SessionStart: Codable, Sendable {
         let sessionId: String
         let githubToken: String?
+        let selectedRepo: String?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -113,8 +114,16 @@ struct Event: Identifiable, Codable, Sendable {
 // MARK: - Convenience Factories
 
 extension Event {
-    static func sessionStart(sessionId: String = UUID().uuidString, githubToken: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .sessionStart(SessionStart(sessionId: sessionId, githubToken: githubToken)))
+    static func sessionStart(
+        sessionId: String = UUID().uuidString,
+        githubToken: String? = nil,
+        selectedRepo: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
+            sessionId: sessionId,
+            githubToken: githubToken,
+            selectedRepo: selectedRepo
+        )))
     }
 
     static func transcriptPartial(_ text: String, sessionId: String? = nil) -> Event {

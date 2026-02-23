@@ -11,6 +11,7 @@ struct SettingsView: View {
     @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
     @AppStorage("elevenLabsModelId") private var modelId = "eleven_turbo_v2_5"
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
+    @AppStorage("preferredRepo") private var preferredRepo = ""
 
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -56,6 +57,11 @@ struct SettingsView: View {
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
+
+                        TextField("Preferred Repo (owner/repo)", text: $preferredRepo)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .font(.system(.body, design: .monospaced))
                     } else {
                         Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
                             .font(.caption)

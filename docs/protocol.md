@@ -1,4 +1,4 @@
-# Abyss Event Protocol (Phase 2)
+# Abyss Event Protocol (Stage 3)
 
 ## Transport
 
@@ -41,7 +41,11 @@ Fields:
   "type": "session.start",
   "timestamp": "2026-02-18T12:00:00.000Z",
   "sessionId": "session-1",
-  "payload": { "sessionId": "session-1" }
+  "payload": {
+    "sessionId": "session-1",
+    "githubToken": "gho_xxx_optional",
+    "selectedRepo": "owner/repo_optional"
+  }
 }
 ```
 
@@ -156,7 +160,7 @@ Error:
   "timestamp": "2026-02-18T12:00:05.000Z",
   "sessionId": "session-1",
   "payload": {
-    "patch": "{\"op\":\"replace\",\"path\":\"/cards/0\"}"
+    "patch": "{\"stage\":\"stage3\",\"title\":\"CI Summary\",\"body\":\"Failing check: unit-tests\",\"data\":{\"prUrl\":\"https://github.com/org/repo/pull/1\"}}"
   }
 }
 ```
@@ -170,8 +174,9 @@ Error:
   "timestamp": "2026-02-18T12:00:05.500Z",
   "sessionId": "session-1",
   "payload": {
-    "status": "thinking",
-    "detail": "Running tool sequence"
+    "status": "server_tool",
+    "detail": "Running github.pr.openOrUpdate",
+    "callId": "toolu_123"
   }
 }
 ```
@@ -205,9 +210,9 @@ Error:
 }
 ```
 
-## Required Phase 2 Sequence
+## Required Base Sequence
 
-On `user.audio.transcript.final`, the backend emits:
+On `user.audio.transcript.final`, the backend always emits the following client-tool lifecycle around its response:
 
 1. `tool.call` `convo.setState` `{state:"thinking"}`
 2. `tool.call` `convo.appendMessage` for user transcript
@@ -217,6 +222,8 @@ On `user.audio.transcript.final`, the backend emits:
 6. `tool.call` `convo.setState` `{state:"speaking"}`
 7. `tool.call` `tts.speak`
 8. `tool.call` `convo.setState` `{state:"idle"}`
+
+For Stage 3 server-side tool execution, additional `agent.status` and `assistant.ui.patch` events may be interleaved before the final assistant speech.
 
 ## Reconnect + Dedupe
 

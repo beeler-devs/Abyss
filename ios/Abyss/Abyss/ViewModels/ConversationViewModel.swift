@@ -18,6 +18,7 @@ final class ConversationViewModel: ObservableObject {
     @Published private(set) var useServerConductor: Bool = false
 
     @AppStorage("recordingMode") var recordingMode: RecordingMode = .tapToToggle
+    @AppStorage("preferredRepo") private var preferredRepo: String = ""
 
     // MARK: - Event Bus (observable timeline)
 
@@ -270,7 +271,12 @@ final class ConversationViewModel: ObservableObject {
     private func connectConductorClient(_ client: ConductorClient) async throws {
         activeConductorClient = client
         let githubToken = GitHubAuthManager.loadToken()
-        try await client.connect(sessionId: sessionId, githubToken: githubToken)
+        let selectedRepo = preferredRepo.trimmingCharacters(in: .whitespacesAndNewlines)
+        try await client.connect(
+            sessionId: sessionId,
+            githubToken: githubToken,
+            selectedRepo: selectedRepo.isEmpty ? nil : selectedRepo
+        )
 
         inboundEventsTask?.cancel()
         inboundEventsTask = Task { [weak self] in
@@ -623,6 +629,24 @@ final class ConversationViewModel: ObservableObject {
             assistantPartialSpeech = ""
             eventBus.emit(event)
 
+        case .assistantUIPatch(let patch):
+            eventBus.emit(event)
+            if let artifactText = stage3ArtifactMessage(from: patch.patch) {
+                let appendEvent = Event.toolCall(
+                    name: "convo.appendMessage",
+                    arguments: encode(ConvoAppendMessageTool.Arguments(
+                        role: "assistant",
+                        text: artifactText,
+                        isPartial: false
+                    )),
+                    sessionId: sessionId
+                )
+                eventBus.emit(appendEvent)
+                if case .toolCall(let tc) = appendEvent.kind {
+                    _ = await toolRouter.dispatch(tc)
+                }
+            }
+
         case .toolCall(let toolCall):
             eventBus.emit(event)
             print("📥 [INBOUND] dispatching tool '\(toolCall.name)'...")
@@ -660,7 +684,7 @@ final class ConversationViewModel: ObservableObject {
                 }
             }
 
-        case .assistantUIPatch, .agentStatus, .sessionStart, .toolResult, .error,
+        case .agentStatus, .sessionStart, .toolResult, .error,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,
                 .agentCompleted:
             eventBus.emit(event)
@@ -683,6 +707,30 @@ final class ConversationViewModel: ObservableObject {
         eventBus.emit(Event.error(code: "tool_error", message: message, sessionId: sessionId))
         errorMessage = message
         showError = true
+    }
+
+    private func stage3ArtifactMessage(from patch: String) -> String? {
+        guard let data = patch.data(using: .utf8),
+              let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let stage = raw["stage"] as? String,
+              stage == "stage3" else {
+            return nil
+        }
+
+        var lines: [String] = []
+        if let title = raw["title"] as? String, !title.isEmpty {
+            lines.append("[\(title)]")
+        }
+        if let body = raw["body"] as? String, !body.isEmpty {
+            lines.append(body)
+        }
+        if let data = raw["data"] as? [String: Any] {
+            for (key, value) in data.sorted(by: { $0.key < $1.key }) {
+                lines.append("\(key): \(String(describing: value))")
+            }
+        }
+        let message = lines.joined(separator: "\n")
+        return message.isEmpty ? nil : message
     }
 
     // MARK: - Agent Progress Cards

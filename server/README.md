@@ -1,12 +1,11 @@
-# Abyss Conductor Server (Phase 2)
+# Abyss Conductor Server (Stage 3)
 
-WebSocket conductor service for the Abyss iOS app.
+Stage 3 turns the backend into a tool server for voice-first development loops.
 
-- Accepts event envelopes over `ws://.../ws`
-- Uses `MODEL_PROVIDER=anthropic` by default (Claude via Anthropic API)
-- Emits ordered tool-driven events (`tool.call`, `assistant.speech.partial/final`)
-- Accepts `tool.result` from iOS and logs call outcomes
-- Keeps per-session history + pending tool calls in memory
+- WebSocket conductor endpoint: `/ws`
+- OAuth token exchange endpoint: `/github/exchange`
+- Server-side tool routing for `github.*`, `ci.*`, `diagnose.*`, `context.*`, `embeddings.*`, `patch.*`, `preview.*`, `webqa.*`, `policy.*`, `runner.*`
+- Client-side tools remain on iOS (`stt.*`, `tts.*`, `convo.*`, optional Cursor tools)
 
 ## Requirements
 
@@ -21,10 +20,10 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set at minimum:
+At minimum set:
 
 - `ANTHROPIC_API_KEY`
-- Optional: `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`, `PORT`
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` (for OAuth exchange)
 
 ## Run (dev)
 
@@ -32,11 +31,17 @@ Edit `.env` and set at minimum:
 npm run dev
 ```
 
-Server listens on:
+Default endpoint:
 
-- `ws://localhost:8080/ws` (or your configured `PORT`)
+- `ws://localhost:8080/ws`
 
-## Run tests
+## Build
+
+```bash
+npm run build
+```
+
+## Test
 
 ```bash
 npm test
@@ -44,41 +49,30 @@ npm test
 
 ## Smoke test
 
-In one terminal:
-
-```bash
-npm run dev
-```
-
-In a second terminal:
-
 ```bash
 npm run smoke
 ```
 
-Optional smoke overrides:
-
-```bash
-SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
-```
-
-## Environment variables
+## Key environment variables
 
 - `PORT` (default `8080`)
-- `MODEL_PROVIDER` (`anthropic` or `bedrock`, default `anthropic`)
+- `MODEL_PROVIDER` (`anthropic` or `bedrock`)
 - `MAX_EVENT_BYTES` (default `65536`)
 - `MAX_TURNS` (default `20`)
-- `SESSION_RATE_LIMIT_PER_MIN` (default `30`)
-- `ANTHROPIC_API_KEY` (required for `anthropic`)
+- `SESSION_RATE_LIMIT_PER_MIN` (default `300`)
+- `ANTHROPIC_API_KEY` (required for Anthropic)
 - `ANTHROPIC_MODEL` (default `claude-3-5-haiku-latest`)
 - `ANTHROPIC_MAX_TOKENS` (default `512`)
 - `ANTHROPIC_PARTIAL_DELAY_MS` (default `60`)
-- `BEDROCK_MODEL_ID` (for scaffold)
-- `AWS_REGION` (for scaffold)
+- `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`
+- `STAGE3_MAX_ITERATIONS` (default `3`)
+- `STAGE3_MAX_CI_WAIT_MS` (default `180000`)
+- `STAGE3_WEBQA_PROVIDER` (default `stub`)
+- `STAGE3_RUN_STORE` (default `inmemory`)
+- `STAGE3_DEFAULT_MAX_DIFF_LINES` (default `250`)
 
-## Switching providers
+## Notes
 
-- Anthropic (active): `MODEL_PROVIDER=anthropic`
-- Bedrock scaffold: `MODEL_PROVIDER=bedrock`
-
-Bedrock is intentionally scaffolded for easy cutover later with minimal code changes.
+- Stage 3 currently ships a stub WebQA provider and stub hosted runner provider behind stable tool schemas.
+- Patch application defaults to GitHub Contents API commits on a PR branch.
+- Cursor tools stay available as optional fallback executor.

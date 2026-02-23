@@ -6,6 +6,7 @@ import { ConductorService } from "./core/conductorService.js";
 import { parseIncomingEvent, makeEvent } from "./core/events.js";
 import { logger } from "./core/logger.js";
 import { buildProvider } from "./providers/index.js";
+import { buildStage3Registry, createStage3Dependencies } from "./stage3/tools/stage3Tools.js";
 
 const PORT = parseInteger(process.env.PORT, 8080);
 const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "anthropic").toLowerCase() === "bedrock" ? "bedrock" : "anthropic";
@@ -25,9 +26,17 @@ const provider = buildProvider({
   awsRegion: process.env.AWS_REGION ?? "us-east-1",
 });
 
+const stage3Deps = createStage3Dependencies({
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+  anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-3-5-haiku-latest",
+});
+
+const stage3Registry = buildStage3Registry(stage3Deps);
+
 const conductor = new ConductorService(provider, {
   maxTurns: MAX_TURNS,
   rateLimitPerMinute: SESSION_RATE_LIMIT_PER_MIN,
+  toolRegistry: stage3Registry,
 });
 
 // HTTP server handles /github/exchange for OAuth token exchange and upgrade to WebSocket.

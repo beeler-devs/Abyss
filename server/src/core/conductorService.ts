@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { ToolRegistry } from "../stage3/tools/registry.js";
 import { asString, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
@@ -13,91 +14,8 @@ import {
 export interface ConductorServiceConfig {
   maxTurns: number;
   rateLimitPerMinute: number;
+  toolRegistry?: ToolRegistry;
 }
-
-const AGENT_TOOLS: ToolDefinition[] = [
-  {
-    name: "agent.spawn",
-    description:
-      "Launch a new Cursor Cloud Agent to work on a repository. Use for coding tasks, PR creation, analysis. Requires a prompt and either repository (format: owner/repo) or prUrl.",
-    input_schema: {
-      type: "object",
-      properties: {
-        prompt: { type: "string", description: "The task for the agent to perform" },
-        repository: { type: "string", description: "GitHub repository in owner/repo format" },
-        ref: { type: "string", description: "Git ref/branch to work from" },
-        prUrl: { type: "string", description: "Existing PR URL to work on instead of a repo" },
-        model: { type: "string", description: "Model to use (optional)" },
-        autoCreatePr: {
-          type: "boolean",
-          description: "Whether to auto-create a PR. Default false for safety.",
-        },
-        autoBranch: {
-          type: "boolean",
-          description: "Whether to auto-create a branch. Default false for safety.",
-        },
-        skipReviewerRequest: { type: "boolean" },
-        branchName: { type: "string" },
-      },
-      required: ["prompt"],
-    },
-  },
-  {
-    name: "agent.status",
-    description: "Get the current status of a running Cursor Cloud Agent by its ID.",
-    input_schema: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "The agent ID returned from agent.spawn" },
-      },
-      required: ["id"],
-    },
-  },
-  {
-    name: "agent.cancel",
-    description: "Stop a running Cursor Cloud Agent.",
-    input_schema: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "The agent ID to cancel" },
-      },
-      required: ["id"],
-    },
-  },
-  {
-    name: "agent.followup",
-    description: "Add a follow-up instruction to an existing Cursor Cloud Agent.",
-    input_schema: {
-      type: "object",
-      properties: {
-        id: { type: "string", description: "The agent ID" },
-        prompt: { type: "string", description: "Follow-up instruction" },
-      },
-      required: ["id", "prompt"],
-    },
-  },
-  {
-    name: "agent.list",
-    description: "List Cursor Cloud Agents for the authenticated user.",
-    input_schema: {
-      type: "object",
-      properties: {
-        limit: { type: "number" },
-        cursor: { type: "string" },
-        prUrl: { type: "string" },
-      },
-    },
-  },
-  {
-    name: "repositories.list",
-    description:
-      "List all GitHub repositories the user has connected to Cursor. Call this before agent.spawn when you do not know the exact owner/repo string, or when the user refers to a repo by name. Returns a list of {repository, owner, name} objects. Always prefer a repository from this list over guessing.",
-    input_schema: {
-      type: "object",
-      properties: {},
-    },
-  },
-];
 
 function waitForToolResult(
   session: SessionState,
@@ -121,10 +39,12 @@ function waitForToolResult(
 export class ConductorService {
   private readonly provider: ModelProvider;
   private readonly sessions: SessionStore;
+  private readonly toolRegistry: ToolRegistry;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig) {
     this.provider = provider;
     this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute);
+    this.toolRegistry = config.toolRegistry ?? new ToolRegistry();
   }
 
   createRateLimiter() {
@@ -141,6 +61,9 @@ export class ConductorService {
       case "session.start": {
         if (typeof event.payload.githubToken === "string" && event.payload.githubToken) {
           session.githubToken = event.payload.githubToken;
+        }
+        if (typeof event.payload.selectedRepo === "string" && event.payload.selectedRepo) {
+          session.selectedRepo = event.payload.selectedRepo;
         }
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
@@ -197,12 +120,12 @@ export class ConductorService {
 
       case "agent.completed": {
         const agentId = asString(event.payload.agentId) ?? "unknown";
-        const status  = asString(event.payload.status)  ?? "UNKNOWN";
+        const status = asString(event.payload.status) ?? "UNKNOWN";
         const summary = asString(event.payload.summary) ?? "";
-        const name    = asString(event.payload.name);
-        const prompt  = asString(event.payload.prompt);
+        const name = asString(event.payload.name);
+        const prompt = asString(event.payload.prompt);
 
-        const outcome  = status === "FINISHED" ? "finished successfully" : "failed";
+        const outcome = status === "FINISHED" ? "finished successfully" : "failed";
         const agentRef = name ? `"${name}"` : `agent ${agentId}`;
         const taskDesc = prompt ? `Task: "${prompt}". ` : "";
         const summaryDesc = summary ? `Summary: ${summary}` : "No summary was provided.";
@@ -211,8 +134,8 @@ export class ConductorService {
           `[Agent Update] Cursor agent ${agentRef} just ${outcome}.`,
           taskDesc,
           summaryDesc,
-          `Tell the user what the agent accomplished (or what went wrong if it failed),`,
-          `in a concise, natural sentence or two. Do not repeat the raw summary verbatim.`,
+          "Tell the user what the agent accomplished (or what went wrong if it failed),",
+          "in a concise, natural sentence or two. Do not repeat the raw summary verbatim.",
         ].join(" ").trim();
 
         logger.info("agent.completed received", {
@@ -237,6 +160,10 @@ export class ConductorService {
     }
   }
 
+  private modelTools(): ToolDefinition[] {
+    return this.toolRegistry.getDefinitions();
+  }
+
   private async runConductorLoop(
     session: SessionState,
     transcript: string,
@@ -252,7 +179,7 @@ export class ConductorService {
       this.sessions.recordTrace(session, value);
     };
 
-    const emitToolCall = (toolName: string, args: Record<string, unknown>): void => {
+    const emitClientToolCall = (toolName: string, args: Record<string, unknown>): string => {
       const callId = crypto.randomUUID();
       const envelope = makeEvent("tool.call", session.sessionId, {
         callId,
@@ -268,6 +195,7 @@ export class ConductorService {
 
       emit(envelope);
       tracePush(`tool.call:${toolName}`);
+      return callId;
     };
 
     this.sessions.appendTurn(session, {
@@ -275,16 +203,16 @@ export class ConductorService {
       content: transcript,
     });
 
-    emitToolCall("convo.setState", { state: "thinking" });
+    emitClientToolCall("convo.setState", { state: "thinking" });
     if (!options.suppressUserMessage) {
-      emitToolCall("convo.appendMessage", {
+      emitClientToolCall("convo.appendMessage", {
         role: "user",
         text: transcript,
         isPartial: false,
       });
     }
 
-    const MAX_TOOL_ROUNDS = 8;
+    const MAX_TOOL_ROUNDS = 10;
     let toolRound = 0;
     let emittedFinalResponse = false;
 
@@ -293,14 +221,14 @@ export class ConductorService {
 
       let modelResponse: ModelResponse;
       try {
-        modelResponse = await this.provider.generateResponse(session.history, AGENT_TOOLS);
+        modelResponse = await this.provider.generateResponse(session.history, this.modelTools());
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown model provider error";
         emit(makeEvent("error", session.sessionId, {
           code: "model_provider_failed",
           message,
         }));
-        emitToolCall("convo.setState", { state: "idle" });
+        emitClientToolCall("convo.setState", { state: "idle" });
         logger.error(`model provider failed: ${message}`, {
           sessionId: session.sessionId,
           eventId: sourceEventId,
@@ -315,23 +243,66 @@ export class ConductorService {
         });
 
         for (const toolCall of modelResponse.toolCalls) {
-          const callId = crypto.randomUUID();
-          const envelope = makeEvent("tool.call", session.sessionId, {
-            callId,
-            name: toolCall.name,
-            arguments: JSON.stringify(toolCall.input),
-          });
+          if (this.toolRegistry.isServerTool(toolCall.name)) {
+            emit(makeEvent("agent.status", session.sessionId, {
+              status: "server_tool",
+              detail: `Running ${toolCall.name}`,
+              callId: toolCall.id,
+            }));
+            tracePush(`server.tool.call:${toolCall.name}`);
 
-          session.pendingToolCalls.set(callId, {
-            callId,
-            toolName: toolCall.name,
-            emittedAt: envelope.timestamp,
-          });
+            const serverResult = await this.toolRegistry.executeServerTool(
+              toolCall.name,
+              {
+                session,
+                emit,
+              },
+              toolCall.input,
+            );
 
-          emit(envelope);
-          tracePush(`tool.call:${toolCall.name}`);
+            if (serverResult.ok) {
+              this.sessions.appendTurn(session, {
+                role: "tool",
+                content: JSON.stringify(serverResult.result ?? {}),
+                tool_use_id: toolCall.id,
+                tool_name: toolCall.name,
+              });
+              emit(makeEvent("agent.status", session.sessionId, {
+                status: "server_tool",
+                detail: `Completed ${toolCall.name}`,
+                callId: toolCall.id,
+              }));
+              tracePush(`server.tool.result:${toolCall.name}`);
+            } else {
+              const errorText = serverResult.error ?? "unknown_server_tool_error";
+              this.sessions.appendTurn(session, {
+                role: "tool",
+                content: `Error: ${errorText}`,
+                tool_use_id: toolCall.id,
+                tool_name: toolCall.name,
+              });
+              emit(makeEvent("error", session.sessionId, {
+                code: "server_tool_failed",
+                message: `${toolCall.name}: ${errorText}`,
+              }));
+              tracePush(`server.tool.error:${toolCall.name}`);
+            }
+            continue;
+          }
 
-          const { result, error } = await waitForToolResult(session, callId, 30_000);
+          if (!this.toolRegistry.isClientTool(toolCall.name)) {
+            this.sessions.appendTurn(session, {
+              role: "tool",
+              content: `Error: Unknown tool ${toolCall.name}`,
+              tool_use_id: toolCall.id,
+              tool_name: toolCall.name,
+            });
+            tracePush(`tool.unknown:${toolCall.name}`);
+            continue;
+          }
+
+          const callId = emitClientToolCall(toolCall.name, toolCall.input);
+          const { result, error } = await waitForToolResult(session, callId, 45_000);
 
           this.sessions.appendTurn(session, {
             role: "tool",
@@ -365,14 +336,14 @@ export class ConductorService {
         content: responseText,
       });
 
-      emitToolCall("convo.appendMessage", {
+      emitClientToolCall("convo.appendMessage", {
         role: "assistant",
         text: responseText,
         isPartial: false,
       });
-      emitToolCall("convo.setState", { state: "speaking" });
-      emitToolCall("tts.speak", { text: responseText });
-      emitToolCall("convo.setState", { state: "idle" });
+      emitClientToolCall("convo.setState", { state: "speaking" });
+      emitClientToolCall("tts.speak", { text: responseText });
+      emitClientToolCall("convo.setState", { state: "idle" });
 
       emittedFinalResponse = true;
       break;
@@ -383,7 +354,7 @@ export class ConductorService {
         code: "tool_round_limit_exceeded",
         message: "Conductor reached max tool rounds without a final response.",
       }));
-      emitToolCall("convo.setState", { state: "idle" });
+      emitClientToolCall("convo.setState", { state: "idle" });
       logger.warn("tool round limit exceeded", {
         sessionId: session.sessionId,
         eventId: sourceEventId,
