@@ -60,8 +60,14 @@ struct Event: Identifiable, Codable, Sendable {
     }
 
     struct AgentStatus: Codable, Sendable {
+        let agentId: String?
         let status: String
         let detail: String?
+        let summary: String?
+        let runUrl: String?
+        let prUrl: String?
+        let branchName: String?
+        let webhookDriven: Bool?
     }
 
     struct AudioOutputInterrupted: Codable, Sendable {
@@ -137,8 +143,27 @@ extension Event {
         Event(sessionId: sessionId, kind: .assistantUIPatch(UIPatch(patch: patch)))
     }
 
-    static func agentStatus(_ status: String, detail: String? = nil, sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .agentStatus(AgentStatus(status: status, detail: detail)))
+    static func agentStatus(
+        _ status: String,
+        detail: String? = nil,
+        sessionId: String? = nil,
+        agentId: String? = nil,
+        summary: String? = nil,
+        runUrl: String? = nil,
+        prUrl: String? = nil,
+        branchName: String? = nil,
+        webhookDriven: Bool? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .agentStatus(AgentStatus(
+            agentId: agentId,
+            status: status,
+            detail: detail,
+            summary: summary,
+            runUrl: runUrl,
+            prUrl: prUrl,
+            branchName: branchName,
+            webhookDriven: webhookDriven
+        )))
     }
 
     static func audioOutputInterrupted(_ reason: String = "barge_in", sessionId: String? = nil) -> Event {

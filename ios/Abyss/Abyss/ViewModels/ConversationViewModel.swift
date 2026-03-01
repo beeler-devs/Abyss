@@ -18,6 +18,7 @@ final class ConversationViewModel: ObservableObject {
     @Published private(set) var useServerConductor: Bool = false
 
     @AppStorage("recordingMode") var recordingMode: RecordingMode = .tapToToggle
+    @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
 
     // MARK: - Event Bus (observable timeline)
 
@@ -48,6 +49,8 @@ final class ConversationViewModel: ObservableObject {
     private var isStoppingRecording = false
     private var isStartingRecording = false
     private var notifiedTerminalAgentIDs: Set<String> = []
+    private var hasReceivedWebhookDrivenAgentStatus = false
+    private var webhookDrivenAgentIDs: Set<String> = []
 
     private static let useServerConductorKey = "useServerConductor"
 
@@ -699,6 +702,8 @@ final class ConversationViewModel: ObservableObject {
                 return
             }
             handleToolResult(toolResult, for: toolCall)
+        case .agentStatus(let status):
+            handleAgentStatusEvent(status)
         default:
             break
         }
@@ -815,6 +820,9 @@ final class ConversationViewModel: ObservableObject {
         guard let agentId = card.agentId else { return }
         guard !notifiedTerminalAgentIDs.contains(agentId) else { return }
         notifiedTerminalAgentIDs.insert(agentId)
+        if isUsingServerClient && webhookDrivenAgentIDs.contains(agentId) {
+            return
+        }
         let event = Event.agentCompleted(
             agentId: agentId,
             status: status,
@@ -849,6 +857,7 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func ensureAgentStatusPolling() {
+        guard shouldAutoPollAgentStatus() else { return }
         guard agentStatusPollingTask == nil else { return }
 
         agentStatusPollingTask = Task { [weak self] in
@@ -889,6 +898,47 @@ final class ConversationViewModel: ObservableObject {
         if case .toolCall(let tc) = statusEvent.kind {
             _ = await toolRouter.dispatch(tc)
         }
+    }
+
+    private func handleAgentStatusEvent(_ status: Event.AgentStatus) {
+        guard let agentID = status.agentId, !agentID.isEmpty else { return }
+
+        if status.webhookDriven == true && agentStatusWebhookUpdatesEnabled {
+            hasReceivedWebhookDrivenAgentStatus = true
+            webhookDrivenAgentIDs.insert(agentID)
+            agentStatusPollingTask?.cancel()
+            agentStatusPollingTask = nil
+        }
+
+        if updateCard(agentID: agentID, mutate: { card in
+            card.applyAgentStatusEvent(status)
+        }) == false {
+            var fallbackCard = AgentProgressCard.pending(
+                spawnCallId: "server-\(agentID)",
+                prompt: status.summary ?? status.detail ?? "Cursor agent task",
+                repository: nil,
+                autoCreatePR: false
+            )
+            fallbackCard.applyAgentStatusEvent(status)
+            agentProgressCards.insert(fallbackCard, at: 0)
+        }
+
+        sortCardsByLastUpdate()
+        if shouldAutoPollAgentStatus(),
+           !agentProgressCards.filter({ !$0.isTerminal && $0.agentId != nil }).isEmpty {
+            ensureAgentStatusPolling()
+        }
+
+        if let card = agentProgressCards.first(where: { $0.agentId == agentID }) {
+            notifyAgentCompletionIfNeeded(card: card)
+        }
+    }
+
+    private func shouldAutoPollAgentStatus() -> Bool {
+        if agentStatusWebhookUpdatesEnabled && hasReceivedWebhookDrivenAgentStatus {
+            return false
+        }
+        return true
     }
 
     // MARK: - Helpers

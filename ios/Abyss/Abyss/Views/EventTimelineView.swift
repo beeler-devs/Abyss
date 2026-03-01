@@ -76,11 +76,25 @@ struct EventRow: View {
                 .font(.caption2)
                 .frame(width: 14)
 
-            // Description
-            Text(eventDescription)
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(eventColor)
-                .lineLimit(2)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(eventDescription)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(eventColor)
+                    .lineLimit(2)
+
+                if case .agentStatus(let status) = event.kind {
+                    HStack(spacing: 8) {
+                        if let runUrl = status.runUrl, let url = URL(string: runUrl) {
+                            Link("Open Agent Run", destination: url)
+                                .font(.caption2)
+                        }
+                        if let prUrl = status.prUrl, let url = URL(string: prUrl) {
+                            Link("Open PR", destination: url)
+                                .font(.caption2)
+                        }
+                    }
+                }
+            }
 
             Spacer()
         }
@@ -131,6 +145,9 @@ struct EventRow: View {
         case .assistantUIPatch(let p):
             return "ui.patch: \(p.patch.prefix(30))"
         case .agentStatus(let status):
+            if let agentId = status.agentId {
+                return "agent.status: \(status.status) (\(agentId.prefix(8)))"
+            }
             return "agent.status: \(status.status)"
         case .audioOutputInterrupted(let interrupted):
             return "audio.output.interrupted: \(interrupted.reason)"

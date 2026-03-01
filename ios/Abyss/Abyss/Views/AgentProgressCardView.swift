@@ -172,12 +172,12 @@ struct AgentProgressCardView: View {
             }
 
             if let prURL = card.prURL, let url = URL(string: prURL) {
-                Link("PR", destination: url)
+                Link("Open PR", destination: url)
                     .font(.caption)
             }
 
             if let agentURL = card.agentURL, let url = URL(string: agentURL) {
-                Link("Open Agent", destination: url)
+                Link("Open Agent Run", destination: url)
                     .font(.caption)
             }
         }

@@ -25,6 +25,10 @@ Edit `.env` and set at minimum:
 
 - `ANTHROPIC_API_KEY`
 - Optional: `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`, `PORT`
+- Optional Stage 2.5 Cursor integration:
+  - `CURSOR_API_KEY`
+  - `CURSOR_WEBHOOK_URL`
+  - `CURSOR_WEBHOOK_SECRET`
 
 ## Run (dev)
 
@@ -35,6 +39,8 @@ npm run dev
 Server listens on:
 
 - `ws://localhost:8080/ws` (or your configured `PORT`)
+- `POST /github/exchange`
+- `POST /cursor/webhook`
 
 ## Run tests
 
@@ -73,6 +79,12 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 - `ANTHROPIC_MODEL` (default `claude-3-5-haiku-latest`)
 - `ANTHROPIC_MAX_TOKENS` (default `512`)
 - `ANTHROPIC_PARTIAL_DELAY_MS` (default `60`)
+- `GITHUB_CLIENT_ID` (required for `/github/exchange`)
+- `GITHUB_CLIENT_SECRET` (required for `/github/exchange`)
+- `CURSOR_API_KEY` (enables server-side `cursor.agent.*` + `webqa.cursor.*`)
+- `CURSOR_WEBHOOK_URL` (public Cursor webhook endpoint URL)
+- `CURSOR_WEBHOOK_SECRET` (HMAC verification secret for `/cursor/webhook`)
+- `CURSOR_WEBHOOK_MAX_BYTES` (default `512000`)
 - `BEDROCK_MODEL_ID` (for scaffold)
 - `AWS_REGION` (for scaffold)
 

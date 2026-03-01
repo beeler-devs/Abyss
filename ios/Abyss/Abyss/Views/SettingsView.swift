@@ -109,6 +109,10 @@ struct SettingsView: View {
                 }
 
                 Section("Cursor Cloud Agents") {
+                    Text("Optional if server provides Cursor integration.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
                     HStack {
                         if Config.isCursorAPIKeyConfigured {
                             Label("Configured", systemImage: "checkmark.circle.fill")
