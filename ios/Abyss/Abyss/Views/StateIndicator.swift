@@ -3,8 +3,10 @@ import SwiftUI
 /// Shows the current app state with an animated indicator.
 struct StateIndicator: View {
     let state: AppState
+    var isMuted: Bool = false
 
     private var color: Color {
+        if isMuted { return .secondary }
         switch state {
         case .idle: return .secondary
         case .listening: return .red
@@ -16,6 +18,7 @@ struct StateIndicator: View {
     }
 
     private var label: String {
+        if isMuted { return "Muted" }
         switch state {
         case .idle: return "Ready"
         case .listening: return "Listening..."
@@ -27,6 +30,7 @@ struct StateIndicator: View {
     }
 
     private var iconName: String {
+        if isMuted { return "mic.slash" }
         switch state {
         case .idle: return "circle"
         case .listening: return "mic.fill"
@@ -42,7 +46,7 @@ struct StateIndicator: View {
             Image(systemName: iconName)
                 .font(.subheadline)
                 .foregroundStyle(color)
-                .symbolEffect(.pulse, isActive: state == .listening || state == .thinking)
+                .symbolEffect(.pulse, isActive: !isMuted && (state == .listening || state == .thinking))
 
             Text(label)
                 .font(.subheadline)
@@ -51,5 +55,6 @@ struct StateIndicator: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
         .animation(.easeInOut(duration: 0.2), value: state)
+        .animation(.easeInOut(duration: 0.2), value: isMuted)
     }
 }

@@ -9,9 +9,3 @@ enum AppState: String, Codable, CaseIterable, Sendable {
     case speaking
     case error
 }
-
-/// Recording mode preference.
-enum RecordingMode: String, Codable, CaseIterable, Sendable {
-    case tapToToggle
-    case pressAndHold
-}

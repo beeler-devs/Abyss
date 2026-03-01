@@ -126,7 +126,7 @@ struct LocalConductorStub: Conductor {
         let lowered = transcript.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
 
         if lowered.isEmpty {
-            return "I didn't hear anything. Tap the mic, speak clearly, then tap again when you're done. Make sure you've allowed microphone access in Settings."
+            return "I didn't hear anything. Speak clearly in live mode, and unmute the microphone if needed. Make sure you've allowed microphone access in Settings."
         }
 
         if lowered.contains("hello") || lowered.contains("hi") {
