@@ -5,6 +5,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import { ConductorService } from "./core/conductorService.js";
 import { parseIncomingEvent, makeEvent } from "./core/events.js";
 import { logger } from "./core/logger.js";
+import { CursorClient } from "./integrations/cursorClient.js";
+import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
 import { buildProvider } from "./providers/index.js";
 
 const PORT = parseInteger(process.env.PORT, 8080);
@@ -14,6 +16,10 @@ const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? "";
+const CURSOR_API_KEY = process.env.CURSOR_API_KEY ?? "";
+const CURSOR_WEBHOOK_URL = process.env.CURSOR_WEBHOOK_URL ?? "";
+const CURSOR_WEBHOOK_SECRET = process.env.CURSOR_WEBHOOK_SECRET ?? "";
+const MAX_WEBHOOK_BYTES = parseInteger(process.env.CURSOR_WEBHOOK_MAX_BYTES, 512_000);
 
 const provider = buildProvider({
   modelProvider: MODEL_PROVIDER,
@@ -25,15 +31,31 @@ const provider = buildProvider({
   awsRegion: process.env.AWS_REGION ?? "us-east-1",
 });
 
-const conductor = new ConductorService(provider, {
-  maxTurns: MAX_TURNS,
-  rateLimitPerMinute: SESSION_RATE_LIMIT_PER_MIN,
-});
+const conductor = new ConductorService(
+  provider,
+  {
+    maxTurns: MAX_TURNS,
+    rateLimitPerMinute: SESSION_RATE_LIMIT_PER_MIN,
+  },
+  {
+    cursorClient: new CursorClient({
+      apiKey: CURSOR_API_KEY,
+      webhookUrl: CURSOR_WEBHOOK_URL,
+      webhookSecret: CURSOR_WEBHOOK_SECRET,
+    }),
+  },
+);
+
+const sessionSockets = new Map<string, WebSocket>();
 
 // HTTP server handles /github/exchange for OAuth token exchange and upgrade to WebSocket.
 const httpServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/github/exchange") {
     await handleGithubExchange(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/cursor/webhook") {
+    await handleCursorWebhook(req, res);
     return;
   }
   res.writeHead(404, { "Content-Type": "application/json" });
@@ -92,6 +114,7 @@ wss.on("connection", (socket, request) => {
       return;
     }
     connectionSessionId = event.sessionId;
+    sessionSockets.set(connectionSessionId, socket);
 
     logger.info(`inbound ${event.type}`, {
       sessionId: event.sessionId,
@@ -104,11 +127,14 @@ wss.on("connection", (socket, request) => {
         eventId: outbound.id,
         callId: typeof outbound.payload.callId === "string" ? outbound.payload.callId : undefined,
       });
-      safeSend(socket, outbound);
+      emitToSession(outbound, socket);
     });
   });
 
   socket.on("close", () => {
+    if (connectionSessionId && sessionSockets.get(connectionSessionId) === socket) {
+      sessionSockets.delete(connectionSessionId);
+    }
     logger.info("client disconnected", {
       sessionId: connectionSessionId ?? undefined,
     });
@@ -120,6 +146,61 @@ wss.on("connection", (socket, request) => {
     });
   });
 });
+
+async function handleCursorWebhook(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!CURSOR_WEBHOOK_SECRET) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "cursor_webhook_not_configured" }));
+    return;
+  }
+
+  const signatureHeader = req.headers["x-webhook-signature"];
+  const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+
+  let rawBody = "";
+  for await (const chunk of req) {
+    rawBody += chunk;
+    if (rawBody.length > MAX_WEBHOOK_BYTES) {
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "payload_too_large" }));
+      return;
+    }
+  }
+
+  if (!verifyCursorWebhookSignature(rawBody, signature, CURSOR_WEBHOOK_SECRET)) {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "invalid_signature" }));
+    return;
+  }
+
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(rawBody) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("invalid_payload");
+    }
+    payload = parsed as Record<string, unknown>;
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "invalid_json" }));
+    return;
+  }
+
+  const result = await conductor.handleCursorWebhook(payload, (event) => {
+    logger.info(`outbound ${event.type}`, {
+      sessionId: event.sessionId,
+      eventId: event.id,
+      trace: "cursor.webhook",
+    });
+    emitToSession(event);
+  });
+
+  res.writeHead(result.statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(result.payload));
+}
 
 async function handleGithubExchange(
   req: http.IncomingMessage,
@@ -205,6 +286,16 @@ function parseInteger(raw: string | undefined, fallback: number): number {
     return fallback;
   }
   return value;
+}
+
+function emitToSession(event: { sessionId: string }, preferredSocket?: WebSocket): void {
+  const socket = preferredSocket && preferredSocket.readyState === WebSocket.OPEN
+    ? preferredSocket
+    : sessionSockets.get(event.sessionId);
+  if (!socket || socket.readyState !== WebSocket.OPEN) {
+    return;
+  }
+  safeSend(socket, event);
 }
 
 function safeSend(socket: WebSocket, event: object): void {

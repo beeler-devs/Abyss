@@ -33,6 +33,29 @@ export interface PendingToolCall {
   callId: string;
   toolName: string;
   emittedAt: string;
+  toolArguments?: Record<string, unknown>;
+}
+
+export type CursorAgentMode = "code" | "computer_use" | "webqa";
+
+export interface CursorAgentRunRecord {
+  agentId: string;
+  sessionId: string;
+  createdAt: string;
+  mode: CursorAgentMode;
+  status?: string;
+  prUrl?: string;
+  runUrl?: string;
+  branchName?: string;
+  summary?: string;
+  spawnCallId?: string;
+}
+
+export interface PendingCursorWebhookRecord {
+  agentId: string;
+  payload: Record<string, unknown>;
+  receivedAt: string;
+  expiresAtMs: number;
 }
 
 export interface SessionState {

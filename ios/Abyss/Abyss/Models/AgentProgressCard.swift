@@ -105,6 +105,17 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
         updatedAt = Date()
     }
 
+    mutating func applyAgentStatusEvent(_ event: Event.AgentStatus) {
+        if let incomingAgentId = event.agentId, !incomingAgentId.isEmpty {
+            agentId = incomingAgentId
+        }
+
+        status = event.status
+        summary = event.summary ?? event.detail ?? summaryTextForStatus(currentSummary: summary)
+        runUrlUpdate(from: event)
+        updatedAt = Date()
+    }
+
     mutating func applySpawnError(_ message: String) {
         status = "FAILED"
         summary = "Could not start Cursor Cloud Agent."
@@ -215,6 +226,18 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
             return "Agent was stopped before completion."
         default:
             return "Waiting for status updates..."
+        }
+    }
+
+    private mutating func runUrlUpdate(from event: Event.AgentStatus) {
+        if let runUrl = event.runUrl, !runUrl.isEmpty {
+            agentURL = runUrl
+        }
+        if let prUrl = event.prUrl, !prUrl.isEmpty {
+            prURL = prUrl
+        }
+        if let branchName = event.branchName, !branchName.isEmpty {
+            self.branchName = branchName
         }
     }
 

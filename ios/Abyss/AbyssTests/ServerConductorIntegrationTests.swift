@@ -59,4 +59,43 @@ final class ServerConductorIntegrationTests: XCTestCase {
 
         XCTAssertTrue(timelineHasCall)
     }
+
+    func testAgentStatusWithRunAndPrLinksUpdatesAgentCard() async {
+        let mockConductor = MockConductorClient()
+        let mockSTT = MockSpeechTranscriber()
+        let mockTTS = MockTextToSpeech()
+
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: mockSTT,
+            tts: mockTTS,
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+
+        mockConductor.emitInbound(Event.agentStatus(
+            "RUNNING",
+            detail: "Agent started",
+            sessionId: "session-test",
+            agentId: "agent-xyz",
+            summary: "Running browser checks",
+            runUrl: "https://cursor.example/runs/agent-xyz",
+            prUrl: "https://github.com/acme/repo/pull/77",
+            branchName: "agent/webqa-branch",
+            webhookDriven: true
+        ))
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        guard let card = viewModel.agentProgressCards.first else {
+            XCTFail("Expected agent card to be created from agent.status event")
+            return
+        }
+
+        XCTAssertEqual(card.agentId, "agent-xyz")
+        XCTAssertEqual(card.agentURL, "https://cursor.example/runs/agent-xyz")
+        XCTAssertEqual(card.prURL, "https://github.com/acme/repo/pull/77")
+        XCTAssertEqual(card.branchName, "agent/webqa-branch")
+    }
 }

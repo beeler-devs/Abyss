@@ -73,6 +73,15 @@ export function makeEvent(
   };
 }
 
+export function makeDeterministicEventId(seed: string): string {
+  const normalized = seed.trim();
+  const hash = crypto
+    .createHash("sha256")
+    .update(normalized || "abyss")
+    .digest("hex");
+  return `evt_${hash.slice(0, 24)}`;
+}
+
 export function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }

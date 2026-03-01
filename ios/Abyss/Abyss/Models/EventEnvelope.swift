@@ -48,10 +48,17 @@ struct EventEnvelope: Codable, Sendable {
             payload = ["patch": .string(value.patch)]
         case .agentStatus(let value):
             type = "agent.status"
-            payload = [
+            var statusPayload: [String: JSONValue] = [
                 "status": .string(value.status),
                 "detail": value.detail.map(JSONValue.string) ?? .null
             ]
+            if let agentId = value.agentId { statusPayload["agentId"] = .string(agentId) }
+            if let summary = value.summary { statusPayload["summary"] = .string(summary) }
+            if let runUrl = value.runUrl { statusPayload["runUrl"] = .string(runUrl) }
+            if let prUrl = value.prUrl { statusPayload["prUrl"] = .string(prUrl) }
+            if let branchName = value.branchName { statusPayload["branchName"] = .string(branchName) }
+            if let webhookDriven = value.webhookDriven { statusPayload["webhookDriven"] = .bool(webhookDriven) }
+            payload = statusPayload
         case .audioOutputInterrupted(let value):
             type = "audio.output.interrupted"
             payload = ["reason": .string(value.reason)]
@@ -107,8 +114,14 @@ struct EventEnvelope: Codable, Sendable {
             kind = .assistantUIPatch(Event.UIPatch(patch: try requireString("patch")))
         case "agent.status":
             kind = .agentStatus(Event.AgentStatus(
+                agentId: payload["agentId"]?.stringValue,
                 status: try requireString("status"),
-                detail: payload["detail"]?.stringValue
+                detail: payload["detail"]?.stringValue,
+                summary: payload["summary"]?.stringValue,
+                runUrl: payload["runUrl"]?.stringValue,
+                prUrl: payload["prUrl"]?.stringValue,
+                branchName: payload["branchName"]?.stringValue,
+                webhookDriven: payload["webhookDriven"]?.boolValue
             ))
         case "audio.output.interrupted":
             kind = .audioOutputInterrupted(Event.AudioOutputInterrupted(reason: payload["reason"]?.stringValue ?? "unknown"))
@@ -128,6 +141,14 @@ struct EventEnvelope: Codable, Sendable {
             kind = .error(Event.ErrorInfo(
                 code: payload["code"]?.stringValue ?? "unknown",
                 message: payload["message"]?.stringValue ?? "Unknown error"
+            ))
+        case "agent.completed":
+            kind = .agentCompleted(Event.AgentCompleted(
+                agentId: try requireString("agentId"),
+                status: payload["status"]?.stringValue ?? "UNKNOWN",
+                summary: payload["summary"]?.stringValue ?? "",
+                name: payload["name"]?.stringValue,
+                prompt: payload["prompt"]?.stringValue
             ))
         default:
             throw ConversionError.unsupportedType(type)
@@ -184,6 +205,13 @@ enum JSONValue: Codable, Sendable {
 
     var stringValue: String? {
         if case .string(let value) = self {
+            return value
+        }
+        return nil
+    }
+
+    var boolValue: Bool? {
+        if case .bool(let value) = self {
             return value
         }
         return nil
