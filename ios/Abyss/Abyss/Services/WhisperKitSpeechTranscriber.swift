@@ -18,6 +18,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     private var _partials: AsyncStream<String>?
     private var audioEngine: AVAudioEngine?
     private var accumulatedText: String = ""
+    private var _audioLevelHandler: ((Float) -> Void)?
 
     #if canImport(WhisperKit)
     private var whisperKit: WhisperKit?
@@ -39,6 +40,11 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             self.partialContinuation = continuation
             return stream
         }
+    }
+
+    var onAudioLevel: ((Float) -> Void)? {
+        get { lock.withLock { _audioLevelHandler } }
+        set { lock.withLock { _audioLevelHandler = newValue } }
     }
 
     init() {}
@@ -111,6 +117,9 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
             if let channelData {
                 let samples = Array(UnsafeBufferPointer(start: channelData, count: frameLength))
+                let levelDB = self.computeAudioLevelDB(from: samples)
+                let audioLevelHandler = self.lock.withLock { self._audioLevelHandler }
+                audioLevelHandler?(levelDB)
                 #if canImport(WhisperKit)
                 self.lock.withLock {
                     self.audioBuffers.append(contentsOf: samples)
@@ -129,6 +138,14 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         engine.prepare()
         try engine.start()
         self.audioEngine = engine
+    }
+
+    private func computeAudioLevelDB(from samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return -160.0 }
+        let sumSquares = samples.reduce(Float.zero) { $0 + ($1 * $1) }
+        let rms = sqrt(sumSquares / Float(samples.count))
+        guard rms > 0 else { return -160.0 }
+        return max(-160.0, 20.0 * log10(rms))
     }
 
     #if canImport(WhisperKit)

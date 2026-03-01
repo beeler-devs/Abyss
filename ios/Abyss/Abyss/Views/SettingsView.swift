@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// Settings sheet for configuring recording mode and API keys.
+/// Settings sheet for configuring app/network/provider options.
 struct SettingsView: View {
-    @Binding var recordingMode: RecordingMode
     @Binding var useServerConductor: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -58,25 +57,6 @@ struct SettingsView: View {
                         }
                     } else {
                         Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("Recording Mode") {
-                    Picker("Mode", selection: $recordingMode) {
-                        Text("Tap to Toggle").tag(RecordingMode.tapToToggle)
-                        Text("Press and Hold").tag(RecordingMode.pressAndHold)
-                    }
-                    .pickerStyle(.segmented)
-
-                    switch recordingMode {
-                    case .tapToToggle:
-                        Label("Tap mic to start, tap again to stop", systemImage: "hand.tap")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    case .pressAndHold:
-                        Label("Hold mic to record, release to stop", systemImage: "hand.tap.fill")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

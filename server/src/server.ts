@@ -24,7 +24,7 @@ const MAX_WEBHOOK_BYTES = parseInteger(process.env.CURSOR_WEBHOOK_MAX_BYTES, 512
 const provider = buildProvider({
   modelProvider: MODEL_PROVIDER,
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-3-5-haiku-latest",
+  anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5",
   anthropicMaxTokens: parseInteger(process.env.ANTHROPIC_MAX_TOKENS, 512),
   anthropicPartialDelayMs: parseInteger(process.env.ANTHROPIC_PARTIAL_DELAY_MS, 60),
   bedrockModelId: process.env.BEDROCK_MODEL_ID ?? "amazon.nova-lite-v1:0",
