@@ -288,6 +288,11 @@ private struct ChatContentView: View {
     @Binding var isTypingMode: Bool
     @Binding var typedMessage: String
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
+
+    private var recordingMode: RecordingMode {
+        RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -361,8 +366,12 @@ private struct ChatContentView: View {
                     isSpeaking: viewModel.appState == .speaking,
                     isTypingMode: $isTypingMode,
                     typedText: $typedMessage,
+                    recordingMode: recordingMode,
+                    isRecording: viewModel.appState == .listening,
                     onToggleMute: { viewModel.toggleMute() },
                     onInterruptSpeaking: { viewModel.interruptAssistantSpeech() },
+                    onMicPressed: { viewModel.micPressed() },
+                    onMicReleased: { viewModel.micReleased() },
                     onSendTyped: { text in
                         viewModel.sendTypedMessage(text)
                     }

@@ -9,3 +9,9 @@ enum AppState: String, Codable, CaseIterable, Sendable {
     case speaking
     case error
 }
+
+/// Controls how the user triggers recording.
+enum RecordingMode: String, CaseIterable {
+    case vadAuto    = "vadAuto"      // VAD auto-stops on silence (default)
+    case pushToTalk = "pushToTalk"   // Hold button to record, release to stop
+}
