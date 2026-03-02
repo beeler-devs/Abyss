@@ -881,12 +881,18 @@ final class ConversationViewModel: ObservableObject {
                     effectiveState = requestedState
                 }
 
-                // PTT: don't let stale inbound state overwrite our recording state during barge-in.
-                // The server may send .idle or .speaking from the pre-interrupt turn; we stay .listening/.transcribing until release.
+                // PTT: don't let any inbound server state overwrite the active recording visual
+                // while the user is holding. Two issues with the old condition:
+                //   1. transcriber.isListening is false during the stt.start startup window
+                //      (isStartingRecording is the right signal for that gap).
+                //   2. Only blocking .idle/.speaking missed .thinking, which the server sends
+                //      immediately after an interrupt — causing the button to go dark on barge-in.
+                // Whitelist: allow .listening/.transcribing through; block everything else.
                 let preservePTTRecording = recordingMode == .pushToTalk
-                    && transcriber.isListening
+                    && (transcriber.isListening || isStartingRecording)
                     && (appState == .listening || appState == .transcribing)
-                    && (effectiveState == .idle || effectiveState == .speaking)
+                    && effectiveState != .listening
+                    && effectiveState != .transcribing
 
                 if !preservePTTRecording {
                     appStateStore.current = effectiveState
