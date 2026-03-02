@@ -7,13 +7,26 @@ struct EventEnvelope: Codable, Sendable {
     let type: String
     let timestamp: Date
     let sessionId: String?
+    let protocolVersion: Int
     let payload: [String: JSONValue]
 
-    init(id: String, type: String, timestamp: Date, sessionId: String?, payload: [String: JSONValue]) {
+    private enum CodingKeys: String, CodingKey {
+        case id, type, timestamp, sessionId, protocolVersion, payload
+    }
+
+    init(
+        id: String,
+        type: String,
+        timestamp: Date,
+        sessionId: String?,
+        protocolVersion: Int = 1,
+        payload: [String: JSONValue]
+    ) {
         self.id = id
         self.type = type
         self.timestamp = timestamp
         self.sessionId = sessionId
+        self.protocolVersion = protocolVersion
         self.payload = payload
     }
 
@@ -21,6 +34,7 @@ struct EventEnvelope: Codable, Sendable {
         id = event.id
         timestamp = event.timestamp
         sessionId = event.sessionId
+        protocolVersion = 1
 
         let isoTimestamp = Self.iso8601.string(from: event.timestamp)
         switch event.kind {
@@ -89,7 +103,48 @@ struct EventEnvelope: Codable, Sendable {
             if let name   = value.name   { p["name"]   = .string(name) }
             if let prompt = value.prompt { p["prompt"] = .string(prompt) }
             payload = p
+        case .bridgePairRequest(let value):
+            type = "bridge.pair.request"
+            var p: [String: JSONValue] = ["pairingCode": .string(value.pairingCode)]
+            if let deviceName = value.deviceName {
+                p["deviceName"] = .string(deviceName)
+            }
+            payload = p
+        case .bridgePairPending(let value):
+            type = "bridge.pair.pending"
+            var p: [String: JSONValue] = ["pairingCode": .string(value.pairingCode)]
+            if let expiresInSec = value.expiresInSec {
+                p["expiresInSec"] = .number(Double(expiresInSec))
+            }
+            payload = p
+        case .bridgePaired(let value):
+            type = "bridge.paired"
+            payload = [
+                "deviceId": .string(value.deviceId),
+                "deviceName": .string(value.deviceName),
+                "status": .string(value.status),
+            ]
+        case .bridgeStatus(let value):
+            var p: [String: JSONValue] = [
+                "deviceId": .string(value.deviceId),
+                "status": .string(value.status),
+            ]
+            if let lastSeen = value.lastSeen {
+                p["lastSeen"] = .string(lastSeen)
+            }
+            type = "bridge.status"
+            payload = p
         }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        type = try container.decode(String.self, forKey: .type)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+        protocolVersion = try container.decodeIfPresent(Int.self, forKey: .protocolVersion) ?? 1
+        payload = try container.decode([String: JSONValue].self, forKey: .payload)
     }
 
     func toEvent() throws -> Event {
@@ -149,6 +204,33 @@ struct EventEnvelope: Codable, Sendable {
                 summary: payload["summary"]?.stringValue ?? "",
                 name: payload["name"]?.stringValue,
                 prompt: payload["prompt"]?.stringValue
+            ))
+        case "bridge.pair.request":
+            kind = .bridgePairRequest(Event.BridgePairRequest(
+                pairingCode: try requireString("pairingCode"),
+                deviceName: payload["deviceName"]?.stringValue
+            ))
+        case "bridge.pair.pending":
+            kind = .bridgePairPending(Event.BridgePairPending(
+                pairingCode: try requireString("pairingCode"),
+                expiresInSec: payload["expiresInSec"]?.intValue
+            ))
+        case "bridge.paired":
+            kind = .bridgePaired(Event.BridgePaired(
+                deviceId: try requireString("deviceId"),
+                deviceName: try requireString("deviceName"),
+                status: payload["status"]?.stringValue ?? "online"
+            ))
+        case "bridge.status":
+            kind = .bridgeStatus(Event.BridgeStatus(
+                deviceId: try requireString("deviceId"),
+                status: payload["status"]?.stringValue ?? "offline",
+                lastSeen: payload["lastSeen"]?.stringValue
+            ))
+        case "bridge.device.selection.required":
+            kind = .error(Event.ErrorInfo(
+                code: "bridge_device_selection_required",
+                message: "Multiple paired computers are available. Please choose one."
             ))
         default:
             throw ConversionError.unsupportedType(type)
@@ -213,6 +295,13 @@ enum JSONValue: Codable, Sendable {
     var boolValue: Bool? {
         if case .bool(let value) = self {
             return value
+        }
+        return nil
+    }
+
+    var intValue: Int? {
+        if case .number(let value) = self {
+            return Int(value)
         }
         return nil
     }

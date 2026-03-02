@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://abyss.dev/schemas/bridge-events.schema.json",
+  "title": "Bridge Event Payloads",
+  "type": "object",
+  "properties": {
+    "bridge.pair.request": {
+      "type": "object",
+      "required": ["pairingCode"],
+      "properties": {
+        "pairingCode": { "type": "string", "minLength": 6, "maxLength": 8 },
+        "deviceName": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.register": {
+      "type": "object",
+      "required": ["pairingCode", "deviceId", "deviceName", "workspaceRoot", "capabilities", "protocolVersion"],
+      "properties": {
+        "pairingCode": { "type": "string", "minLength": 6, "maxLength": 8 },
+        "deviceId": { "type": "string", "minLength": 1 },
+        "deviceName": { "type": "string", "minLength": 1 },
+        "workspaceRoot": { "type": "string", "minLength": 1 },
+        "protocolVersion": { "type": "integer", "minimum": 1 },
+        "capabilities": {
+          "type": "object",
+          "required": ["execRun", "readFile"],
+          "properties": {
+            "execRun": { "type": "boolean" },
+            "readFile": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "bridge.paired": {
+      "type": "object",
+      "required": ["deviceId", "deviceName", "status"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "status": { "type": "string", "enum": ["online", "offline"] }
+      },
+      "additionalProperties": false
+    },
+    "bridge.status": {
+      "type": "object",
+      "required": ["deviceId", "status", "lastSeen"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "status": { "type": "string", "enum": ["online", "offline"] },
+        "lastSeen": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

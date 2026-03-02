@@ -63,11 +63,19 @@ struct ContentView: View {
                         useServerConductor: Binding(
                             get: { vm.useServerConductor },
                             set: { vm.setUseServerConductor($0) }
-                        )
+                        ),
+                        pairedBridgeDevices: vm.pairedBridgeDevices,
+                        bridgePairingMessage: vm.bridgePairingMessage,
+                        onPairComputer: { code, deviceName in
+                            vm.requestBridgePairing(pairingCode: code, deviceName: deviceName)
+                        }
                     )
                 } else {
                     SettingsView(
-                        useServerConductor: .constant(false)
+                        useServerConductor: .constant(false),
+                        pairedBridgeDevices: [],
+                        bridgePairingMessage: nil,
+                        onPairComputer: nil
                     )
                 }
             }

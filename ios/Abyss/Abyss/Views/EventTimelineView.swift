@@ -126,6 +126,12 @@ struct EventRow: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
             case .agentCompleted:
                 Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+            case .bridgePairRequest, .bridgePairPending:
+                Image(systemName: "number").foregroundStyle(.orange)
+            case .bridgePaired:
+                Image(systemName: "desktopcomputer").foregroundStyle(.green)
+            case .bridgeStatus:
+                Image(systemName: "wifi").foregroundStyle(.teal)
             }
         }
     }
@@ -162,6 +168,14 @@ struct EventRow: View {
             return "error[\(e.code)]: \(e.message.prefix(30))"
         case .agentCompleted(let ac):
             return "agent.completed: \(ac.agentId.prefix(8)) [\(ac.status)]"
+        case .bridgePairRequest(let payload):
+            return "bridge.pair.request: \(payload.pairingCode)"
+        case .bridgePairPending(let payload):
+            return "bridge.pair.pending: \(payload.pairingCode)"
+        case .bridgePaired(let payload):
+            return "bridge.paired: \(payload.deviceName) [\(payload.status)]"
+        case .bridgeStatus(let payload):
+            return "bridge.status: \(payload.deviceId.prefix(8)) [\(payload.status)]"
         }
     }
 

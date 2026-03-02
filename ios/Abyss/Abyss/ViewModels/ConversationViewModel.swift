@@ -2,6 +2,15 @@ import Foundation
 import SwiftUI
 import Combine
 
+struct PairedBridgeDevice: Codable, Identifiable, Equatable {
+    let deviceId: String
+    let deviceName: String
+    let status: String
+    let lastSeen: String?
+
+    var id: String { deviceId }
+}
+
 /// Central ViewModel owning all state. The single point of coordination.
 /// UI emits intents -> ViewModel translates to tool calls -> ToolRouter executes.
 @MainActor
@@ -15,6 +24,8 @@ final class ConversationViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
+    @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
+    @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
@@ -62,6 +73,7 @@ final class ConversationViewModel: ObservableObject {
     )
 
     private static let useServerConductorKey = "useServerConductor"
+    private static let pairedBridgeDevicesKey = "pairedBridgeDevices"
 
     // MARK: - Init
 
@@ -91,6 +103,7 @@ final class ConversationViewModel: ObservableObject {
         self.transcriptFormatter = FastTranscriptFormatter()
 
         setupToolSystem()
+        loadPairedBridgeDevices()
         observeStores()
         configureVoicePipeline()
         preloadTranscriber()
@@ -112,6 +125,7 @@ final class ConversationViewModel: ObservableObject {
         self.transcriptFormatter = transcriptFormatter
 
         setupToolSystem(transcriber: transcriber, tts: tts)
+        loadPairedBridgeDevices()
         observeStores()
         configureVoicePipeline()
     }
@@ -134,6 +148,7 @@ final class ConversationViewModel: ObservableObject {
         self.transcriptFormatter = transcriptFormatter
 
         setupToolSystem(transcriber: transcriber, tts: tts)
+        loadPairedBridgeDevices()
         observeStores()
         configureVoicePipeline()
 
@@ -261,6 +276,29 @@ final class ConversationViewModel: ObservableObject {
 
         Task {
             await configureConductorClient(forceReconnect: true)
+        }
+    }
+
+    func requestBridgePairing(pairingCode: String, deviceName: String?) {
+        let normalizedCode = pairingCode
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+
+        guard !normalizedCode.isEmpty else {
+            bridgePairingMessage = "Enter a pairing code from AbyssBridge on Mac."
+            return
+        }
+
+        bridgePairingMessage = "Sending pairing request…"
+        let event = Event.bridgePairRequest(
+            code: normalizedCode,
+            deviceName: deviceName?.trimmingCharacters(in: .whitespacesAndNewlines),
+            sessionId: sessionId
+        )
+        eventBus.emit(event)
+
+        Task {
+            await sendEventToConductor(event)
         }
     }
 
@@ -742,6 +780,9 @@ final class ConversationViewModel: ObservableObject {
 
         case .toolCall(let toolCall):
             eventBus.emit(event)
+            if toolCall.name.hasPrefix("bridge.") {
+                return
+            }
             print("📥 [INBOUND] dispatching tool '\(toolCall.name)'...")
             let toolResultEvent = await toolRouter.dispatch(toolCall)
             print("📥 [INBOUND] tool '\(toolCall.name)' done — sending result back")
@@ -773,9 +814,40 @@ final class ConversationViewModel: ObservableObject {
                 }
             }
 
+        case .bridgePairPending(let pending):
+            bridgePairingMessage = "Pairing code \(pending.pairingCode) accepted."
+            eventBus.emit(event)
+        case .bridgePaired(let paired):
+            bridgePairingMessage = "Paired with \(paired.deviceName)."
+            upsertPairedBridgeDevice(
+                deviceId: paired.deviceId,
+                deviceName: paired.deviceName,
+                status: paired.status,
+                lastSeen: nil
+            )
+            eventBus.emit(event)
+        case .bridgeStatus(let status):
+            if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == status.deviceId }) {
+                let existing = pairedBridgeDevices[index]
+                pairedBridgeDevices[index] = PairedBridgeDevice(
+                    deviceId: existing.deviceId,
+                    deviceName: existing.deviceName,
+                    status: status.status,
+                    lastSeen: status.lastSeen
+                )
+                persistPairedBridgeDevices()
+            } else {
+                upsertPairedBridgeDevice(
+                    deviceId: status.deviceId,
+                    deviceName: status.deviceId,
+                    status: status.status,
+                    lastSeen: status.lastSeen
+                )
+            }
+            eventBus.emit(event)
         case .assistantUIPatch, .agentStatus, .sessionStart, .toolResult, .error,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,
-                .agentCompleted:
+                .agentCompleted, .bridgePairRequest:
             eventBus.emit(event)
         }
         print("📥 [INBOUND] handleInboundEvent DONE — \(event.kind.displayName)")
@@ -1053,6 +1125,47 @@ final class ConversationViewModel: ObservableObject {
             return false
         }
         return true
+    }
+
+    private func loadPairedBridgeDevices() {
+        guard let data = UserDefaults.standard.data(forKey: Self.pairedBridgeDevicesKey) else {
+            pairedBridgeDevices = []
+            return
+        }
+
+        if let decoded = try? JSONDecoder().decode([PairedBridgeDevice].self, from: data) {
+            pairedBridgeDevices = decoded
+        } else {
+            pairedBridgeDevices = []
+        }
+    }
+
+    private func persistPairedBridgeDevices() {
+        guard let data = try? JSONEncoder().encode(pairedBridgeDevices) else {
+            return
+        }
+        UserDefaults.standard.set(data, forKey: Self.pairedBridgeDevicesKey)
+    }
+
+    private func upsertPairedBridgeDevice(
+        deviceId: String,
+        deviceName: String,
+        status: String,
+        lastSeen: String?
+    ) {
+        let updated = PairedBridgeDevice(
+            deviceId: deviceId,
+            deviceName: deviceName,
+            status: status,
+            lastSeen: lastSeen
+        )
+
+        if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {
+            pairedBridgeDevices[index] = updated
+        } else {
+            pairedBridgeDevices.insert(updated, at: 0)
+        }
+        persistPairedBridgeDevices()
     }
 
     // MARK: - Helpers
