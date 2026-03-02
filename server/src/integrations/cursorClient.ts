@@ -32,6 +32,17 @@ export interface CursorStatusResult {
   summary?: string;
 }
 
+export interface CursorConversationMessage {
+  id: string;
+  type: "user_message" | "assistant_message";
+  text: string;
+}
+
+export interface CursorConversationResult {
+  id: string;
+  messages: CursorConversationMessage[];
+}
+
 export interface CursorRepository {
   repository: string;
   owner?: string;
@@ -124,6 +135,31 @@ export class CursorClient {
     this.assertConfigured();
     const normalizedAgentId = this.normalizeAgentId(agentId);
     await this.requestJSON("POST", `/v0/agents/${encodeURIComponent(normalizedAgentId)}/stop`);
+  }
+
+  async conversation(agentId: string): Promise<CursorConversationResult> {
+    this.assertConfigured();
+    const normalizedAgentId = this.normalizeAgentId(agentId);
+    const payload = await this.requestJSON(
+      "GET",
+      `/v0/agents/${encodeURIComponent(normalizedAgentId)}/conversation`,
+    );
+
+    const messages = Array.isArray(payload.messages)
+      ? (payload.messages as Record<string, unknown>[]).flatMap((msg) => {
+          const id = asString(msg.id);
+          const type = asString(msg.type);
+          const text = asString(msg.text);
+          if (!id || !type || !text) return [];
+          if (type !== "user_message" && type !== "assistant_message") return [];
+          return [{ id, type: type as "user_message" | "assistant_message", text }];
+        })
+      : [];
+
+    return {
+      id: asString(payload.id) ?? normalizedAgentId,
+      messages,
+    };
   }
 
   async repositories(): Promise<CursorRepository[]> {

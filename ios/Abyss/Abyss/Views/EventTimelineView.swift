@@ -126,6 +126,8 @@ struct EventRow: View {
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
             case .agentCompleted:
                 Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+            case .agentConversation:
+                Image(systemName: "text.bubble.fill").foregroundStyle(.teal)
             case .bridgePairRequest, .bridgePairPending:
                 Image(systemName: "number").foregroundStyle(.orange)
             case .bridgePaired:
@@ -168,6 +170,8 @@ struct EventRow: View {
             return "error[\(e.code)]: \(e.message.prefix(30))"
         case .agentCompleted(let ac):
             return "agent.completed: \(ac.agentId.prefix(8)) [\(ac.status)]"
+        case .agentConversation(let c):
+            return "agent.conversation: \(c.agentId.prefix(8)) (+\(c.messages.count) msgs)"
         case .bridgePairRequest(let payload):
             return "bridge.pair.request: \(payload.pairingCode)"
         case .bridgePairPending(let payload):
