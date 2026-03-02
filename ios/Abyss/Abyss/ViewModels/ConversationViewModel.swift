@@ -30,6 +30,11 @@ final class ConversationViewModel: ObservableObject {
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
+    @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
+
+    private var recordingMode: RecordingMode {
+        RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
+    }
 
     // MARK: - Event Bus (observable timeline)
 
@@ -186,6 +191,7 @@ final class ConversationViewModel: ObservableObject {
         voiceActivityDetector.onSpeechEnded = { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
+                guard self.recordingMode == .vadAuto else { return }
                 guard self.canRunLiveConversation else { return }
                 guard self.transcriber.isListening else { return }
                 guard !self.isStoppingRecording else { return }
@@ -408,6 +414,21 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
+    /// PTT: user pressed the mic button. Start recording immediately (bypasses VAD).
+    func micPressed() {
+        guard recordingMode == .pushToTalk else { return }
+        guard isChatActive else { return }
+        guard !transcriber.isListening, !isStartingRecording else { return }
+        Task { await startListeningPTT() }
+    }
+
+    /// PTT: user released the mic button. Stop and process.
+    func micReleased() {
+        guard recordingMode == .pushToTalk else { return }
+        guard transcriber.isListening, !isStoppingRecording else { return }
+        Task { await stopListeningAndProcess() }
+    }
+
     /// User submitted text from the input bar.
     func sendTypedMessage(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -527,7 +548,7 @@ final class ConversationViewModel: ObservableObject {
         }
 
         if transcriber.isListening {
-            if !voiceActivityDetector.isMonitoring {
+            if recordingMode == .vadAuto && !voiceActivityDetector.isMonitoring {
                 voiceActivityDetector.startMonitoring()
             }
             return
@@ -549,9 +570,48 @@ final class ConversationViewModel: ObservableObject {
             }
         }
 
-        if !voiceActivityDetector.isMonitoring {
+        if recordingMode == .vadAuto && !voiceActivityDetector.isMonitoring {
             voiceActivityDetector.startMonitoring()
         }
+    }
+
+    /// Start listening for PTT mode — bypasses mute/canRunLiveConversation, never starts VAD.
+    private func startListeningPTT() async {
+        guard !isStoppingRecording else { return }
+        guard !isStartingRecording else { return }
+        isStartingRecording = true
+        defer { isStartingRecording = false }
+
+        partialTranscript = ""
+        assistantPartialSpeech = ""
+        appStateStore.current = .listening
+        appState = .listening
+
+        let setStateEvent = Event.toolCall(
+            name: "convo.setState",
+            arguments: encode(ConvoSetStateTool.Arguments(state: "listening")),
+            sessionId: sessionId
+        )
+        eventBus.emit(setStateEvent)
+        if case .toolCall(let tc) = setStateEvent.kind {
+            await toolRouter.dispatch(tc)
+        }
+
+        guard !transcriber.isListening else { return }
+
+        let sttEvent = Event.toolCall(
+            name: "stt.start",
+            arguments: encode(STTStartTool.Arguments()),
+            sessionId: sessionId
+        )
+        eventBus.emit(sttEvent)
+        if case .toolCall(let tc) = sttEvent.kind {
+            let result = await toolRouter.dispatch(tc)
+            if case .toolResult(let tr) = result.kind, tr.isError {
+                await handleToolError(tr.error ?? "STT start failed")
+            }
+        }
+        // VAD is intentionally NOT started in PTT mode
     }
 
     private func stopListeningSilently() async {

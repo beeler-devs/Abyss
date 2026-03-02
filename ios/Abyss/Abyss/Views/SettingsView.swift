@@ -8,6 +8,7 @@ struct SettingsView: View {
     let onPairComputer: ((String, String?) -> Void)?
     @Environment(\.dismiss) private var dismiss
 
+    @AppStorage("recordingMode") private var recordingModeRaw = RecordingMode.vadAuto.rawValue
     @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
     @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
@@ -63,6 +64,22 @@ struct SettingsView: View {
                         Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Recording") {
+                    Picker("Input Mode", selection: $recordingModeRaw) {
+                        Text("Hands-free (VAD)").tag(RecordingMode.vadAuto.rawValue)
+                        Text("Push to Talk").tag(RecordingMode.pushToTalk.rawValue)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if recordingModeRaw == RecordingMode.vadAuto.rawValue {
+                        Text("Microphone is always open. Speech is detected automatically.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("Hold the mic button to record. Release to send.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                 }
 
