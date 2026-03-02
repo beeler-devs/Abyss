@@ -13,12 +13,14 @@ import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
 import {
+  BridgeToolExecutor,
   CursorAgentMode,
   CursorAgentRunRecord,
   EventEnvelope,
   ModelProvider,
   ModelResponse,
   SessionState,
+  ToolCallRequest,
   ToolDefinition,
 } from "./types.js";
 
@@ -31,6 +33,7 @@ export interface ConductorServiceDependencies {
   cursorClient?: CursorClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
+  bridgeToolExecutor?: BridgeToolExecutor;
 }
 
 export interface CursorWebhookHandleResult {
@@ -231,6 +234,37 @@ const SERVER_CURSOR_TOOLS: ToolDefinition[] = [
   },
 ];
 
+const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
+  {
+    name: "bridge.exec.run",
+    description:
+      "Run a shell command on a paired Abyss Bridge Mac device. Use for local tests/build checks.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        command: { type: "string", description: "Shell command to execute (example: npm test)." },
+        cwd: { type: "string", description: "Optional relative directory under workspace root." },
+        timeoutSec: { type: "number", description: "Optional command timeout in seconds (max 600)." },
+      },
+      required: ["command"],
+    },
+  },
+  {
+    name: "bridge.fs.readFile",
+    description:
+      "Read a UTF-8 text file from a paired Abyss Bridge Mac device workspace.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        path: { type: "string", description: "Relative file path under workspace root." },
+      },
+      required: ["path"],
+    },
+  },
+];
+
 const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 
 function waitForToolResult(
@@ -278,6 +312,7 @@ export class ConductorService {
   private readonly cursorClient: CursorClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
+  private readonly bridgeToolExecutor?: BridgeToolExecutor;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
@@ -285,6 +320,7 @@ export class ConductorService {
     this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
+    this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
   }
 
   createRateLimiter() {
@@ -470,22 +506,29 @@ export class ConductorService {
   }
 
   private availableTools(): ToolDefinition[] {
-    if (!this.cursorClient.isConfigured()) {
-      return LEGACY_CLIENT_TOOLS;
+    const tools: ToolDefinition[] = [...LEGACY_CLIENT_TOOLS];
+
+    if (this.cursorClient.isConfigured()) {
+      tools.push(...SERVER_CURSOR_TOOLS);
     }
-    return [...LEGACY_CLIENT_TOOLS, ...SERVER_CURSOR_TOOLS];
+    if (this.bridgeToolExecutor) {
+      tools.push(...SERVER_BRIDGE_TOOLS);
+    }
+
+    return tools;
   }
 
   private shouldExecuteServerTool(toolName: string): boolean {
-    if (!this.cursorClient.isConfigured()) {
-      return false;
+    if (toolName.startsWith("bridge.")) {
+      return Boolean(this.bridgeToolExecutor);
     }
 
-    if (toolName === "repositories.list") {
+    if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
       return true;
     }
 
-    return toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor.");
+    return this.cursorClient.isConfigured()
+      && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
   }
 
   private async runConductorLoop(
@@ -539,25 +582,34 @@ export class ConductorService {
     const MAX_TOOL_ROUNDS = 8;
     let toolRound = 0;
     let emittedFinalResponse = false;
+    const deterministicBridgeToolCall = this.routeDeterministicBridgeIntent(transcript);
 
     while (toolRound < MAX_TOOL_ROUNDS) {
       toolRound += 1;
 
       let modelResponse: ModelResponse;
-      try {
-        modelResponse = await this.provider.generateResponse(session.history, this.availableTools());
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown model provider error";
-        emit(makeEvent("error", session.sessionId, {
-          code: "model_provider_failed",
-          message,
-        }));
-        emitToolCall("convo.setState", { state: "idle" });
-        logger.error(`model provider failed: ${message}`, {
-          sessionId: session.sessionId,
-          eventId: sourceEventId,
-        });
-        return;
+      if (toolRound === 1 && deterministicBridgeToolCall) {
+        modelResponse = {
+          fullText: "",
+          chunks: (async function* stream() {})(),
+          toolCalls: [deterministicBridgeToolCall],
+        };
+      } else {
+        try {
+          modelResponse = await this.provider.generateResponse(session.history, this.availableTools());
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Unknown model provider error";
+          emit(makeEvent("error", session.sessionId, {
+            code: "model_provider_failed",
+            message,
+          }));
+          emitToolCall("convo.setState", { state: "idle" });
+          logger.error(`model provider failed: ${message}`, {
+            sessionId: session.sessionId,
+            eventId: sourceEventId,
+          });
+          return;
+        }
       }
 
       if (modelResponse.toolCalls && modelResponse.toolCalls.length > 0) {
@@ -672,6 +724,52 @@ export class ConductorService {
     );
   }
 
+  private routeDeterministicBridgeIntent(transcript: string): ToolCallRequest | undefined {
+    if (!this.bridgeToolExecutor) {
+      return undefined;
+    }
+
+    const normalized = transcript.trim();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const lower = normalized.toLowerCase();
+    if (lower === "run tests" || lower === "run unit tests") {
+      return {
+        id: crypto.randomUUID(),
+        name: "bridge.exec.run",
+        input: { command: "npm test" },
+      };
+    }
+
+    const runMatch = normalized.match(/^run\s+(.+)$/i);
+    if (runMatch) {
+      const command = runMatch[1]?.trim();
+      if (command) {
+        return {
+          id: crypto.randomUUID(),
+          name: "bridge.exec.run",
+          input: { command },
+        };
+      }
+    }
+
+    const readMatch = normalized.match(/^(read file|open file)\s+(.+)$/i);
+    if (readMatch) {
+      const path = readMatch[2]?.trim();
+      if (path) {
+        return {
+          id: crypto.randomUUID(),
+          name: "bridge.fs.readFile",
+          input: { path },
+        };
+      }
+    }
+
+    return undefined;
+  }
+
   private async executeServerTool(
     session: SessionState,
     callId: string,
@@ -680,10 +778,12 @@ export class ConductorService {
     emit: (event: EventEnvelope) => void,
   ): Promise<{ result: string | null; error: string | null }> {
     if (!this.cursorClient.isConfigured()) {
-      return {
-        result: null,
-        error: "cursor_server_not_configured: CURSOR_API_KEY is not configured. Fall back to legacy agent.* tools.",
-      };
+      if (toolName.startsWith("cursor.") || toolName.startsWith("webqa.") || toolName === "repositories.list") {
+        return {
+          result: null,
+          error: "cursor_server_not_configured: CURSOR_API_KEY is not configured. Fall back to legacy agent.* tools.",
+        };
+      }
     }
 
     try {
@@ -880,6 +980,23 @@ export class ConductorService {
             }),
             error: null,
           };
+        }
+
+        case "bridge.exec.run":
+        case "bridge.fs.readFile": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+
+          const timeoutSecRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
+          const timeoutMs = Math.max(1, Math.min(600, Math.trunc(timeoutSecRaw ?? 60))) * 1_000;
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs,
+          }, emit);
         }
 
         default:

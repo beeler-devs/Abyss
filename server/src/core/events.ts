@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { EventEnvelope } from "./types.js";
 
+export const PROTOCOL_VERSION = 1;
+
 export interface ParseResult {
   event?: EventEnvelope;
   error?: string;
@@ -28,6 +30,7 @@ export function parseIncomingEvent(raw: string, maxBytes: number): ParseResult {
   const type = value.type;
   const timestamp = value.timestamp;
   const sessionId = value.sessionId;
+  const protocolVersion = value.protocolVersion;
   const payload = value.payload;
 
   if (typeof id !== "string" || !id.trim()) {
@@ -42,6 +45,13 @@ export function parseIncomingEvent(raw: string, maxBytes: number): ParseResult {
   if (typeof sessionId !== "string" || !sessionId.trim()) {
     return { error: "missing_session_id" };
   }
+  if (
+    typeof protocolVersion !== "number"
+    || !Number.isInteger(protocolVersion)
+    || protocolVersion <= 0
+  ) {
+    return { error: "missing_protocol_version" };
+  }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     return { error: "missing_payload" };
   }
@@ -52,6 +62,7 @@ export function parseIncomingEvent(raw: string, maxBytes: number): ParseResult {
       type,
       timestamp,
       sessionId,
+      protocolVersion,
       payload: payload as Record<string, unknown>,
     },
   };
@@ -69,6 +80,7 @@ export function makeEvent(
     type,
     timestamp,
     sessionId,
+    protocolVersion: PROTOCOL_VERSION,
     payload,
   };
 }

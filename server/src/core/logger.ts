@@ -5,6 +5,10 @@ interface LogContext {
   trace?: string;
   agentId?: string;
   status?: string;
+  deviceId?: string;
+  pairingCode?: string;
+  kind?: string;
+  deviceName?: string;
 }
 
 function contextPrefix(context?: LogContext): string {
@@ -19,6 +23,10 @@ function contextPrefix(context?: LogContext): string {
   if (context.trace) parts.push(`trace=${context.trace}`);
   if (context.agentId) parts.push(`agent=${context.agentId}`);
   if (context.status) parts.push(`status=${context.status}`);
+  if (context.deviceId) parts.push(`device=${context.deviceId}`);
+  if (context.pairingCode) parts.push(`pairing=${context.pairingCode}`);
+  if (context.kind) parts.push(`kind=${context.kind}`);
+  if (context.deviceName) parts.push(`deviceName=${context.deviceName}`);
 
   return parts.length ? `[${parts.join(" ")}] ` : "";
 }

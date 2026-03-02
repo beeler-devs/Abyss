@@ -234,3 +234,39 @@ test("webhook FINISHED routes to session and triggers agent.completed flow", asy
   assert.equal(run?.status, "FINISHED");
   assert.equal(run?.prUrl, "https://github.com/acme/repo/pull/87");
 });
+
+test("deterministic 'run tests' intent invokes bridge.exec.run", async () => {
+  const provider = new SequenceProvider([
+    { text: "Finished running tests." },
+  ]);
+
+  const bridgeRequests: Array<{ toolName: string; args: Record<string, unknown> }> = [];
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    bridgeToolExecutor: async (request) => {
+      bridgeRequests.push({ toolName: request.toolName, args: request.args });
+      return {
+        result: JSON.stringify({ exitCode: 0, stdout: "all green", stderr: "" }),
+        error: null,
+      };
+    },
+  });
+
+  const emitted = [] as ReturnType<typeof makeEvent>[];
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-bridge-intent", {
+    text: "run tests",
+  }), (event) => emitted.push(event));
+
+  assert.equal(bridgeRequests.length, 1);
+  assert.equal(bridgeRequests[0]?.toolName, "bridge.exec.run");
+  assert.equal(bridgeRequests[0]?.args.command, "npm test");
+
+  const hasFinalSpeech = emitted.some((event) => (
+    event.type === "assistant.speech.final"
+    && typeof event.payload.text === "string"
+    && event.payload.text.length > 0
+  ));
+  assert.equal(hasFinalSpeech, true);
+});

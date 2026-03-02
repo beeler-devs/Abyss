@@ -2,9 +2,13 @@ import "dotenv/config";
 
 import http from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
+
+import { BridgeStateStore, BridgeCapabilities } from "./bridge/state.js";
+import { BridgeToolRouter } from "./bridge/toolRouter.js";
 import { ConductorService } from "./core/conductorService.js";
 import { parseIncomingEvent, makeEvent } from "./core/events.js";
 import { logger } from "./core/logger.js";
+import { EventEnvelope } from "./core/types.js";
 import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
 import { buildProvider } from "./providers/index.js";
@@ -20,6 +24,7 @@ const CURSOR_API_KEY = process.env.CURSOR_API_KEY ?? "";
 const CURSOR_WEBHOOK_URL = process.env.CURSOR_WEBHOOK_URL ?? "";
 const CURSOR_WEBHOOK_SECRET = process.env.CURSOR_WEBHOOK_SECRET ?? "";
 const MAX_WEBHOOK_BYTES = parseInteger(process.env.CURSOR_WEBHOOK_MAX_BYTES, 512_000);
+const BRIDGE_PAIRING_TTL_MS = parseInteger(process.env.BRIDGE_PAIRING_TTL_MS, 5 * 60_000);
 
 const provider = buildProvider({
   modelProvider: MODEL_PROVIDER,
@@ -29,6 +34,35 @@ const provider = buildProvider({
   anthropicPartialDelayMs: parseInteger(process.env.ANTHROPIC_PARTIAL_DELAY_MS, 60),
   bedrockModelId: process.env.BEDROCK_MODEL_ID ?? "amazon.nova-lite-v1:0",
   awsRegion: process.env.AWS_REGION ?? "us-east-1",
+});
+
+type ConnectionKind = "unknown" | "ios" | "bridge";
+
+interface ConnectionContext {
+  kind: ConnectionKind;
+  sessionId?: string;
+  deviceId?: string;
+}
+
+const iosSocketsBySession = new Map<string, WebSocket>();
+const bridgeSocketsByDeviceId = new Map<string, WebSocket>();
+const socketContexts = new WeakMap<WebSocket, ConnectionContext>();
+
+const bridgeState = new BridgeStateStore(BRIDGE_PAIRING_TTL_MS);
+
+const bridgeRouter = new BridgeToolRouter({
+  state: bridgeState,
+  sendToBridge: (deviceId, event) => {
+    const socket = bridgeSocketsByDeviceId.get(deviceId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    safeSend(socket, event);
+    return true;
+  },
+  emitToIOS: (event) => {
+    emitToSession(event);
+  },
 });
 
 const conductor = new ConductorService(
@@ -43,10 +77,9 @@ const conductor = new ConductorService(
       webhookUrl: CURSOR_WEBHOOK_URL,
       webhookSecret: CURSOR_WEBHOOK_SECRET,
     }),
+    bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
   },
 );
-
-const sessionSockets = new Map<string, WebSocket>();
 
 // HTTP server handles /github/exchange for OAuth token exchange and upgrade to WebSocket.
 const httpServer = http.createServer(async (req, res) => {
@@ -74,7 +107,7 @@ httpServer.listen(PORT, () => {
 
 wss.on("connection", (socket, request) => {
   const limiter = conductor.createRateLimiter();
-  let connectionSessionId: string | null = null;
+  socketContexts.set(socket, { kind: "unknown" });
 
   logger.info("client connected", {
     trace: request.socket.remoteAddress ?? "unknown",
@@ -84,19 +117,20 @@ wss.on("connection", (socket, request) => {
     const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
 
     if (!limiter.allow()) {
-      if (connectionSessionId) {
-        safeSend(socket, makeEvent("error", connectionSessionId, {
-          code: "rate_limited",
-          message: "Too many events for this session in the last minute.",
-        }));
-      }
+      const context = socketContexts.get(socket);
+      const fallbackSessionId = context?.sessionId ?? "unknown";
+      safeSend(socket, makeEvent("error", fallbackSessionId, {
+        code: "rate_limited",
+        message: "Too many events for this session in the last minute.",
+      }));
       logger.warn("rate limit hit for socket");
       return;
     }
 
     const parsed = parseIncomingEvent(text, MAX_EVENT_BYTES);
     if (!parsed.event) {
-      const fallbackSessionId = connectionSessionId ?? "unknown";
+      const context = socketContexts.get(socket);
+      const fallbackSessionId = context?.sessionId ?? "unknown";
       safeSend(socket, makeEvent("error", fallbackSessionId, {
         code: "invalid_event",
         message: parsed.error ?? "Invalid event envelope",
@@ -105,16 +139,44 @@ wss.on("connection", (socket, request) => {
     }
 
     const event = parsed.event;
+    const context = socketContexts.get(socket) ?? { kind: "unknown" };
 
-    if (connectionSessionId && connectionSessionId !== event.sessionId) {
-      safeSend(socket, makeEvent("error", connectionSessionId, {
+    if (event.type === "bridge.register") {
+      await handleBridgeRegister(socket, event, context);
+      return;
+    }
+
+    if (context.kind === "bridge") {
+      if (event.type === "tool.result") {
+        const handled = bridgeRouter.handleBridgeToolResult(event);
+        if (!handled) {
+          logger.warn("bridge tool.result had no pending call", {
+            callId: typeof event.payload.callId === "string" ? event.payload.callId : undefined,
+            deviceId: context.deviceId,
+          });
+        }
+      }
+      return;
+    }
+
+    if (event.type === "bridge.pair.request") {
+      handleBridgePairRequest(socket, event, context);
+      return;
+    }
+
+    // Everything else on non-bridge connections is treated as iOS/client traffic.
+    if (context.sessionId && context.sessionId !== event.sessionId) {
+      safeSend(socket, makeEvent("error", context.sessionId, {
         code: "session_mismatch",
         message: "Each connection may only use one sessionId.",
       }));
       return;
     }
-    connectionSessionId = event.sessionId;
-    sessionSockets.set(connectionSessionId, socket);
+
+    context.kind = "ios";
+    context.sessionId = event.sessionId;
+    socketContexts.set(socket, context);
+    iosSocketsBySession.set(event.sessionId, socket);
 
     logger.info(`inbound ${event.type}`, {
       sessionId: event.sessionId,
@@ -132,20 +194,149 @@ wss.on("connection", (socket, request) => {
   });
 
   socket.on("close", () => {
-    if (connectionSessionId && sessionSockets.get(connectionSessionId) === socket) {
-      sessionSockets.delete(connectionSessionId);
+    const context = socketContexts.get(socket);
+
+    if (context?.kind === "ios" && context.sessionId) {
+      if (iosSocketsBySession.get(context.sessionId) === socket) {
+        iosSocketsBySession.delete(context.sessionId);
+      }
     }
+
+    if (context?.kind === "bridge" && context.deviceId) {
+      if (bridgeSocketsByDeviceId.get(context.deviceId) === socket) {
+        bridgeSocketsByDeviceId.delete(context.deviceId);
+      }
+
+      const updated = bridgeState.markDeviceOffline(context.deviceId);
+      if (updated) {
+        bridgeRouter.failPendingForDevice(updated.deviceId);
+        emitToSession(makeEvent("bridge.status", updated.sessionId, {
+          deviceId: updated.deviceId,
+          status: "offline",
+          lastSeen: updated.lastSeen,
+        }));
+      }
+    }
+
     logger.info("client disconnected", {
-      sessionId: connectionSessionId ?? undefined,
+      sessionId: context?.sessionId,
+      deviceId: context?.deviceId,
+      kind: context?.kind,
     });
   });
 
   socket.on("error", (error) => {
+    const context = socketContexts.get(socket);
     logger.warn(`socket error: ${error.message}`, {
-      sessionId: connectionSessionId ?? undefined,
+      sessionId: context?.sessionId,
+      deviceId: context?.deviceId,
+      kind: context?.kind,
     });
   });
 });
+
+async function handleBridgeRegister(
+  socket: WebSocket,
+  event: EventEnvelope,
+  context: ConnectionContext,
+): Promise<void> {
+  const payload = event.payload;
+
+  const pairingCode = readString(payload, "pairingCode");
+  const deviceId = readString(payload, "deviceId");
+  const deviceName = readString(payload, "deviceName");
+  const workspaceRoot = readString(payload, "workspaceRoot");
+  const capabilities = readCapabilities(payload.capabilities);
+
+  if (!pairingCode || !deviceId || !deviceName || !workspaceRoot || !capabilities) {
+    safeSend(socket, makeEvent("error", event.sessionId, {
+      code: "bridge_register_invalid_payload",
+      message: "bridge.register requires pairingCode, deviceId, deviceName, workspaceRoot, capabilities",
+    }));
+    return;
+  }
+
+  const registration = bridgeState.registerBridge({
+    pairingCode,
+    deviceId,
+    deviceName,
+    workspaceRoot,
+    capabilities,
+  });
+
+  if (!registration.device) {
+    safeSend(socket, makeEvent("error", event.sessionId, {
+      code: registration.error ?? "bridge_register_failed",
+      message: "Bridge pairing code not found or expired.",
+    }));
+    return;
+  }
+
+  context.kind = "bridge";
+  context.deviceId = deviceId;
+  context.sessionId = registration.device.sessionId;
+  socketContexts.set(socket, context);
+
+  bridgeSocketsByDeviceId.set(deviceId, socket);
+
+  safeSend(socket, makeEvent("bridge.registered", event.sessionId, {
+    deviceId,
+    sessionId: registration.device.sessionId,
+    status: "online",
+  }));
+
+  emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
+    deviceId: registration.device.deviceId,
+    deviceName: registration.device.deviceName,
+    status: "online",
+  }));
+
+  emitToSession(makeEvent("bridge.status", registration.device.sessionId, {
+    deviceId: registration.device.deviceId,
+    status: "online",
+    lastSeen: registration.device.lastSeen,
+  }));
+
+  logger.info("bridge registered", {
+    sessionId: registration.device.sessionId,
+    deviceId,
+    deviceName,
+  });
+}
+
+function handleBridgePairRequest(
+  socket: WebSocket,
+  event: EventEnvelope,
+  context: ConnectionContext,
+): void {
+  const pairingCode = readString(event.payload, "pairingCode");
+  const deviceName = readString(event.payload, "deviceName");
+
+  if (!pairingCode) {
+    safeSend(socket, makeEvent("error", event.sessionId, {
+      code: "bridge_pairing_code_missing",
+      message: "bridge.pair.request requires pairingCode",
+    }));
+    return;
+  }
+
+  bridgeState.createPairingRequest(event.sessionId, pairingCode, deviceName);
+
+  context.kind = "ios";
+  context.sessionId = event.sessionId;
+  socketContexts.set(socket, context);
+  iosSocketsBySession.set(event.sessionId, socket);
+
+  safeSend(socket, makeEvent("bridge.pair.pending", event.sessionId, {
+    pairingCode: pairingCode.trim().toUpperCase(),
+    expiresInSec: Math.floor(BRIDGE_PAIRING_TTL_MS / 1000),
+  }));
+
+  logger.info("bridge pairing requested", {
+    sessionId: event.sessionId,
+    pairingCode: pairingCode.trim().toUpperCase(),
+  });
+}
 
 async function handleCursorWebhook(
   req: http.IncomingMessage,
@@ -291,7 +482,7 @@ function parseInteger(raw: string | undefined, fallback: number): number {
 function emitToSession(event: { sessionId: string }, preferredSocket?: WebSocket): void {
   const socket = preferredSocket && preferredSocket.readyState === WebSocket.OPEN
     ? preferredSocket
-    : sessionSockets.get(event.sessionId);
+    : iosSocketsBySession.get(event.sessionId);
   if (!socket || socket.readyState !== WebSocket.OPEN) {
     return;
   }
@@ -309,4 +500,28 @@ function safeSend(socket: WebSocket, event: object): void {
     const message = error instanceof Error ? error.message : "unknown send error";
     logger.warn(`failed to send websocket event: ${message}`);
   }
+}
+
+function readString(payload: Record<string, unknown>, key: string): string | undefined {
+  const value = payload[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readCapabilities(value: unknown): BridgeCapabilities | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const execRun = raw.execRun;
+  const readFile = raw.readFile;
+  if (typeof execRun !== "boolean" || typeof readFile !== "boolean") {
+    return undefined;
+  }
+
+  return { execRun, readFile };
 }
