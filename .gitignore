@@ -28,6 +28,9 @@ Pods/
 **/Secrets.xcconfig
 **/secrets.plist
 
+# Claude Code worktrees
+.claude/worktrees/
+
 # macOS
 .DS_Store
 *.swp
@@ -37,6 +40,10 @@ Pods/
 # Environment
 .env
 .env.local
+
+# Local VoiceIDE alias folder (keep only README guidance)
+ios/VoiceIDE/**
+!ios/VoiceIDE/README.md
 
 # Node / TypeScript
 node_modules/

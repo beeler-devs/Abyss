@@ -3,6 +3,9 @@ import SwiftUI
 /// Settings sheet for configuring app/network/provider options.
 struct SettingsView: View {
     @Binding var useServerConductor: Bool
+    let pairedBridgeDevices: [PairedBridgeDevice]
+    let bridgePairingMessage: String?
+    let onPairComputer: ((String, String?) -> Void)?
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
@@ -17,6 +20,7 @@ struct SettingsView: View {
 
     @State private var showCursorAPIKeyModal = false
     @State private var cursorAPIKeyInput = ""
+    @State private var showPairComputerSheet = false
 
     var body: some View {
         NavigationStack {
@@ -134,6 +138,41 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Bridge") {
+                    Button {
+                        showPairComputerSheet = true
+                    } label: {
+                        Label("Pair Computer", systemImage: "desktopcomputer")
+                    }
+
+                    if let bridgePairingMessage, !bridgePairingMessage.isEmpty {
+                        Text(bridgePairingMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if pairedBridgeDevices.isEmpty {
+                        Text("No paired computers yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(pairedBridgeDevices) { device in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(device.deviceName)
+                                    Text(device.deviceId)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Text(device.status)
+                                    .font(.caption)
+                                    .foregroundStyle(device.status == "online" ? .green : .secondary)
+                            }
+                        }
+                    }
+                }
+
                 if !Config.isElevenLabsAPIKeyConfigured {
                     Section {
                         VStack(alignment: .leading, spacing: 8) {
@@ -171,6 +210,12 @@ struct SettingsView: View {
                     }
                 )
             }
+            .sheet(isPresented: $showPairComputerSheet) {
+                PairComputerSheet { code, deviceName in
+                    onPairComputer?(code, deviceName)
+                    showPairComputerSheet = false
+                }
+            }
         }
     }
 
@@ -191,6 +236,48 @@ struct SettingsView: View {
             modelsLoadError = error.localizedDescription
         }
         isLoadingModels = false
+    }
+}
+
+private struct PairComputerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var pairingCode = ""
+    @State private var deviceName = ""
+
+    let onSubmit: (String, String?) -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Pairing Code") {
+                    TextField("ABC123", text: $pairingCode)
+                        .textInputAutocapitalization(.characters)
+                        .autocorrectionDisabled()
+                }
+                Section("Display Name (Optional)") {
+                    TextField("My Mac", text: $deviceName)
+                        .autocorrectionDisabled()
+                }
+            }
+            .navigationTitle("Pair Computer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Pair") {
+                        onSubmit(
+                            pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased(),
+                            deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? nil
+                                : deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                    }
+                    .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
     }
 }
 
