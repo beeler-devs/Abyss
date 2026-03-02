@@ -82,7 +82,7 @@ final class ConversationViewModel: ObservableObject {
 
     // MARK: - Init
 
-    init() {
+    init(sessionId: String = UUID().uuidString) {
         let defaults = UserDefaults.standard
 
         // When a backend URL is present in Secrets.plist the server conductor is always
@@ -97,7 +97,7 @@ final class ConversationViewModel: ObservableObject {
         defaults.set(resolvedUseServer, forKey: Self.useServerConductorKey)
         self.useServerConductor = resolvedUseServer
         self.localConductor = LocalConductorStub()
-        self.sessionId = UUID().uuidString
+        self.sessionId = sessionId
 
         let elevenLabs = ElevenLabsTTS(
             voiceId: Config.elevenLabsVoiceId,
