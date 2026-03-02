@@ -302,6 +302,16 @@ private struct ChatContentView: View {
         RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
     }
 
+    /// In PTT mode, the button should stay red during both .listening and .transcribing,
+    /// because handlePartialTranscript flips to .transcribing when partials arrive while
+    /// the user is still holding. Recording doesn't stop until release.
+    private func isPTTRecording(viewModel: ConversationViewModel, recordingMode: RecordingMode) -> Bool {
+        if recordingMode == .pushToTalk {
+            return viewModel.appState == .listening || viewModel.appState == .transcribing
+        }
+        return viewModel.appState == .listening
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // API key warning banner
@@ -375,7 +385,7 @@ private struct ChatContentView: View {
                     isTypingMode: $isTypingMode,
                     typedText: $typedMessage,
                     recordingMode: recordingMode,
-                    isRecording: viewModel.appState == .listening,
+                    isRecording: isPTTRecording(viewModel: viewModel, recordingMode: recordingMode),
                     onToggleMute: { viewModel.toggleMute() },
                     onInterruptSpeaking: { viewModel.interruptAssistantSpeech() },
                     onMicPressed: { viewModel.micPressed() },
