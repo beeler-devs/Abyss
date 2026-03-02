@@ -62,8 +62,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         try session.setActive(true)
 
         #if canImport(WhisperKit)
-        // Ensure the model is ready (or attempted) before recording starts.
-        await ensureWhisperKitLoaded()
         audioBuffers = []
         partialTranscriptionTask?.cancel()
         partialTranscriptionTask = nil
@@ -138,6 +136,14 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         engine.prepare()
         try engine.start()
         self.audioEngine = engine
+
+        #if canImport(WhisperKit)
+        // Warm the model in parallel so first-turn speech capture is never blocked on load.
+        Task { [weak self] in
+            guard let self else { return }
+            await self.ensureWhisperKitLoaded()
+        }
+        #endif
     }
 
     private func computeAudioLevelDB(from samples: [Float]) -> Float {
@@ -329,7 +335,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
         // Final transcription pass on all accumulated audio (resampled to 16kHz)
         let samples: [Float] = lock.withLock { audioBuffers }
-        let whisperLoaded = lock.withLock { whisperKit != nil }
+        var whisperLoaded = lock.withLock { whisperKit != nil }
         print("🛑 [STOP-4b] snapshot — samples=\(samples.count) at \(inputSampleRate)Hz, whisperKitLoaded=\(whisperLoaded)")
 
         // If we have no samples, the audio engine never captured anything
@@ -340,6 +346,13 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             print("🛑 [STOP-7] stop() returning (no audio) — '\(finalText)'")
             return finalText.isEmpty ? "[No audio captured]" : finalText
+        }
+
+        if !whisperLoaded, samples.count > 1600 {
+            print("🛑 [STOP-4d] WhisperKit not ready yet — waiting for model load before final pass")
+            await ensureWhisperKitLoaded()
+            whisperLoaded = lock.withLock { whisperKit != nil }
+            print("🛑 [STOP-4e] WhisperKit load wait done — whisperKitLoaded=\(whisperLoaded)")
         }
 
         if let wk = whisperKit, samples.count > 1600 {

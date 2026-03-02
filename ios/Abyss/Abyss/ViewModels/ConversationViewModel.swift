@@ -881,19 +881,28 @@ final class ConversationViewModel: ObservableObject {
                     effectiveState = requestedState
                 }
 
-                appStateStore.current = effectiveState
-                appState = effectiveState
+                // PTT: don't let stale inbound state overwrite our recording state during barge-in.
+                // The server may send .idle or .speaking from the pre-interrupt turn; we stay .listening/.transcribing until release.
+                let preservePTTRecording = recordingMode == .pushToTalk
+                    && transcriber.isListening
+                    && (appState == .listening || appState == .transcribing)
+                    && (effectiveState == .idle || effectiveState == .speaking)
 
-                switch effectiveState {
-                case .idle:
-                    await refreshLiveConversationState()
-                case .thinking, .speaking, .error:
-                    voiceActivityDetector.stopMonitoring()
-                    if transcriber.isListening && !isStoppingRecording {
-                        await stopListeningSilently()
+                if !preservePTTRecording {
+                    appStateStore.current = effectiveState
+                    appState = effectiveState
+
+                    switch effectiveState {
+                    case .idle:
+                        await refreshLiveConversationState()
+                    case .thinking, .speaking, .error:
+                        voiceActivityDetector.stopMonitoring()
+                        if transcriber.isListening && !isStoppingRecording {
+                            await stopListeningSilently()
+                        }
+                    case .listening, .transcribing:
+                        break
                     }
-                case .listening, .transcribing:
-                    break
                 }
             }
 

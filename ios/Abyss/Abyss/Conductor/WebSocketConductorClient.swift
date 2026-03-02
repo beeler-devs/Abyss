@@ -13,6 +13,32 @@ private let _iso8601Basic: ISO8601DateFormatter = {
     return f
 }()
 
+private final class OneShotVoidContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+
+    init(_ continuation: CheckedContinuation<Void, Error>) {
+        self.continuation = continuation
+    }
+
+    func resolve(_ result: Result<Void, Error>) {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        lock.unlock()
+
+        switch result {
+        case .success:
+            continuation.resume()
+        case .failure(let error):
+            continuation.resume(throwing: error)
+        }
+    }
+}
+
 protocol WebSocketTransport: AnyObject, Sendable {
     func connect() async throws
     func disconnect() async
@@ -21,6 +47,9 @@ protocol WebSocketTransport: AnyObject, Sendable {
 }
 
 final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @unchecked Sendable {
+    private static let connectReadyTimeoutNs: UInt64 = 3_000_000_000
+    private static let sendTimeoutNs: UInt64 = 5_000_000_000
+
     private let url: URL
     private let session: URLSession
     private nonisolated(unsafe) var socketTask: URLSessionWebSocketTask?
@@ -35,8 +64,10 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
         self.url = url
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = false
-        config.timeoutIntervalForRequest = 5
-        config.timeoutIntervalForResource = 10
+        // WebSocket sessions should not expire during normal conversation pauses.
+        // Per-send responsiveness is enforced separately in send(text:).
+        config.timeoutIntervalForRequest = 30
+        config.timeoutIntervalForResource = 300
         self.session = URLSession(configuration: config)
         let (stream, continuation) = AsyncStream<String>.makeStream()
         self.stream = stream
@@ -48,6 +79,17 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
         let task = session.webSocketTask(with: url)
         socketTask = task
         task.resume()
+
+        // Don't consider the socket connected until we receive a pong.
+        // This avoids a startup race where the first send is attempted before the
+        // handshake has actually completed.
+        do {
+            try await waitUntilReady(task)
+        } catch {
+            task.cancel(with: .goingAway, reason: nil)
+            socketTask = nil
+            throw error
+        }
 
         receiveTask?.cancel()
         receiveTask = Task {
@@ -73,12 +115,31 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { try await task.send(.string(text)) }
             group.addTask {
-                try await Task.sleep(nanoseconds: 2_000_000_000)
+                try await Task.sleep(nanoseconds: Self.sendTimeoutNs)
                 throw WebSocketConductorClient.Error.sendTimeout
             }
             // First to finish wins; cancel the loser.
             try await group.next()!
             group.cancelAll()
+        }
+    }
+
+    private func waitUntilReady(_ task: URLSessionWebSocketTask) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let oneShot = OneShotVoidContinuation(continuation)
+
+            task.sendPing { error in
+                if let error {
+                    oneShot.resolve(.failure(error))
+                } else {
+                    oneShot.resolve(.success(()))
+                }
+            }
+
+            Task {
+                try? await Task.sleep(nanoseconds: Self.connectReadyTimeoutNs)
+                oneShot.resolve(.failure(URLError(.timedOut)))
+            }
         }
     }
 
