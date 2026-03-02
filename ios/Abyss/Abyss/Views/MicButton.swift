@@ -7,8 +7,12 @@ struct MicButton: View {
     let isSpeaking: Bool
     @Binding var isTypingMode: Bool
     @Binding var typedText: String
+    let recordingMode: RecordingMode
+    let isRecording: Bool
     let onToggleMute: () -> Void
     let onInterruptSpeaking: () -> Void
+    let onMicPressed: () -> Void
+    let onMicReleased: () -> Void
     let onSendTyped: (String) -> Void
 
     @Environment(\.colorScheme) private var colorScheme
@@ -26,34 +30,11 @@ struct MicButton: View {
 
     private var liveControls: some View {
         HStack(spacing: UIConstants.actionBarSpacing) {
-            Button(action: onToggleMute) {
-                HStack(spacing: 8) {
-                    Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
-                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                    Text(isMuted ? "Muted" : "Live")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    if !isMuted {
-                        Circle()
-                            .fill(Color.red)
-                            .frame(width: 8, height: 8)
-                    }
-                }
-                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
-                .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
-                .frame(maxWidth: .infinity)
-                .frame(height: UIConstants.actionBarControlHeight)
-                .background(
-                    RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                        .fill(AppTheme.pillBackground(for: colorScheme))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                        .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
-                )
+            if recordingMode == .pushToTalk {
+                pushToTalkButton
+            } else {
+                muteToggleButton
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isMuted ? "Unmute microphone" : "Mute microphone")
 
             Button {
                 withAnimation(.easeInOut(duration: 0.2)) {
@@ -91,6 +72,65 @@ struct MicButton: View {
                 .accessibilityLabel("Interrupt assistant speech")
             }
         }
+    }
+
+    private var muteToggleButton: some View {
+        Button(action: onToggleMute) {
+            HStack(spacing: 8) {
+                Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
+                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                Text(isMuted ? "Muted" : "Live")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if !isMuted {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 8, height: 8)
+                }
+            }
+            .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+            .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
+            .frame(maxWidth: .infinity)
+            .frame(height: UIConstants.actionBarControlHeight)
+            .background(
+                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                    .fill(AppTheme.pillBackground(for: colorScheme))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isMuted ? "Unmute microphone" : "Mute microphone")
+    }
+
+    private var pushToTalkButton: some View {
+        RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+            .fill(isRecording ? Color.red : AppTheme.pillBackground(for: colorScheme))
+            .overlay(
+                HStack(spacing: 8) {
+                    Image(systemName: isRecording ? "waveform" : "mic.fill")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                    Text(isRecording ? "Recording…" : "Hold to Speak")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+                .foregroundStyle(isRecording ? .white : AppTheme.actionBarIconTint(for: colorScheme))
+                .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: UIConstants.actionBarControlHeight)
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in if !isRecording { onMicPressed() } }
+                    .onEnded { _ in onMicReleased() }
+            )
+            .accessibilityLabel(isRecording ? "Recording, release to send" : "Hold to speak")
     }
 
     private var typingBar: some View {
