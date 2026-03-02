@@ -415,17 +415,29 @@ final class ConversationViewModel: ObservableObject {
     }
 
     /// PTT: user pressed the mic button. Start recording immediately (bypasses VAD).
+    /// If the assistant is currently speaking, barge in first (stops TTS), then start PTT.
     func micPressed() {
         guard recordingMode == .pushToTalk else { return }
         guard isChatActive else { return }
         guard !transcriber.isListening, !isStartingRecording else { return }
-        Task { await startListeningPTT() }
+        Task {
+            if appState == .speaking {
+                await bargeIn(reason: "ptt_barge_in")
+            }
+            await startListeningPTT()
+        }
     }
 
     /// PTT: user released the mic button. Stop and process.
+    /// Also handles fast tap: if startListeningPTT() is still in progress (isStartingRecording),
+    /// we still schedule the stop so the mic doesn't stay open forever.
     func micReleased() {
         guard recordingMode == .pushToTalk else { return }
-        guard transcriber.isListening, !isStoppingRecording else { return }
+        guard !isStoppingRecording else { return }
+        // Allow stop even if isListening is not yet true — startListeningPTT() is async and
+        // may still be running. Since Tasks are serialised on MainActor, stopListeningAndProcess()
+        // will execute after startListeningPTT() completes and its guard will pass.
+        guard transcriber.isListening || isStartingRecording else { return }
         Task { await stopListeningAndProcess() }
     }
 
@@ -520,8 +532,9 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
-    /// Start listening via tool calls.
+    /// Start listening via tool calls. PTT mode manages its own mic lifecycle via micPressed/micReleased.
     private func startListening() async {
+        guard recordingMode == .vadAuto else { return }
         guard canRunLiveConversation else { return }
         guard !isStoppingRecording else { return }
         guard !isStartingRecording else { return }
@@ -683,6 +696,13 @@ final class ConversationViewModel: ObservableObject {
             }
         }
         print("⏹️ [STEP 5] stt.stop returned — finalTranscript='\(finalTranscript)'")
+
+        // Treat placeholder returns from the transcriber (e.g. "[No audio captured]") as empty
+        // so they don't get forwarded to the conductor as real utterances.
+        if isPlaceholderTranscript(finalTranscript) {
+            print("⏹️ [STEP 5-PLACEHOLDER] final transcript is a placeholder — treating as empty")
+            finalTranscript = ""
+        }
 
         // Use partial if final is empty, but skip placeholder text
         if finalTranscript.isEmpty {

@@ -125,11 +125,13 @@ struct MicButton: View {
             )
             .frame(maxWidth: .infinity)
             .frame(height: UIConstants.actionBarControlHeight)
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { _ in if !isRecording { onMicPressed() } }
-                    .onEnded { _ in onMicReleased() }
-            )
+            // DragGesture(minimumDistance: 0) was replaced because iOS's system gesture gate
+            // fires spurious .onEnded events (visible as "System gesture gate timed out" in logs).
+            // onLongPressGesture with minimumDuration: .infinity never fires perform(), so
+            // pressing: false is the only release signal — reliable for PTT.
+            .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
+                if isPressing { onMicPressed() } else { onMicReleased() }
+            }, perform: {})
             .accessibilityLabel(isRecording ? "Recording, release to send" : "Hold to speak")
     }
 
