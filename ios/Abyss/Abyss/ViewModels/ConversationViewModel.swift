@@ -845,7 +845,7 @@ final class ConversationViewModel: ObservableObject {
                 )
             }
             eventBus.emit(event)
-        case .assistantUIPatch, .agentStatus, .sessionStart, .toolResult, .error,
+        case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult, .error,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,
                 .agentCompleted, .bridgePairRequest:
             eventBus.emit(event)
@@ -890,6 +890,8 @@ final class ConversationViewModel: ObservableObject {
             handleToolResult(toolResult, for: toolCall)
         case .agentStatus(let status):
             handleAgentStatusEvent(status)
+        case .agentConversation(let conversation):
+            handleAgentConversationEvent(conversation)
         default:
             break
         }
@@ -1118,6 +1120,20 @@ final class ConversationViewModel: ObservableObject {
         if let card = agentProgressCards.first(where: { $0.agentId == agentID }) {
             notifyAgentCompletionIfNeeded(card: card)
         }
+    }
+
+    private func handleAgentConversationEvent(_ conversation: Event.AgentConversation) {
+        guard !conversation.agentId.isEmpty else { return }
+        if updateCard(agentID: conversation.agentId, mutate: { card in
+            card.appendConversationMessages(conversation.messages)
+        }) {
+            sortCardsByLastUpdate()
+        }
+    }
+
+    func toggleConversationExpanded(cardID: UUID) {
+        guard let index = agentProgressCards.firstIndex(where: { $0.id == cardID }) else { return }
+        agentProgressCards[index].isConversationExpanded.toggle()
     }
 
     private func shouldAutoPollAgentStatus() -> Bool {

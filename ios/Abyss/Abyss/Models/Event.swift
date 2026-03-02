@@ -30,6 +30,7 @@ struct Event: Identifiable, Codable, Sendable {
         case toolResult(ToolResult)
         case error(ErrorInfo)
         case agentCompleted(AgentCompleted)
+        case agentConversation(AgentConversation)
         case bridgePairRequest(BridgePairRequest)
         case bridgePairPending(BridgePairPending)
         case bridgePaired(BridgePaired)
@@ -117,6 +118,17 @@ struct Event: Identifiable, Codable, Sendable {
         let summary: String     // may be empty string
         let name: String?       // agent display name
         let prompt: String?     // original task prompt
+    }
+
+    struct AgentConversationMessage: Codable, Sendable, Identifiable, Equatable {
+        let id: String
+        let type: String   // "user_message" or "assistant_message"
+        let text: String
+    }
+
+    struct AgentConversation: Codable, Sendable {
+        let agentId: String
+        let messages: [AgentConversationMessage]
     }
 
     struct BridgePairPending: Codable, Sendable {
@@ -225,6 +237,16 @@ extension Event {
         )))
     }
 
+    static func agentConversation(
+        agentId: String,
+        messages: [AgentConversationMessage],
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .agentConversation(AgentConversation(
+            agentId: agentId, messages: messages
+        )))
+    }
+
     static func bridgePairRequest(code: String, deviceName: String?, sessionId: String? = nil) -> Event {
         let payload = BridgePairRequest(pairingCode: code, deviceName: deviceName)
         return Event(sessionId: sessionId, kind: .bridgePairRequest(payload))
@@ -248,6 +270,7 @@ extension Event.Kind {
         case .toolResult(let tr): return tr.isError ? "tool.result: ERROR" : "tool.result: OK"
         case .error(let e): return "error: \(e.code)"
         case .agentCompleted(let ac): return "agent.completed: \(ac.agentId)"
+        case .agentConversation(let c): return "agent.conversation: \(c.agentId) (+\(c.messages.count))"
         case .bridgePairRequest:
             return "bridge.pair.request"
         case .bridgePairPending(let payload): return "bridge.pair.pending: \(payload.pairingCode)"

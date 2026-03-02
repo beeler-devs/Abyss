@@ -6,6 +6,7 @@ struct AgentProgressCardView: View {
     let onRefresh: () -> Void
     let onCancel: () -> Void
     let onDismiss: () -> Void
+    let onToggleConversation: () -> Void
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -55,6 +56,43 @@ struct AgentProgressCardView: View {
                             .font(.body)
                             .foregroundStyle(stepTextColor(for: step.state, colorScheme: colorScheme))
                     }
+                }
+            }
+
+            if !card.conversationMessages.isEmpty {
+                Divider()
+
+                Button(action: onToggleConversation) {
+                    HStack {
+                        Image(systemName: card.isConversationExpanded ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Agent Log (\(card.conversationMessages.count) messages)")
+                            .font(.caption.bold())
+                        Spacer()
+                    }
+                    .foregroundStyle(AppTheme.agentCardText(for: colorScheme).opacity(0.7))
+                }
+                .buttonStyle(.plain)
+
+                if card.isConversationExpanded {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(card.conversationMessages) { msg in
+                                HStack(alignment: .top, spacing: 8) {
+                                    Image(systemName: msg.type == "user_message" ? "person.fill" : "cpu")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(msg.type == "user_message" ? .blue : .green)
+                                        .frame(width: 14)
+
+                                    Text(msg.text)
+                                        .font(.caption)
+                                        .foregroundStyle(AppTheme.agentCardText(for: colorScheme).opacity(0.85))
+                                        .textSelection(.enabled)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 200)
                 }
             }
 

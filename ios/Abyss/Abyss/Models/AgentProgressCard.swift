@@ -31,6 +31,8 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
     var createdAt: String?
     var updatedAt: Date
     var errorMessage: String?
+    var conversationMessages: [Event.AgentConversationMessage] = []
+    var isConversationExpanded: Bool = false
 
     static func pending(
         spawnCallId: String,
@@ -125,6 +127,13 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
 
     mutating func noteStatusRefreshError(_ message: String) {
         summary = "Status refresh failed: \(message)"
+        updatedAt = Date()
+    }
+
+    mutating func appendConversationMessages(_ newMessages: [Event.AgentConversationMessage]) {
+        let existingIds = Set(conversationMessages.map(\.id))
+        let deduped = newMessages.filter { !existingIds.contains($0.id) }
+        conversationMessages.append(contentsOf: deduped)
         updatedAt = Date()
     }
 
