@@ -183,6 +183,10 @@ wss.on("connection", (socket, request) => {
       eventId: event.id,
     });
 
+    if (event.type === "session.start") {
+      emitBridgeStatusSnapshot(event.sessionId, socket);
+    }
+
     await conductor.handleEvent(event, (outbound) => {
       logger.info(`outbound ${outbound.type}`, {
         sessionId: outbound.sessionId,
@@ -487,6 +491,17 @@ function emitToSession(event: { sessionId: string }, preferredSocket?: WebSocket
     return;
   }
   safeSend(socket, event);
+}
+
+function emitBridgeStatusSnapshot(sessionId: string, preferredSocket?: WebSocket): void {
+  const devices = bridgeState.getSessionDevices(sessionId);
+  for (const device of devices) {
+    emitToSession(makeEvent("bridge.status", sessionId, {
+      deviceId: device.deviceId,
+      status: device.status,
+      lastSeen: device.lastSeen,
+    }), preferredSocket);
+  }
 }
 
 function safeSend(socket: WebSocket, event: object): void {

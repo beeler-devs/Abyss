@@ -109,6 +109,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem()
         loadPairedBridgeDevices()
+        refreshBridgeStatusesOnStartup()
         observeStores()
         configureVoicePipeline()
         preloadTranscriber()
@@ -131,6 +132,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         loadPairedBridgeDevices()
+        refreshBridgeStatusesOnStartup()
         observeStores()
         configureVoicePipeline()
     }
@@ -154,6 +156,7 @@ final class ConversationViewModel: ObservableObject {
 
         setupToolSystem(transcriber: transcriber, tts: tts)
         loadPairedBridgeDevices()
+        refreshBridgeStatusesOnStartup()
         observeStores()
         configureVoicePipeline()
 
@@ -1218,6 +1221,30 @@ final class ConversationViewModel: ObservableObject {
         } else {
             pairedBridgeDevices = []
         }
+    }
+
+    /// Always invalidate cached "online" statuses at app startup.
+    /// Fresh server bridge.status events will restore accurate status.
+    private func refreshBridgeStatusesOnStartup() {
+        guard !pairedBridgeDevices.isEmpty else {
+            return
+        }
+
+        let refreshed = pairedBridgeDevices.map { device in
+            PairedBridgeDevice(
+                deviceId: device.deviceId,
+                deviceName: device.deviceName,
+                status: "offline",
+                lastSeen: device.lastSeen
+            )
+        }
+
+        guard refreshed != pairedBridgeDevices else {
+            return
+        }
+
+        pairedBridgeDevices = refreshed
+        persistPairedBridgeDevices()
     }
 
     private func persistPairedBridgeDevices() {
