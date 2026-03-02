@@ -313,6 +313,8 @@ export class ConductorService {
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
+  private readonly conversationPollers = new Map<string, ReturnType<typeof setInterval>>();
+  private static readonly CONVERSATION_POLL_INTERVAL_MS = 3_000;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
@@ -859,6 +861,10 @@ export class ConductorService {
             spawnCallId: existing?.spawnCallId,
           });
 
+          if (isTerminalAgentStatus(statusResult.status)) {
+            this.stopConversationPolling(agentId);
+          }
+
           return {
             result: stableJSONStringify({
               agentId,
@@ -1116,6 +1122,8 @@ export class ConductorService {
       webhookDriven: this.cursorClient.hasWebhookConfig(),
     });
 
+    this.startConversationPolling(details.agentId, sessionId, emit);
+
     const pending = this.sessions.takePendingWebhook(run.agentId, this.now().getTime());
     if (!pending) {
       return;
@@ -1155,8 +1163,11 @@ export class ConductorService {
     });
 
     if (!isTerminalAgentStatus(normalizedStatus)) {
+      this.startConversationPolling(parsedWebhook.agent.agentId, sessionId, emit);
       return;
     }
+
+    this.stopConversationPolling(parsedWebhook.agent.agentId);
 
     const completedPayload: Record<string, unknown> = {
       agentId: updatedRun.agentId,
@@ -1217,6 +1228,83 @@ export class ConductorService {
       eventId,
       timestamp,
     ));
+  }
+
+  private startConversationPolling(
+    agentId: string,
+    sessionId: string,
+    emit: (event: EventEnvelope) => void,
+  ): void {
+    if (this.conversationPollers.has(agentId)) {
+      return;
+    }
+
+    const poll = async (): Promise<void> => {
+      const run = this.sessions.getCursorRun(agentId);
+      if (!run || isTerminalAgentStatus(run.status)) {
+        this.stopConversationPolling(agentId);
+        await this.pollConversation(agentId, sessionId, emit);
+        return;
+      }
+      await this.pollConversation(agentId, sessionId, emit);
+    };
+
+    const timer = setInterval(poll, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
+    this.conversationPollers.set(agentId, timer);
+    poll().catch(() => {});
+  }
+
+  private stopConversationPolling(agentId: string): void {
+    const timer = this.conversationPollers.get(agentId);
+    if (timer) {
+      clearInterval(timer);
+      this.conversationPollers.delete(agentId);
+    }
+  }
+
+  private async pollConversation(
+    agentId: string,
+    sessionId: string,
+    emit: (event: EventEnvelope) => void,
+  ): Promise<void> {
+    try {
+      const result = await this.cursorClient.conversation(agentId);
+      const run = this.sessions.getCursorRun(agentId);
+      const lastSeenId = run?.lastSeenConversationMessageId;
+
+      let newMessages = result.messages;
+      if (lastSeenId) {
+        const lastSeenIndex = result.messages.findIndex((m) => m.id === lastSeenId);
+        if (lastSeenIndex >= 0) {
+          newMessages = result.messages.slice(lastSeenIndex + 1);
+        }
+      }
+
+      if (newMessages.length === 0) {
+        return;
+      }
+
+      const lastMsg = newMessages[newMessages.length - 1]!;
+      if (run) {
+        run.lastSeenConversationMessageId = lastMsg.id;
+      }
+
+      const eventId = makeDeterministicEventId(
+        `agent.conversation|${agentId}|${lastMsg.id}`,
+      );
+
+      emit(makeEvent("agent.conversation", sessionId, {
+        agentId,
+        messages: newMessages.map((m) => ({
+          id: m.id,
+          type: m.type,
+          text: m.text,
+        })),
+      }, eventId));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "unknown";
+      logger.warn(`conversation poll failed for ${agentId}: ${message}`, { agentId });
+    }
   }
 }
 
