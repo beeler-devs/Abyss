@@ -3,6 +3,7 @@ export interface EventEnvelope {
   type: string;
   timestamp: string;
   sessionId: string;
+  protocolVersion: number;
   payload: Record<string, unknown>;
 }
 
@@ -70,6 +71,24 @@ export interface SessionState {
   recentTranscriptTrace: string[];
   transcriptCount: number;
 }
+
+export interface BridgeToolExecutionRequest {
+  callId: string;
+  sessionId: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  timeoutMs: number;
+}
+
+export interface BridgeToolExecutionResult {
+  result: string | null;
+  error: string | null;
+}
+
+export type BridgeToolExecutor = (
+  request: BridgeToolExecutionRequest,
+  emit: (event: EventEnvelope) => void,
+) => Promise<BridgeToolExecutionResult>;
 
 export interface ModelResponse {
   fullText: string;

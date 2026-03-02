@@ -49,6 +49,7 @@ function sendEvent(type: string, payload: Record<string, unknown>) {
     type,
     timestamp: new Date().toISOString(),
     sessionId,
+    protocolVersion: 1,
     payload,
   };
 
