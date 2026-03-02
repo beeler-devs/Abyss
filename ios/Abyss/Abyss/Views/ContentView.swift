@@ -360,6 +360,9 @@ private struct ChatContentView: View {
                                 withAnimation(.easeInOut(duration: 0.2)) {
                                     viewModel.dismissAgentCard(cardID: card.id)
                                 }
+                            },
+                            onToggleConversation: {
+                                viewModel.toggleConversationExpanded(cardID: card.id)
                             }
                         )
                     }

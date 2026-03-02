@@ -103,6 +103,18 @@ struct EventEnvelope: Codable, Sendable {
             if let name   = value.name   { p["name"]   = .string(name) }
             if let prompt = value.prompt { p["prompt"] = .string(prompt) }
             payload = p
+        case .agentConversation(let value):
+            type = "agent.conversation"
+            payload = [
+                "agentId": .string(value.agentId),
+                "messages": .array(value.messages.map { msg in
+                    .object([
+                        "id": .string(msg.id),
+                        "type": .string(msg.type),
+                        "text": .string(msg.text),
+                    ])
+                }),
+            ]
         case .bridgePairRequest(let value):
             type = "bridge.pair.request"
             var p: [String: JSONValue] = ["pairingCode": .string(value.pairingCode)]
@@ -205,6 +217,20 @@ struct EventEnvelope: Codable, Sendable {
                 name: payload["name"]?.stringValue,
                 prompt: payload["prompt"]?.stringValue
             ))
+        case "agent.conversation":
+            let agentId = try requireString("agentId")
+            var messages: [Event.AgentConversationMessage] = []
+            if case .array(let arr) = payload["messages"] {
+                for item in arr {
+                    if case .object(let obj) = item,
+                       let msgId = obj["id"]?.stringValue,
+                       let msgType = obj["type"]?.stringValue,
+                       let msgText = obj["text"]?.stringValue {
+                        messages.append(Event.AgentConversationMessage(id: msgId, type: msgType, text: msgText))
+                    }
+                }
+            }
+            kind = .agentConversation(Event.AgentConversation(agentId: agentId, messages: messages))
         case "bridge.pair.request":
             kind = .bridgePairRequest(Event.BridgePairRequest(
                 pairingCode: try requireString("pairingCode"),

@@ -50,6 +50,7 @@ export interface CursorAgentRunRecord {
   branchName?: string;
   summary?: string;
   spawnCallId?: string;
+  lastSeenConversationMessageId?: string;
 }
 
 export interface PendingCursorWebhookRecord {
