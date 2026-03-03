@@ -18,7 +18,10 @@ export function chunkText(text: string, minChunk = 30, maxChunk = 80): string[] 
       }
     }
 
-    chunks.push(text.slice(cursor, end).trimStart());
+    const chunk = text.slice(cursor, end);
+    if (chunk.length > 0) {
+      chunks.push(chunk);
+    }
     cursor = end;
   }
 

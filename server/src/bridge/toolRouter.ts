@@ -572,15 +572,11 @@ export class BridgeToolRouter {
   }
 
   private emitAssistantProgress(sessionId: string, text: string, isPartial: boolean): void {
-    this.emitToIOS(makeEvent("tool.call", sessionId, {
-      callId: `bridge-note-${crypto.randomUUID()}`,
-      name: "convo.appendMessage",
-      arguments: JSON.stringify({
-        role: "assistant",
-        text,
-        isPartial,
-      }),
-    }));
+    this.emitToIOS(makeEvent(
+      isPartial ? "assistant.speech.partial" : "assistant.speech.final",
+      sessionId,
+      { text },
+    ));
   }
 }
 
