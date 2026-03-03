@@ -18,7 +18,7 @@ test("pairing requests expire after TTL", () => {
     deviceId: "device-1",
     deviceName: "Dev Mac",
     workspaceRoot: "/tmp/ws",
-    capabilities: { execRun: true, readFile: true },
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
   });
 
   assert.equal(registration.device, undefined);
@@ -37,7 +37,7 @@ test("register binds device to requesting session", () => {
     deviceId: "device-ci",
     deviceName: "CI Runner",
     workspaceRoot: "/workspace",
-    capabilities: { execRun: true, readFile: true },
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
   });
 
   assert.ok(registration.device);

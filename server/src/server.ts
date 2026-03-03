@@ -78,6 +78,12 @@ const conductor = new ConductorService(
       webhookSecret: CURSOR_WEBHOOK_SECRET,
     }),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
+    bridgeToolAvailability: (sessionId, toolName) => {
+      const devices = bridgeState
+        .getSessionDevices(sessionId)
+        .filter((device) => device.status === "online");
+      return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
+    },
   },
 );
 
@@ -550,6 +556,7 @@ function readCapabilities(value: unknown): BridgeCapabilities | undefined {
   if (typeof execRun !== "boolean" || typeof readFile !== "boolean") {
     return undefined;
   }
+  const claudeRun = typeof raw.claudeRun === "boolean" ? raw.claudeRun : false;
 
   return {
     execRun,
@@ -566,6 +573,7 @@ function readCapabilities(value: unknown): BridgeCapabilities | undefined {
     gitStage: optionalBoolean(raw.gitStage),
     gitCommit: optionalBoolean(raw.gitCommit),
     gitPush: optionalBoolean(raw.gitPush),
+    claudeRun,
   };
 }
 
@@ -591,4 +599,17 @@ function readStringArray(payload: Record<string, unknown>, key: string): string[
 
 function optionalBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function bridgeDeviceSupportsTool(capabilities: BridgeCapabilities, toolName: string): boolean {
+  switch (toolName) {
+    case "bridge.exec.run":
+      return capabilities.execRun;
+    case "bridge.fs.readFile":
+      return capabilities.readFile;
+    case "bridge.claude.run":
+      return capabilities.claudeRun ?? false;
+    default:
+      return false;
+  }
 }

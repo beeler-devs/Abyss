@@ -15,6 +15,14 @@ function contextPrefix(context) {
         parts.push(`agent=${context.agentId}`);
     if (context.status)
         parts.push(`status=${context.status}`);
+    if (context.deviceId)
+        parts.push(`device=${context.deviceId}`);
+    if (context.pairingCode)
+        parts.push(`pairing=${context.pairingCode}`);
+    if (context.kind)
+        parts.push(`kind=${context.kind}`);
+    if (context.deviceName)
+        parts.push(`deviceName=${context.deviceName}`);
     return parts.length ? `[${parts.join(" ")}] ` : "";
 }
 export const logger = {
