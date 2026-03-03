@@ -22,6 +22,7 @@ export interface BridgeRegisterPayload {
   capabilities: {
     execRun: boolean;
     readFile: boolean;
+    claudeRun?: boolean;
   };
   protocolVersion: number;
 }
@@ -46,4 +47,17 @@ export interface BridgeReadFileArgs {
 
 export interface BridgeReadFileResult {
   content: string;
+}
+
+export interface BridgeClaudeRunArgs {
+  deviceId?: string;
+  prompt: string;
+  cwd?: string;
+  timeoutSec?: number;
+  allowedTools?: string;
+}
+
+export interface BridgeClaudeRunResult {
+  result: string;
+  sessionId?: string;
 }

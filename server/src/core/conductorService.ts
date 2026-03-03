@@ -34,6 +34,7 @@ export interface ConductorServiceDependencies {
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
+  bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
 }
 
 export interface CursorWebhookHandleResult {
@@ -245,7 +246,7 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
         deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
         command: { type: "string", description: "Shell command to execute (example: npm test)." },
         cwd: { type: "string", description: "Optional relative directory under workspace root." },
-        timeoutSec: { type: "number", description: "Optional command timeout in seconds (max 600)." },
+        timeoutSec: { type: "integer", description: "Optional command timeout in seconds (max 600)." },
       },
       required: ["command"],
     },
@@ -261,6 +262,22 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
         path: { type: "string", description: "Relative file path under workspace root." },
       },
       required: ["path"],
+    },
+  },
+  {
+    name: "bridge.claude.run",
+    description:
+      "Run Claude Code on a paired Mac to execute an AI-assisted task (e.g. fix a bug, analyze code). Requires a bridge device with claudeRun capability. For simple shell commands use bridge.exec.run instead.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        prompt: { type: "string", description: "The task prompt for Claude Code (e.g. 'fix the failing test in src/auth.ts')." },
+        cwd: { type: "string", description: "Optional relative directory under workspace root." },
+        timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 120, max 600)." },
+        allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit)." },
+      },
+      required: ["prompt"],
     },
   },
 ];
@@ -313,6 +330,7 @@ export class ConductorService {
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
+  private readonly bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
@@ -321,6 +339,7 @@ export class ConductorService {
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
+    this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
   }
 
   createRateLimiter() {
@@ -505,14 +524,17 @@ export class ConductorService {
     }
   }
 
-  private availableTools(): ToolDefinition[] {
+  private availableTools(sessionId: string): ToolDefinition[] {
     const tools: ToolDefinition[] = [...LEGACY_CLIENT_TOOLS];
 
     if (this.cursorClient.isConfigured()) {
       tools.push(...SERVER_CURSOR_TOOLS);
     }
     if (this.bridgeToolExecutor) {
-      tools.push(...SERVER_BRIDGE_TOOLS);
+      const bridgeTools = this.bridgeToolAvailability
+        ? SERVER_BRIDGE_TOOLS.filter((tool) => this.bridgeToolAvailability!(sessionId, tool.name))
+        : SERVER_BRIDGE_TOOLS;
+      tools.push(...bridgeTools);
     }
 
     return tools;
@@ -596,7 +618,7 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(session.history, this.availableTools());
+          modelResponse = await this.provider.generateResponse(session.history, this.availableTools(session.sessionId));
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {
@@ -996,6 +1018,22 @@ export class ConductorService {
             toolName,
             args,
             timeoutMs,
+          }, emit);
+        }
+
+        case "bridge.claude.run": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+
+          const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
+          const claudeTimeoutMs = Math.max(1, Math.min(600, Math.trunc(claudeTimeoutRaw ?? 120))) * 1_000;
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: claudeTimeoutMs,
           }, emit);
         }
 

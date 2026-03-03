@@ -18,7 +18,7 @@ test("pairing requests expire after TTL", () => {
     deviceId: "device-1",
     deviceName: "Dev Mac",
     workspaceRoot: "/tmp/ws",
-    capabilities: { execRun: true, readFile: true },
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
   });
 
   assert.equal(registration.device, undefined);
@@ -37,7 +37,7 @@ test("register binds device to requesting session", () => {
     deviceId: "device-ci",
     deviceName: "CI Runner",
     workspaceRoot: "/workspace",
-    capabilities: { execRun: true, readFile: true },
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
   });
 
   assert.ok(registration.device);
@@ -53,4 +53,19 @@ test("register binds device to requesting session", () => {
 
   const resolve = store.resolveDeviceForTool("session-2");
   assert.equal(resolve.error, "bridge_not_paired");
+});
+
+test("claude tool resolves only to claude-capable bridges", () => {
+  const store = new BridgeStateStore();
+  store.createPairingRequest("session-3", "NOCLD1", "No Claude");
+  store.registerBridge({
+    pairingCode: "NOCLD1",
+    deviceId: "device-no-claude",
+    deviceName: "No Claude",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: false },
+  });
+
+  const resolve = store.resolveDeviceForTool("session-3", undefined, "bridge.claude.run");
+  assert.equal(resolve.error, "bridge_tool_not_supported");
 });

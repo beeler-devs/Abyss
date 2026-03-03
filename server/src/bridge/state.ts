@@ -3,6 +3,7 @@ export type BridgeDeviceStatus = "online" | "offline";
 export interface BridgeCapabilities {
   execRun: boolean;
   readFile: boolean;
+  claudeRun: boolean;
 }
 
 export interface PairingRequest {
@@ -170,9 +171,10 @@ export class BridgeStateStore {
       .sort((left, right) => left.deviceName.localeCompare(right.deviceName));
   }
 
-  resolveDeviceForTool(sessionId: string, requestedDeviceId?: string): ResolveDeviceResult {
+  resolveDeviceForTool(sessionId: string, requestedDeviceId?: string, toolName?: string): ResolveDeviceResult {
     const devices = this.getSessionDevices(sessionId);
     const onlineDevices = devices.filter((device) => device.status === "online");
+    const capableDevices = onlineDevices.filter((device) => supportsTool(device.capabilities, toolName));
 
     if (requestedDeviceId) {
       const requested = devices.find((device) => device.deviceId === requestedDeviceId);
@@ -182,6 +184,9 @@ export class BridgeStateStore {
       if (requested.status !== "online") {
         return { error: "bridge_device_offline" };
       }
+      if (!supportsTool(requested.capabilities, toolName)) {
+        return { error: "bridge_tool_not_supported_on_device" };
+      }
       return { device: requested };
     }
 
@@ -189,13 +194,17 @@ export class BridgeStateStore {
       return { error: "bridge_not_paired" };
     }
 
-    if (onlineDevices.length === 1) {
-      return { device: onlineDevices[0] };
+    if (capableDevices.length === 0) {
+      return { error: "bridge_tool_not_supported" };
+    }
+
+    if (capableDevices.length === 1) {
+      return { device: capableDevices[0] };
     }
 
     return {
       error: "bridge_device_selection_required",
-      selectionRequired: onlineDevices.map((device) => ({
+      selectionRequired: capableDevices.map((device) => ({
         deviceId: device.deviceId,
         deviceName: device.deviceName,
         status: device.status,
@@ -221,4 +230,21 @@ export class BridgeStateStore {
 
 function normalizePairingCode(code: string): string {
   return code.trim().toUpperCase();
+}
+
+function supportsTool(capabilities: BridgeCapabilities, toolName?: string): boolean {
+  if (!toolName) {
+    return true;
+  }
+
+  switch (toolName) {
+    case "bridge.exec.run":
+      return capabilities.execRun;
+    case "bridge.fs.readFile":
+      return capabilities.readFile;
+    case "bridge.claude.run":
+      return capabilities.claudeRun;
+    default:
+      return true;
+  }
 }

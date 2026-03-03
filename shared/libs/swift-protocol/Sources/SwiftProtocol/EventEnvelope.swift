@@ -124,10 +124,12 @@ public struct BridgeRegisterPayload: Codable, Sendable {
 public struct BridgeCapabilities: Codable, Sendable {
     public let execRun: Bool
     public let readFile: Bool
+    public let claudeRun: Bool
 
-    public init(execRun: Bool = true, readFile: Bool = true) {
+    public init(execRun: Bool = true, readFile: Bool = true, claudeRun: Bool = true) {
         self.execRun = execRun
         self.readFile = readFile
+        self.claudeRun = claudeRun
     }
 }
 
@@ -196,5 +198,31 @@ public struct BridgeReadFileResult: Codable, Sendable {
 
     public init(content: String) {
         self.content = content
+    }
+}
+
+public struct BridgeClaudeRunArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let prompt: String
+    public let cwd: String?
+    public let timeoutSec: Int?
+    public let allowedTools: String?
+
+    public init(deviceId: String? = nil, prompt: String, cwd: String? = nil, timeoutSec: Int? = nil, allowedTools: String? = nil) {
+        self.deviceId = deviceId
+        self.prompt = prompt
+        self.cwd = cwd
+        self.timeoutSec = timeoutSec
+        self.allowedTools = allowedTools
+    }
+}
+
+public struct BridgeClaudeRunResult: Codable, Sendable {
+    public let result: String
+    public let sessionId: String?
+
+    public init(result: String, sessionId: String? = nil) {
+        self.result = result
+        self.sessionId = sessionId
     }
 }

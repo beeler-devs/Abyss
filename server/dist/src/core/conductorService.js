@@ -1,8 +1,10 @@
 import crypto from "node:crypto";
-import { asString, makeEvent } from "./events.js";
+import { CursorClient } from "../integrations/cursorClient.js";
+import { isTerminalAgentStatus, normalizeMode, normalizeStatus, parseCursorAgentSnapshotFromResult, parseCursorWebhookPayload, } from "../integrations/cursorPayload.js";
+import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
-const AGENT_TOOLS = [
+const LEGACY_CLIENT_TOOLS = [
     {
         name: "agent.spawn",
         description: "Launch a new Cursor Cloud Agent to work on a repository. Use for coding tasks, PR creation, analysis. Requires a prompt and either repository (format: owner/repo) or prUrl.",
@@ -100,6 +102,138 @@ const AGENT_TOOLS = [
         },
     },
 ];
+const SERVER_CURSOR_TOOLS = [
+    {
+        name: "cursor.agent.spawn",
+        description: "Spawn a Cursor Cloud Agent from the server with webhook tracking enabled. Prefer this over agent.spawn when available.",
+        input_schema: {
+            type: "object",
+            properties: {
+                prompt: { type: "string" },
+                repoUrl: { type: "string" },
+                ref: { type: "string" },
+                metadata: { type: "object" },
+                mode: { type: "string", description: "code | computer_use | webqa" },
+            },
+            required: ["prompt"],
+        },
+    },
+    {
+        name: "cursor.agent.status",
+        description: "Query status for a server-tracked Cursor Cloud Agent.",
+        input_schema: {
+            type: "object",
+            properties: {
+                agentId: { type: "string" },
+            },
+            required: ["agentId"],
+        },
+    },
+    {
+        name: "cursor.agent.followup",
+        description: "Send follow-up instructions to a server-tracked Cursor Cloud Agent.",
+        input_schema: {
+            type: "object",
+            properties: {
+                agentId: { type: "string" },
+                message: { type: "string" },
+            },
+            required: ["agentId", "message"],
+        },
+    },
+    {
+        name: "cursor.agent.cancel",
+        description: "Cancel a server-tracked Cursor Cloud Agent.",
+        input_schema: {
+            type: "object",
+            properties: {
+                agentId: { type: "string" },
+            },
+            required: ["agentId"],
+        },
+    },
+    {
+        name: "webqa.cursor.run",
+        description: "Run browser validation/computer-use QA in Cursor. Use this when the user asks to validate behavior in a browser.",
+        input_schema: {
+            type: "object",
+            properties: {
+                url: { type: "string" },
+                flowSpec: { type: "object" },
+                assertions: { type: "object" },
+                budget: { type: "object" },
+            },
+            required: ["url", "flowSpec"],
+        },
+    },
+    {
+        name: "webqa.cursor.status",
+        description: "Check status of a Cursor-based WebQA run.",
+        input_schema: {
+            type: "object",
+            properties: {
+                agentId: { type: "string" },
+            },
+            required: ["agentId"],
+        },
+    },
+    {
+        name: "webqa.cursor.followup",
+        description: "Send follow-up instructions to a Cursor WebQA run.",
+        input_schema: {
+            type: "object",
+            properties: {
+                agentId: { type: "string" },
+                instruction: { type: "string" },
+            },
+            required: ["agentId", "instruction"],
+        },
+    },
+];
+const SERVER_BRIDGE_TOOLS = [
+    {
+        name: "bridge.exec.run",
+        description: "Run a shell command on a paired Abyss Bridge Mac device. Use for local tests/build checks.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+                command: { type: "string", description: "Shell command to execute (example: npm test)." },
+                cwd: { type: "string", description: "Optional relative directory under workspace root." },
+                timeoutSec: { type: "integer", description: "Optional command timeout in seconds (max 600)." },
+            },
+            required: ["command"],
+        },
+    },
+    {
+        name: "bridge.fs.readFile",
+        description: "Read a UTF-8 text file from a paired Abyss Bridge Mac device workspace.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+                path: { type: "string", description: "Relative file path under workspace root." },
+            },
+            required: ["path"],
+        },
+    },
+    {
+        name: "bridge.claude.run",
+        description: "Run Claude Code on a paired Mac to execute an AI-assisted task (e.g. fix a bug, analyze code). Requires a bridge device with claudeRun capability. For simple shell commands use bridge.exec.run instead.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+                prompt: { type: "string", description: "The task prompt for Claude Code (e.g. 'fix the failing test in src/auth.ts')." },
+                cwd: { type: "string", description: "Optional relative directory under workspace root." },
+                timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 120, max 600)." },
+                allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit)." },
+            },
+            required: ["prompt"],
+        },
+    },
+];
+const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 function waitForToolResult(session, callId, timeoutMs) {
     return new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -113,15 +247,89 @@ function waitForToolResult(session, callId, timeoutMs) {
         });
     });
 }
+function asRecord(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return undefined;
+    }
+    return value;
+}
+function stringFromRecord(record, ...keys) {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === "string") {
+            const trimmed = value.trim();
+            if (trimmed.length) {
+                return trimmed;
+            }
+        }
+    }
+    return undefined;
+}
 export class ConductorService {
     provider;
     sessions;
-    constructor(provider, config) {
+    cursorClient;
+    webhookPendingTtlMs;
+    now;
+    bridgeToolExecutor;
+    bridgeToolAvailability;
+    constructor(provider, config, dependencies = {}) {
         this.provider = provider;
         this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute);
+        this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
+        this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
+        this.now = dependencies.now ?? (() => new Date());
+        this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
+        this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
     }
     createRateLimiter() {
         return this.sessions.createRateLimiter();
+    }
+    isCursorServerConfigured() {
+        return this.cursorClient.isConfigured();
+    }
+    getCursorRun(agentId) {
+        return this.sessions.getCursorRun(agentId);
+    }
+    getAgentIdForSpawnCall(spawnCallId) {
+        return this.sessions.getAgentIdForSpawnCall(spawnCallId);
+    }
+    async handleCursorWebhook(payload, emit) {
+        const parsed = parseCursorWebhookPayload(payload);
+        if (!parsed) {
+            return {
+                statusCode: 400,
+                payload: {
+                    error: "invalid_cursor_webhook_payload",
+                    message: "Missing agentId or unsupported payload shape.",
+                },
+            };
+        }
+        const run = this.sessions.getCursorRun(parsed.agent.agentId);
+        if (!run) {
+            this.sessions.storePendingWebhook(parsed.agent.agentId, payload, this.webhookPendingTtlMs, this.now().getTime());
+            logger.warn("cursor webhook agent not yet mapped; queued for retry", {
+                agentId: parsed.agent.agentId,
+                trace: parsed.eventType,
+            });
+            return {
+                statusCode: 202,
+                payload: {
+                    accepted: true,
+                    queued: true,
+                    agentId: parsed.agent.agentId,
+                },
+            };
+        }
+        await this.routeWebhookToSession(run.sessionId, parsed, emit);
+        return {
+            statusCode: 200,
+            payload: {
+                ok: true,
+                sessionId: run.sessionId,
+                agentId: parsed.agent.agentId,
+            },
+        };
     }
     async handleEvent(event, emit) {
         const session = this.sessions.getOrCreate(event.sessionId);
@@ -159,6 +367,9 @@ export class ConductorService {
                         callId,
                         trace: pending?.toolName,
                     });
+                    if (!errorText) {
+                        await this.trackSpawnResultIfPresent(session, callId, pending?.toolName, pending?.toolArguments, resultPayload, emit);
+                    }
                     const resolver = session.toolResultResolvers.get(callId);
                     if (resolver) {
                         resolver(resultPayload ?? null, errorText ?? null);
@@ -187,8 +398,8 @@ export class ConductorService {
                     `[Agent Update] Cursor agent ${agentRef} just ${outcome}.`,
                     taskDesc,
                     summaryDesc,
-                    `Tell the user what the agent accomplished (or what went wrong if it failed),`,
-                    `in a concise, natural sentence or two. Do not repeat the raw summary verbatim.`,
+                    "Tell the user what the agent accomplished (or what went wrong if it failed),",
+                    "in a concise, natural sentence or two. Do not repeat the raw summary verbatim.",
                 ].join(" ").trim();
                 logger.info("agent.completed received", {
                     sessionId: session.sessionId,
@@ -209,6 +420,29 @@ export class ConductorService {
                 return;
         }
     }
+    availableTools(sessionId) {
+        const tools = [...LEGACY_CLIENT_TOOLS];
+        if (this.cursorClient.isConfigured()) {
+            tools.push(...SERVER_CURSOR_TOOLS);
+        }
+        if (this.bridgeToolExecutor) {
+            const bridgeTools = this.bridgeToolAvailability
+                ? SERVER_BRIDGE_TOOLS.filter((tool) => this.bridgeToolAvailability(sessionId, tool.name))
+                : SERVER_BRIDGE_TOOLS;
+            tools.push(...bridgeTools);
+        }
+        return tools;
+    }
+    shouldExecuteServerTool(toolName) {
+        if (toolName.startsWith("bridge.")) {
+            return Boolean(this.bridgeToolExecutor);
+        }
+        if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
+            return true;
+        }
+        return this.cursorClient.isConfigured()
+            && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
+    }
     async runConductorLoop(session, transcript, emit, sourceEventId, options = {}) {
         session.transcriptCount += 1;
         session.recentTranscriptTrace = [];
@@ -227,6 +461,7 @@ export class ConductorService {
                 callId,
                 toolName,
                 emittedAt: envelope.timestamp,
+                toolArguments: args,
             });
             emit(envelope);
             tracePush(`tool.call:${toolName}`);
@@ -246,24 +481,34 @@ export class ConductorService {
         const MAX_TOOL_ROUNDS = 8;
         let toolRound = 0;
         let emittedFinalResponse = false;
+        const deterministicBridgeToolCall = this.routeDeterministicBridgeIntent(transcript);
         while (toolRound < MAX_TOOL_ROUNDS) {
             toolRound += 1;
             let modelResponse;
-            try {
-                modelResponse = await this.provider.generateResponse(session.history, AGENT_TOOLS);
+            if (toolRound === 1 && deterministicBridgeToolCall) {
+                modelResponse = {
+                    fullText: "",
+                    chunks: (async function* stream() { })(),
+                    toolCalls: [deterministicBridgeToolCall],
+                };
             }
-            catch (error) {
-                const message = error instanceof Error ? error.message : "Unknown model provider error";
-                emit(makeEvent("error", session.sessionId, {
-                    code: "model_provider_failed",
-                    message,
-                }));
-                emitToolCall("convo.setState", { state: "idle" });
-                logger.error(`model provider failed: ${message}`, {
-                    sessionId: session.sessionId,
-                    eventId: sourceEventId,
-                });
-                return;
+            else {
+                try {
+                    modelResponse = await this.provider.generateResponse(session.history, this.availableTools(session.sessionId));
+                }
+                catch (error) {
+                    const message = error instanceof Error ? error.message : "Unknown model provider error";
+                    emit(makeEvent("error", session.sessionId, {
+                        code: "model_provider_failed",
+                        message,
+                    }));
+                    emitToolCall("convo.setState", { state: "idle" });
+                    logger.error(`model provider failed: ${message}`, {
+                        sessionId: session.sessionId,
+                        eventId: sourceEventId,
+                    });
+                    return;
+                }
             }
             if (modelResponse.toolCalls && modelResponse.toolCalls.length > 0) {
                 this.sessions.appendTurn(session, {
@@ -272,6 +517,17 @@ export class ConductorService {
                 });
                 for (const toolCall of modelResponse.toolCalls) {
                     const callId = crypto.randomUUID();
+                    if (this.shouldExecuteServerTool(toolCall.name)) {
+                        tracePush(`tool.server:${toolCall.name}`);
+                        const execution = await this.executeServerTool(session, callId, toolCall.name, toolCall.input, emit);
+                        this.sessions.appendTurn(session, {
+                            role: "tool",
+                            content: execution.error ? `Error: ${execution.error}` : execution.result ?? "{}",
+                            tool_use_id: toolCall.id,
+                            tool_name: toolCall.name,
+                        });
+                        continue;
+                    }
                     const envelope = makeEvent("tool.call", session.sessionId, {
                         callId,
                         name: toolCall.name,
@@ -281,6 +537,7 @@ export class ConductorService {
                         callId,
                         toolName: toolCall.name,
                         emittedAt: envelope.timestamp,
+                        toolArguments: toolCall.input,
                     });
                     emit(envelope);
                     tracePush(`tool.call:${toolCall.name}`);
@@ -337,4 +594,406 @@ export class ConductorService {
             : `transcript.final trace #${session.transcriptCount}`;
         logger.info(`${traceLabel}: ${session.recentTranscriptTrace.join(" -> ")}`, { sessionId: session.sessionId, eventId: sourceEventId });
     }
+    routeDeterministicBridgeIntent(transcript) {
+        if (!this.bridgeToolExecutor) {
+            return undefined;
+        }
+        const normalized = transcript.trim();
+        if (!normalized) {
+            return undefined;
+        }
+        const lower = normalized.toLowerCase();
+        if (lower === "run tests" || lower === "run unit tests") {
+            return {
+                id: crypto.randomUUID(),
+                name: "bridge.exec.run",
+                input: { command: "npm test" },
+            };
+        }
+        const runMatch = normalized.match(/^run\s+(.+)$/i);
+        if (runMatch) {
+            const command = runMatch[1]?.trim();
+            if (command) {
+                return {
+                    id: crypto.randomUUID(),
+                    name: "bridge.exec.run",
+                    input: { command },
+                };
+            }
+        }
+        const readMatch = normalized.match(/^(read file|open file)\s+(.+)$/i);
+        if (readMatch) {
+            const path = readMatch[2]?.trim();
+            if (path) {
+                return {
+                    id: crypto.randomUUID(),
+                    name: "bridge.fs.readFile",
+                    input: { path },
+                };
+            }
+        }
+        return undefined;
+    }
+    async executeServerTool(session, callId, toolName, args, emit) {
+        if (!this.cursorClient.isConfigured()) {
+            if (toolName.startsWith("cursor.") || toolName.startsWith("webqa.") || toolName === "repositories.list") {
+                return {
+                    result: null,
+                    error: "cursor_server_not_configured: CURSOR_API_KEY is not configured. Fall back to legacy agent.* tools.",
+                };
+            }
+        }
+        try {
+            switch (toolName) {
+                case "cursor.agent.spawn": {
+                    const prompt = stringFromRecord(args, "prompt");
+                    if (!prompt) {
+                        return { result: null, error: "cursor_invalid_prompt" };
+                    }
+                    const metadata = asRecord(args.metadata) ?? {};
+                    const mode = normalizeMode(stringFromRecord(args, "mode") ?? stringFromRecord(metadata, "mode")) ?? "code";
+                    const repoUrl = stringFromRecord(args, "repoUrl", "repository");
+                    const ref = stringFromRecord(args, "ref");
+                    const spawned = await this.cursorClient.spawnAgent({
+                        prompt,
+                        repoUrl,
+                        ref,
+                        metadata,
+                        mode,
+                    });
+                    await this.recordSpawn(session.sessionId, callId, mode, {
+                        agentId: spawned.agentId,
+                        status: spawned.status,
+                        runUrl: spawned.runUrl,
+                        prUrl: spawned.prUrl,
+                        branchName: spawned.branchName,
+                        summary: spawned.summary,
+                    }, emit);
+                    return {
+                        result: stableJSONStringify({
+                            agentId: spawned.agentId,
+                            id: spawned.agentId,
+                            status: spawned.status ?? "CREATING",
+                            runUrl: spawned.runUrl,
+                            url: spawned.runUrl,
+                            prUrl: spawned.prUrl,
+                            branchName: spawned.branchName,
+                        }),
+                        error: null,
+                    };
+                }
+                case "cursor.agent.status": {
+                    const agentId = stringFromRecord(args, "agentId", "id");
+                    if (!agentId) {
+                        return { result: null, error: "cursor_missing_agent_id" };
+                    }
+                    const statusResult = await this.cursorClient.status(agentId);
+                    const existing = this.sessions.getCursorRun(agentId);
+                    const mode = existing?.mode ?? "code";
+                    this.sessions.upsertCursorRun({
+                        agentId,
+                        sessionId: existing?.sessionId ?? session.sessionId,
+                        createdAt: existing?.createdAt ?? this.now().toISOString(),
+                        mode,
+                        status: statusResult.status,
+                        runUrl: statusResult.runUrl,
+                        prUrl: statusResult.prUrl,
+                        branchName: statusResult.branchName,
+                        summary: statusResult.summary,
+                        spawnCallId: existing?.spawnCallId,
+                    });
+                    return {
+                        result: stableJSONStringify({
+                            agentId,
+                            status: statusResult.status,
+                            runUrl: statusResult.runUrl,
+                            prUrl: statusResult.prUrl,
+                            summary: statusResult.summary,
+                        }),
+                        error: null,
+                    };
+                }
+                case "cursor.agent.followup": {
+                    const agentId = stringFromRecord(args, "agentId", "id");
+                    const message = stringFromRecord(args, "message", "prompt");
+                    if (!agentId || !message) {
+                        return { result: null, error: "cursor_followup_requires_agentId_and_message" };
+                    }
+                    await this.cursorClient.followup(agentId, message);
+                    return { result: stableJSONStringify({ ok: true }), error: null };
+                }
+                case "cursor.agent.cancel": {
+                    const agentId = stringFromRecord(args, "agentId", "id");
+                    if (!agentId) {
+                        return { result: null, error: "cursor_missing_agent_id" };
+                    }
+                    await this.cursorClient.cancel(agentId);
+                    return { result: stableJSONStringify({ ok: true }), error: null };
+                }
+                case "webqa.cursor.run": {
+                    const url = stringFromRecord(args, "url");
+                    if (!url) {
+                        return { result: null, error: "webqa_missing_url" };
+                    }
+                    const flowSpec = args.flowSpec ?? {};
+                    const assertions = args.assertions;
+                    const budget = args.budget;
+                    const prompt = this.buildWebQAPrompt(url, flowSpec, assertions, budget);
+                    const spawned = await this.cursorClient.spawnAgent({
+                        prompt,
+                        metadata: {
+                            mode: "webqa",
+                            provider: "cursor",
+                            url,
+                            flowSpec,
+                            assertions: assertions ?? null,
+                            budget: budget ?? null,
+                        },
+                        mode: "computer_use",
+                    });
+                    await this.recordSpawn(session.sessionId, callId, "webqa", {
+                        agentId: spawned.agentId,
+                        status: spawned.status,
+                        runUrl: spawned.runUrl,
+                        prUrl: spawned.prUrl,
+                        branchName: spawned.branchName,
+                        summary: spawned.summary,
+                    }, emit);
+                    return {
+                        result: stableJSONStringify({
+                            agentId: spawned.agentId,
+                            runUrl: spawned.runUrl,
+                            status: spawned.status,
+                        }),
+                        error: null,
+                    };
+                }
+                case "webqa.cursor.status": {
+                    const agentId = stringFromRecord(args, "agentId", "id");
+                    if (!agentId) {
+                        return { result: null, error: "cursor_missing_agent_id" };
+                    }
+                    const statusResult = await this.cursorClient.status(agentId);
+                    return {
+                        result: stableJSONStringify({
+                            agentId,
+                            status: statusResult.status,
+                            runUrl: statusResult.runUrl,
+                            prUrl: statusResult.prUrl,
+                            summary: statusResult.summary,
+                        }),
+                        error: null,
+                    };
+                }
+                case "webqa.cursor.followup": {
+                    const agentId = stringFromRecord(args, "agentId", "id");
+                    const instruction = stringFromRecord(args, "instruction", "message");
+                    if (!agentId || !instruction) {
+                        return { result: null, error: "webqa_followup_requires_agentId_and_instruction" };
+                    }
+                    await this.cursorClient.followup(agentId, instruction);
+                    return { result: stableJSONStringify({ ok: true }), error: null };
+                }
+                case "repositories.list": {
+                    const repositories = await this.cursorClient.repositories();
+                    return {
+                        result: stableJSONStringify({
+                            repositories,
+                            count: repositories.length,
+                        }),
+                        error: null,
+                    };
+                }
+                case "bridge.exec.run":
+                case "bridge.fs.readFile": {
+                    if (!this.bridgeToolExecutor) {
+                        return { result: null, error: "bridge_not_configured" };
+                    }
+                    const timeoutSecRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
+                    const timeoutMs = Math.max(1, Math.min(600, Math.trunc(timeoutSecRaw ?? 60))) * 1_000;
+                    return await this.bridgeToolExecutor({
+                        callId,
+                        sessionId: session.sessionId,
+                        toolName,
+                        args,
+                        timeoutMs,
+                    }, emit);
+                }
+                case "bridge.claude.run": {
+                    if (!this.bridgeToolExecutor) {
+                        return { result: null, error: "bridge_not_configured" };
+                    }
+                    const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
+                    const claudeTimeoutMs = Math.max(1, Math.min(600, Math.trunc(claudeTimeoutRaw ?? 120))) * 1_000;
+                    return await this.bridgeToolExecutor({
+                        callId,
+                        sessionId: session.sessionId,
+                        toolName,
+                        args,
+                        timeoutMs: claudeTimeoutMs,
+                    }, emit);
+                }
+                default:
+                    return { result: null, error: `unsupported_server_tool:${toolName}` };
+            }
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : "unknown_server_tool_error";
+            logger.warn(`server tool execution failed: ${toolName}: ${message}`, {
+                sessionId: session.sessionId,
+                callId,
+            });
+            return { result: null, error: message };
+        }
+    }
+    buildWebQAPrompt(url, flowSpec, assertions, budget) {
+        return [
+            "You are executing a deterministic browser QA run.",
+            `TARGET_URL: ${url}`,
+            "FLOW_SPEC_JSON:",
+            stableJSONStringify(flowSpec ?? {}),
+            "ASSERTIONS_JSON:",
+            stableJSONStringify(assertions ?? {}),
+            "BUDGET_JSON:",
+            stableJSONStringify(budget ?? {}),
+            "Instructions:",
+            "1) Open TARGET_URL in the browser.",
+            "2) Execute flow steps exactly in order from FLOW_SPEC_JSON.",
+            "3) Capture available artifacts (screenshots, video, logs).",
+            "4) Summarize pass/fail for each assertion.",
+            "5) Include console/network errors if observed.",
+        ].join("\n");
+    }
+    async trackSpawnResultIfPresent(session, spawnCallId, toolName, toolArguments, resultPayload, emit) {
+        if (!toolName || !resultPayload) {
+            return;
+        }
+        const isSpawnTool = toolName === "agent.spawn"
+            || toolName === "cursor.agent.spawn"
+            || toolName === "webqa.cursor.run";
+        if (!isSpawnTool) {
+            return;
+        }
+        const snapshot = parseCursorAgentSnapshotFromResult(resultPayload);
+        if (!snapshot) {
+            return;
+        }
+        const modeFromArgs = normalizeMode(stringFromRecord(toolArguments ?? {}, "mode"));
+        const mode = modeFromArgs
+            ?? snapshot.mode
+            ?? (toolName === "webqa.cursor.run" ? "webqa" : "code");
+        await this.recordSpawn(session.sessionId, spawnCallId, mode, {
+            agentId: snapshot.agentId,
+            status: snapshot.status,
+            runUrl: snapshot.runUrl,
+            prUrl: snapshot.prUrl,
+            branchName: snapshot.branchName,
+            summary: snapshot.summary,
+        }, emit);
+    }
+    async recordSpawn(sessionId, spawnCallId, mode, details, emit) {
+        const run = this.sessions.upsertCursorRun({
+            agentId: details.agentId,
+            sessionId,
+            createdAt: this.now().toISOString(),
+            mode,
+            status: details.status,
+            runUrl: details.runUrl,
+            prUrl: details.prUrl,
+            branchName: details.branchName,
+            summary: details.summary,
+            spawnCallId,
+        });
+        this.sessions.setSpawnCallAgent(spawnCallId, details.agentId);
+        this.emitAgentStatus(run, emit, {
+            eventSeed: `spawn:${spawnCallId}`,
+            webhookDriven: this.cursorClient.hasWebhookConfig(),
+        });
+        const pending = this.sessions.takePendingWebhook(run.agentId, this.now().getTime());
+        if (!pending) {
+            return;
+        }
+        const parsed = parseCursorWebhookPayload(pending.payload);
+        if (!parsed) {
+            return;
+        }
+        await this.routeWebhookToSession(sessionId, parsed, emit);
+    }
+    async routeWebhookToSession(sessionId, parsedWebhook, emit) {
+        const normalizedStatus = normalizeStatus(parsedWebhook.agent.status) ?? "UNKNOWN";
+        const existing = this.sessions.getCursorRun(parsedWebhook.agent.agentId);
+        const updatedRun = this.sessions.upsertCursorRun({
+            agentId: parsedWebhook.agent.agentId,
+            sessionId,
+            createdAt: this.now().toISOString(),
+            mode: parsedWebhook.agent.mode ?? existing?.mode ?? "code",
+            status: normalizedStatus,
+            runUrl: parsedWebhook.agent.runUrl,
+            prUrl: parsedWebhook.agent.prUrl,
+            branchName: parsedWebhook.agent.branchName,
+            summary: parsedWebhook.agent.summary,
+        });
+        this.emitAgentStatus(updatedRun, emit, {
+            eventSeed: `webhook:${parsedWebhook.eventType ?? "unknown"}:${parsedWebhook.occurredAt ?? "na"}:${normalizedStatus}`,
+            webhookDriven: true,
+            timestamp: parsedWebhook.occurredAt,
+        });
+        if (!isTerminalAgentStatus(normalizedStatus)) {
+            return;
+        }
+        const completedPayload = {
+            agentId: updatedRun.agentId,
+            status: normalizedStatus,
+            summary: updatedRun.summary ?? "",
+            runUrl: updatedRun.runUrl,
+            prUrl: updatedRun.prUrl,
+            branchName: updatedRun.branchName,
+        };
+        const completedTimestamp = parsedWebhook.occurredAt ?? this.now().toISOString();
+        const completedId = makeDeterministicEventId([
+            "agent.completed",
+            sessionId,
+            updatedRun.agentId,
+            normalizedStatus,
+            completedTimestamp,
+        ].join("|"));
+        await this.handleEvent(makeEvent("agent.completed", sessionId, completedPayload, completedId, completedTimestamp), emit);
+    }
+    emitAgentStatus(run, emit, options) {
+        const status = normalizeStatus(run.status) ?? "UNKNOWN";
+        const timestamp = options.timestamp ?? this.now().toISOString();
+        const eventId = makeDeterministicEventId([
+            "agent.status",
+            run.sessionId,
+            run.agentId,
+            status,
+            options.eventSeed,
+        ].join("|"));
+        emit(makeEvent("agent.status", run.sessionId, {
+            agentId: run.agentId,
+            status,
+            detail: run.summary ?? `Agent status updated: ${status}`,
+            summary: run.summary,
+            runUrl: run.runUrl,
+            prUrl: run.prUrl,
+            branchName: run.branchName,
+            webhookDriven: options.webhookDriven,
+        }, eventId, timestamp));
+    }
+}
+function stableJSONStringify(value) {
+    const serialized = JSON.stringify(sortJSONValue(value));
+    return serialized ?? "null";
+}
+function sortJSONValue(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => sortJSONValue(item));
+    }
+    if (!value || typeof value !== "object") {
+        return value;
+    }
+    const entries = Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, sortJSONValue(nested)]);
+    return Object.fromEntries(entries);
 }

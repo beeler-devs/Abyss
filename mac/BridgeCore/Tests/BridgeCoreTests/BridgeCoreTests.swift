@@ -25,7 +25,7 @@ func workspacePolicyRejectsTraversal() {
 func processExecutorTruncatesOutput() throws {
     let executor = ProcessExecutor()
     let result = try executor.run(
-        command: "python - <<'PY'\nprint('x' * 5000)\nPY",
+        command: "perl -e 'print \"x\" x 5000'",
         cwd: URL(fileURLWithPath: "/tmp"),
         timeoutSec: 5,
         outputLimitBytes: 512
@@ -48,4 +48,25 @@ func processExecutorTimesOut() throws {
     #expect(result.timedOut == true)
     #expect(result.exitCode == -1)
     #expect(result.stderr.contains("timed out"))
+}
+
+@Test("Claude JSON parser handles successful output")
+func parseClaudeJSONSuccess() {
+    let parsed = parseClaudeCLIResult(
+        from: "{\"type\":\"result\",\"result\":\"Applied fix\",\"session_id\":\"abc-123\",\"is_error\":false}"
+    )
+
+    #expect(parsed?.result == "Applied fix")
+    #expect(parsed?.sessionId == "abc-123")
+    #expect(parsed?.isError == false)
+}
+
+@Test("Claude JSON parser handles error output")
+func parseClaudeJSONError() {
+    let parsed = parseClaudeCLIResult(
+        from: "{\"type\":\"result\",\"result\":\"Not logged in\",\"session_id\":\"abc-123\",\"is_error\":true}"
+    )
+
+    #expect(parsed?.result == "Not logged in")
+    #expect(parsed?.isError == true)
 }
