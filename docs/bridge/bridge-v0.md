@@ -23,8 +23,9 @@ Bridge v0 enables an outbound macOS bridge process to execute local tools for an
 
 ## Included Tools
 
-- `bridge.exec.run`
-- `bridge.fs.readFile`
+- `bridge.exec.run` — deterministic shell commands
+- `bridge.fs.readFile` — read files from workspace
+- `bridge.claude.run` — AI-assisted tasks via Claude Code CLI
 
 ## Explicitly Out of Scope (v0)
 

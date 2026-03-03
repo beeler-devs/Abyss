@@ -38,7 +38,7 @@ export class BridgeToolRouter {
 
   async execute(request: BridgeToolRouteRequest): Promise<{ result: string | null; error: string | null }> {
     const requestedDeviceId = optionalString(request.args.deviceId);
-    const resolved = this.state.resolveDeviceForTool(request.sessionId, requestedDeviceId);
+    const resolved = this.state.resolveDeviceForTool(request.sessionId, requestedDeviceId, request.toolName);
 
     if (!resolved.device) {
       if (resolved.selectionRequired?.length) {

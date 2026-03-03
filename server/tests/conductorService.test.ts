@@ -53,6 +53,21 @@ class SequenceProvider implements ModelProvider {
   }
 }
 
+class ToolCaptureProvider implements ModelProvider {
+  readonly name = "tool-capture";
+  toolNames: string[] = [];
+
+  async generateResponse(_conversation: ConversationTurn[], tools?: { name: string }[]): Promise<ModelResponse> {
+    this.toolNames = (tools ?? []).map((tool) => tool.name);
+    return {
+      fullText: "ok",
+      chunks: (async function* stream() {
+        yield "ok";
+      })(),
+    };
+  }
+}
+
 test("transcript.final emits required tool-driven sequence", async () => {
   const provider = new StubProvider("Hello from test", ["Hello", " from test"]);
   const service = new ConductorService(provider, {
@@ -269,4 +284,60 @@ test("deterministic 'run tests' intent invokes bridge.exec.run", async () => {
     && event.payload.text.length > 0
   ));
   assert.equal(hasFinalSpeech, true);
+});
+
+test("bridge.claude.run tool executes through bridgeToolExecutor with 120s default timeout", async () => {
+  const provider = new SequenceProvider([
+    {
+      toolCalls: [{
+        id: "tc-claude-1",
+        name: "bridge.claude.run",
+        input: { prompt: "fix the failing test in src/auth.ts" },
+      }],
+    },
+    { text: "I fixed the test." },
+  ]);
+
+  const bridgeRequests: Array<{ toolName: string; args: Record<string, unknown>; timeoutMs: number }> = [];
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    bridgeToolExecutor: async (request) => {
+      bridgeRequests.push({ toolName: request.toolName, args: request.args, timeoutMs: request.timeoutMs });
+      return {
+        result: JSON.stringify({ result: "Fixed auth test - was missing mock" }),
+        error: null,
+      };
+    },
+  });
+
+  const emitted = [] as ReturnType<typeof makeEvent>[];
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-claude-run", {
+    text: "figure out why the auth test is failing and fix it",
+  }), (event) => emitted.push(event));
+
+  assert.equal(bridgeRequests.length, 1);
+  assert.equal(bridgeRequests[0]?.toolName, "bridge.claude.run");
+  assert.equal(bridgeRequests[0]?.args.prompt, "fix the failing test in src/auth.ts");
+  assert.equal(bridgeRequests[0]?.timeoutMs, 120_000);
+});
+
+test("bridge tools exposed to the model are filtered by session availability", async () => {
+  const provider = new ToolCaptureProvider();
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    bridgeToolExecutor: async () => ({ result: null, error: null }),
+    bridgeToolAvailability: (_sessionId, toolName) => toolName !== "bridge.claude.run",
+  });
+
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-tool-filter", {
+    text: "hello",
+  }), () => undefined);
+
+  assert.equal(provider.toolNames.includes("bridge.exec.run"), true);
+  assert.equal(provider.toolNames.includes("bridge.fs.readFile"), true);
+  assert.equal(provider.toolNames.includes("bridge.claude.run"), false);
 });

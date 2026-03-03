@@ -1,6 +1,6 @@
 # Tool Catalog (Bridge v0)
 
-Bridge v0 adds two server-routed tools.
+Bridge v0 adds three server-routed tools.
 
 ## `bridge.exec.run`
 
@@ -29,6 +29,7 @@ Rules:
 - `timeoutSec` capped to `600`
 - output is truncated by bridge policy
 - `cwd` must stay inside workspace root
+- `timeoutSec` must be an integer number of seconds
 
 ## `bridge.fs.readFile`
 
@@ -50,6 +51,39 @@ Result:
 Rules:
 - path must resolve under workspace root allowlist
 - file content is truncated by bridge policy
+
+## `bridge.claude.run`
+
+Arguments:
+
+```json
+{
+  "deviceId": "string (optional)",
+  "prompt": "string",
+  "cwd": "string (optional, relative to workspace root)",
+  "timeoutSec": 120,
+  "allowedTools": "Bash,Read,Edit"
+}
+```
+
+Result:
+
+```json
+{
+  "result": "...",
+  "sessionId": "string (optional)"
+}
+```
+
+Rules:
+- `prompt` is required
+- `timeoutSec` defaults to `120`, capped to `600`
+- `timeoutSec` must be an integer number of seconds
+- `allowedTools` defaults to `Bash,Read,Edit`
+- output is truncated by bridge policy
+- `cwd` must stay inside workspace root
+- requires Claude Code CLI installed and authenticated on the Mac
+- selected bridge must advertise `claudeRun: true` capability
 
 ## Routing Rules
 

@@ -41,6 +41,7 @@ function sendEvent(type, payload) {
         type,
         timestamp: new Date().toISOString(),
         sessionId,
+        protocolVersion: 1,
         payload,
     };
     socket.send(JSON.stringify(envelope));

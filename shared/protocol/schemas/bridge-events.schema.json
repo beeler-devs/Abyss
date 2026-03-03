@@ -27,7 +27,8 @@
           "required": ["execRun", "readFile"],
           "properties": {
             "execRun": { "type": "boolean" },
-            "readFile": { "type": "boolean" }
+            "readFile": { "type": "boolean" },
+            "claudeRun": { "type": "boolean" }
           },
           "additionalProperties": false
         }

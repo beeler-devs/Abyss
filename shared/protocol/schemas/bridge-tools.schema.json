@@ -11,7 +11,7 @@
         "deviceId": { "type": "string" },
         "command": { "type": "string", "minLength": 1 },
         "cwd": { "type": "string" },
-        "timeoutSec": { "type": "number", "minimum": 1, "maximum": 600 }
+        "timeoutSec": { "type": "integer", "minimum": 1, "maximum": 600 }
       },
       "additionalProperties": false
     },
@@ -39,6 +39,27 @@
       "required": ["content"],
       "properties": {
         "content": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.claude.run.args": {
+      "type": "object",
+      "required": ["prompt"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "prompt": { "type": "string", "minLength": 1 },
+        "cwd": { "type": "string" },
+        "timeoutSec": { "type": "integer", "minimum": 1, "maximum": 600 },
+        "allowedTools": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.claude.run.result": {
+      "type": "object",
+      "required": ["result"],
+      "properties": {
+        "result": { "type": "string" },
+        "sessionId": { "type": "string" }
       },
       "additionalProperties": false
     }
