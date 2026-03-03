@@ -30,6 +30,7 @@ interface CommandNarrationState {
   deviceId: string;
   commandLabel: string;
   lastNarratedAtMs: number;
+  lastSpokenAtMs: number;
   lastSnippet?: string;
 }
 
@@ -410,11 +411,16 @@ export class BridgeToolRouter {
             deviceId: pending.deviceId,
             commandLabel: shortenForNarration(pending.commandLabelHint ?? "command"),
             lastNarratedAtMs: Date.now(),
+            lastSpokenAtMs: Date.now(),
           });
           this.emitAssistantProgress(
             pending.sessionId,
             `Running ${shortenForNarration(pending.commandLabelHint ?? "command")}...`,
             true,
+          );
+          this.emitAssistantSpeechToolCall(
+            pending.sessionId,
+            `Starting ${shortenForNarration(pending.commandLabelHint ?? "command")}.`,
           );
         }
       }
@@ -428,6 +434,7 @@ export class BridgeToolRouter {
           this.narrationByCommandId.delete(pending.commandIdHint);
         }
         this.emitAssistantProgress(pending.sessionId, "Stopping the running command...", true);
+        this.emitAssistantSpeechToolCall(pending.sessionId, "Stopping the running command.");
       }
     }
 
@@ -494,6 +501,14 @@ export class BridgeToolRouter {
           `${narration.commandLabel}: ${stream} ${shortenForNarration(normalizedChunk, 100)}`,
           true,
         );
+
+        if (now - narration.lastSpokenAtMs >= 15_000) {
+          narration.lastSpokenAtMs = now;
+          this.emitAssistantSpeechToolCall(
+            narration.sessionId,
+            `${narration.commandLabel} is still running.`,
+          );
+        }
       }
     }
 
@@ -527,6 +542,12 @@ export class BridgeToolRouter {
           ? `${narration.commandLabel} completed successfully.`
           : `${narration.commandLabel} finished with exit code ${payload.exitCode}.`,
         false,
+      );
+      this.emitAssistantSpeechToolCall(
+        narration.sessionId,
+        payload.exitCode === 0
+          ? `${narration.commandLabel} completed successfully.`
+          : `${narration.commandLabel} finished with exit code ${payload.exitCode}.`,
       );
       this.narrationByCommandId.delete(payload.commandId);
     }
@@ -577,6 +598,14 @@ export class BridgeToolRouter {
       sessionId,
       { text },
     ));
+  }
+
+  private emitAssistantSpeechToolCall(sessionId: string, text: string): void {
+    this.emitToIOS(makeEvent("tool.call", sessionId, {
+      callId: `bridge-tts-${crypto.randomUUID()}`,
+      name: "tts.speak",
+      arguments: JSON.stringify({ text }),
+    }));
   }
 }
 
