@@ -10,6 +10,7 @@ interface PendingBridgeCall {
   deviceId: string;
   toolName: string;
   commandIdHint?: string;
+  commandLabelHint?: string;
   resultCallId: string;
   emitResultToIOS: boolean;
   resolve: (result: { result: string | null; error: string | null }) => void;
@@ -22,6 +23,14 @@ interface PendingRunWaiter {
   deviceId: string;
   timer: NodeJS.Timeout;
   resolve: (result: { result: string | null; error: string | null }) => void;
+}
+
+interface CommandNarrationState {
+  sessionId: string;
+  deviceId: string;
+  commandLabel: string;
+  lastNarratedAtMs: number;
+  lastSnippet?: string;
 }
 
 interface BridgeExecStartResult {
@@ -58,6 +67,7 @@ export class BridgeToolRouter {
   private readonly pendingByCallId = new Map<string, PendingBridgeCall>();
   private readonly pendingRunsByCommandId = new Map<string, PendingRunWaiter[]>();
   private readonly activeCommandBySession = new Map<string, { commandId: string; deviceId: string }>();
+  private readonly narrationByCommandId = new Map<string, CommandNarrationState>();
 
   constructor(deps: BridgeToolRouterDependencies) {
     this.state = deps.state;
@@ -186,6 +196,11 @@ export class BridgeToolRouter {
     for (const [sessionId, active] of this.activeCommandBySession.entries()) {
       if (active.deviceId === deviceId) {
         this.activeCommandBySession.delete(sessionId);
+      }
+    }
+    for (const [commandId, narration] of this.narrationByCommandId.entries()) {
+      if (narration.deviceId === deviceId) {
+        this.narrationByCommandId.delete(commandId);
       }
     }
   }
@@ -325,6 +340,7 @@ export class BridgeToolRouter {
         deviceId: request.deviceId,
         toolName: request.toolName,
         commandIdHint: optionalString(request.args.commandId),
+        commandLabelHint: optionalString(request.args.command),
         resultCallId: request.resultCallId,
         emitResultToIOS: request.emitResultToIOS,
         timer,
@@ -389,6 +405,17 @@ export class BridgeToolRouter {
             commandId: parsedStart.commandId,
             deviceId: pending.deviceId,
           });
+          this.narrationByCommandId.set(parsedStart.commandId, {
+            sessionId: pending.sessionId,
+            deviceId: pending.deviceId,
+            commandLabel: shortenForNarration(pending.commandLabelHint ?? "command"),
+            lastNarratedAtMs: Date.now(),
+          });
+          this.emitAssistantProgress(
+            pending.sessionId,
+            `Running ${shortenForNarration(pending.commandLabelHint ?? "command")}...`,
+            true,
+          );
         }
       }
 
@@ -397,6 +424,10 @@ export class BridgeToolRouter {
         if (!pending.commandIdHint || active?.commandId === pending.commandIdHint) {
           this.activeCommandBySession.delete(pending.sessionId);
         }
+        if (pending.commandIdHint) {
+          this.narrationByCommandId.delete(pending.commandIdHint);
+        }
+        this.emitAssistantProgress(pending.sessionId, "Stopping the running command...", true);
       }
     }
 
@@ -447,6 +478,25 @@ export class BridgeToolRouter {
       isFinal,
     }, event.id, event.timestamp));
 
+    const narration = this.narrationByCommandId.get(commandId);
+    if (narration && narration.sessionId === device.sessionId) {
+      const now = Date.now();
+      const normalizedChunk = normalizeSnippet(chunk);
+      const shouldNarrate = normalizedChunk.length > 0
+        && (now - narration.lastNarratedAtMs >= 2_500)
+        && narration.lastSnippet !== normalizedChunk;
+
+      if (shouldNarrate) {
+        narration.lastNarratedAtMs = now;
+        narration.lastSnippet = normalizedChunk;
+        this.emitAssistantProgress(
+          narration.sessionId,
+          `${narration.commandLabel}: ${stream} ${shortenForNarration(normalizedChunk, 100)}`,
+          true,
+        );
+      }
+    }
+
     return true;
   }
 
@@ -468,6 +518,18 @@ export class BridgeToolRouter {
       stdoutTail: payload.stdoutTail,
       stderrTail: payload.stderrTail,
     }, event.id, event.timestamp));
+
+    const narration = this.narrationByCommandId.get(payload.commandId);
+    if (narration) {
+      this.emitAssistantProgress(
+        narration.sessionId,
+        payload.exitCode === 0
+          ? `${narration.commandLabel} completed successfully.`
+          : `${narration.commandLabel} finished with exit code ${payload.exitCode}.`,
+        false,
+      );
+      this.narrationByCommandId.delete(payload.commandId);
+    }
 
     const waiters = this.pendingRunsByCommandId.get(payload.commandId) ?? [];
     if (waiters.length === 0) {
@@ -508,6 +570,18 @@ export class BridgeToolRouter {
       lastSeen: updated.lastSeen,
     }));
   }
+
+  private emitAssistantProgress(sessionId: string, text: string, isPartial: boolean): void {
+    this.emitToIOS(makeEvent("tool.call", sessionId, {
+      callId: `bridge-note-${crypto.randomUUID()}`,
+      name: "convo.appendMessage",
+      arguments: JSON.stringify({
+        role: "assistant",
+        text,
+        isPartial,
+      }),
+    }));
+  }
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -524,6 +598,18 @@ function parseJSON<T>(value: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+function normalizeSnippet(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function shortenForNarration(value: string, max = 60): string {
+  const trimmed = value.trim();
+  if (trimmed.length <= max) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, max - 1)}…`;
 }
 
 function parseBridgeExecFinishedPayload(

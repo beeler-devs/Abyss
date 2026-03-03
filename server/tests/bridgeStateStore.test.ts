@@ -54,3 +54,39 @@ test("register binds device to requesting session", () => {
   const resolve = store.resolveDeviceForTool("session-2");
   assert.equal(resolve.error, "bridge_not_paired");
 });
+
+test("resolveDeviceForTool falls back to single global online device for new session", () => {
+  const store = new BridgeStateStore();
+
+  store.createPairingRequest("session-original", "ABC999", "Dev Mac");
+  const registration = store.registerBridge({
+    pairingCode: "ABC999",
+    deviceId: "device-one",
+    deviceName: "Dev Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true },
+  });
+  assert.ok(registration.device);
+
+  const resolve = store.resolveDeviceForTool("session-new-after-reconnect");
+  assert.equal(resolve.error, undefined);
+  assert.equal(resolve.device?.deviceId, "device-one");
+});
+
+test("resolveDeviceForTool allows explicit deviceId across session churn", () => {
+  const store = new BridgeStateStore();
+
+  store.createPairingRequest("session-original", "XYZ123", "Dev Mac");
+  const registration = store.registerBridge({
+    pairingCode: "XYZ123",
+    deviceId: "device-explicit",
+    deviceName: "Dev Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true },
+  });
+  assert.ok(registration.device);
+
+  const resolve = store.resolveDeviceForTool("session-new", "device-explicit");
+  assert.equal(resolve.error, undefined);
+  assert.equal(resolve.device?.deviceId, "device-explicit");
+});
