@@ -446,8 +446,6 @@ public actor BridgeCore {
 
             case "bridge.claude.run":
                 let args = try decodeArguments(BridgeClaudeRunArguments.self, json: payload.arguments)
-                let cwd = try policy.resolveCWD(relativeCWD: args.cwd)
-                let timeoutSec = max(1, min(args.timeoutSec ?? 120, 600))
                 let allowedTools = args.allowedTools ?? "Bash,Read,Edit"
 
                 func shellEscape(_ str: String) -> String {
@@ -456,25 +454,30 @@ public actor BridgeCore {
 
                 let command = "claude -p \(shellEscape(args.prompt)) --allowedTools \(shellEscape(allowedTools)) --output-format json"
 
-                let result = try executor.run(
+                let start = try await startCommand(
                     command: command,
-                    cwd: cwd,
-                    timeoutSec: timeoutSec,
-                    outputLimitBytes: config.outputLimitBytes
+                    cwd: args.cwd,
+                    env: nil,
+                    timeoutSec: args.timeoutSec ?? 120
                 )
-                lastExitCode = result.exitCode
+                guard let completion = await commandManager.waitForCompletion(commandId: start.commandId) else {
+                    throw BridgeCoreError.internalError("command_not_found_after_start")
+                }
+
+                lastExitCode = completion.exitCode
+                await refreshActiveCommandSnapshot()
                 await emitStatus()
 
-                let claudeOutput = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let claudeOutput = completion.stdoutTail.trimmingCharacters(in: .whitespacesAndNewlines)
                 let parsed = parseClaudeCLIResult(from: claudeOutput)
-                let fallbackError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                let fallbackError = completion.stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                if result.exitCode != 0 || parsed?.isError == true {
+                if completion.exitCode != 0 || parsed?.isError == true {
                     let errorMsg = firstNonEmptyString([
                         parsed?.result,
                         fallbackError,
                         claudeOutput,
-                    ]) ?? "claude exited with code \(result.exitCode)"
+                    ]) ?? "claude exited with code \(completion.exitCode)"
                     throw BridgeCoreError.internalError(errorMsg)
                 }
 
