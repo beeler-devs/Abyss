@@ -275,3 +275,69 @@ test("router can execute for a new iOS session when only one bridge is globally 
   assert.equal(output.error, null);
   assert.ok(output.result?.includes("from-global-fallback"));
 });
+
+test("bridge.exec streaming events follow reassociated session after reconnect fallback", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-old", "ONE222", "Only Mac");
+  state.registerBridge({
+    pairingCode: "ONE222",
+    deviceId: "device-only",
+    deviceName: "Only Mac",
+    workspaceRoot: "/workspace-only",
+    capabilities: { execRun: true, readFile: true },
+  });
+
+  const emitted: Array<{ sessionId: string; type: string }> = [];
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      const toolName = String(event.payload.name);
+      const callId = String(event.payload.callId);
+
+      if (toolName === "bridge.exec.start") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId,
+            result: JSON.stringify({ commandId: "cmd-reconnect", startedAt: new Date().toISOString() }),
+            error: null,
+          }), "device-only");
+          setImmediate(() => {
+            router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-only", {
+              deviceId: "device-only",
+              commandId: "cmd-reconnect",
+              stream: "stdout",
+              chunk: "still running\n",
+              isFinal: false,
+            }), "device-only");
+            router.handleBridgeEvent(makeEvent("bridge.exec.finished", "device-only", {
+              deviceId: "device-only",
+              commandId: "cmd-reconnect",
+              exitCode: 0,
+              stdoutTail: "done\n",
+              stderrTail: "",
+            }), "device-only");
+          });
+        });
+      }
+
+      return true;
+    },
+    emitToIOS: (event) => {
+      emitted.push({ sessionId: event.sessionId, type: event.type });
+    },
+  });
+
+  const output = await router.execute({
+    callId: "call-reconnect-run",
+    sessionId: "session-new",
+    toolName: "bridge.exec.run",
+    args: { command: "npm test" },
+    timeoutMs: 400,
+  });
+
+  assert.equal(output.error, null);
+  const outputEvent = emitted.find((event) => event.type === "bridge.exec.output");
+  const finishedEvent = emitted.find((event) => event.type === "bridge.exec.finished");
+  assert.equal(outputEvent?.sessionId, "session-new");
+  assert.equal(finishedEvent?.sessionId, "session-new");
+});

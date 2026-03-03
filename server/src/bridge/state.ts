@@ -203,7 +203,7 @@ export class BridgeStateStore {
       if (requested.status !== "online") {
         return { error: "bridge_device_offline" };
       }
-      return { device: requested };
+      return { device: this.rebindDeviceToSession(requested, sessionId) };
     }
 
     if (sessionOnlineDevices.length === 1) {
@@ -226,7 +226,7 @@ export class BridgeStateStore {
     // iOS can reconnect with a new session id while bridge remains online and paired.
     // If exactly one bridge is online globally, route to it instead of returning not paired.
     if (globalOnlineDevices.length === 1) {
-      return { device: globalOnlineDevices[0] };
+      return { device: this.rebindDeviceToSession(globalOnlineDevices[0], sessionId) };
     }
 
     if (globalOnlineDevices.length === 0) {
@@ -256,6 +256,30 @@ export class BridgeStateStore {
   hasPendingPairingCode(pairingCode: string): boolean {
     this.prunePendingPairings();
     return this.pendingPairingCodes.has(normalizePairingCode(pairingCode));
+  }
+
+  private rebindDeviceToSession(device: BridgeDeviceRecord, sessionId: string): BridgeDeviceRecord {
+    if (device.sessionId === sessionId) {
+      return device;
+    }
+
+    const previousSet = this.sessionToDeviceIds.get(device.sessionId);
+    previousSet?.delete(device.deviceId);
+    if (previousSet && previousSet.size === 0) {
+      this.sessionToDeviceIds.delete(device.sessionId);
+    }
+
+    const nextSet = this.sessionToDeviceIds.get(sessionId) ?? new Set<string>();
+    nextSet.add(device.deviceId);
+    this.sessionToDeviceIds.set(sessionId, nextSet);
+
+    const rebound: BridgeDeviceRecord = {
+      ...device,
+      sessionId,
+      lastSeen: new Date(this.nowMs()).toISOString(),
+    };
+    this.devicesById.set(device.deviceId, rebound);
+    return rebound;
   }
 }
 

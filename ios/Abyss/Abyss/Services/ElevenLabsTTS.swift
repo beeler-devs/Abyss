@@ -8,6 +8,7 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
     private var _isSpeaking = false
     private var audioPlayer: AVAudioPlayer?
     private var playbackTask: Task<Void, Never>?
+    private let fallbackSynth = AVSpeechSynthesizer()
 
     var voiceId: String
     var modelId: String
@@ -27,13 +28,34 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
     }
 
     func speak(_ text: String) async throws {
-        guard let apiKey, !apiKey.isEmpty else {
-            throw TTSError.missingAPIKey
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            return
         }
 
         lock.withLock { _isSpeaking = true }
+        defer {
+            lock.withLock {
+                _isSpeaking = false
+                audioPlayer = nil
+            }
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
 
-        // Set up audio session for playback
+        do {
+            if let apiKey, !apiKey.isEmpty {
+                try await speakWithElevenLabs(normalized, apiKey: apiKey)
+                return
+            }
+
+            try await speakWithSystemVoice(normalized)
+        } catch {
+            print("🔈 [TTS] ElevenLabs failed; falling back to system voice: \(error.localizedDescription)")
+            try await speakWithSystemVoice(normalized)
+        }
+    }
+
+    private func speakWithElevenLabs(_ text: String, apiKey: String) async throws {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
         try session.setActive(true)
@@ -41,7 +63,6 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         // Build request to ElevenLabs streaming endpoint
         let urlString = "https://api.elevenlabs.io/v1/text-to-speech/\(voiceId)/stream"
         guard let url = URL(string: urlString) else {
-            lock.withLock { _isSpeaking = false }
             throw TTSError.invalidURL
         }
 
@@ -64,12 +85,10 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
-            lock.withLock { _isSpeaking = false }
             throw TTSError.invalidResponse
         }
 
         guard httpResponse.statusCode == 200 else {
-            lock.withLock { _isSpeaking = false }
             throw TTSError.httpError(httpResponse.statusCode)
         }
 
@@ -90,14 +109,33 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
                     try await Task.sleep(nanoseconds: 50_000_000) // 50ms poll
                 }
             }
+            return
         }
 
-        lock.withLock {
-            _isSpeaking = false
-            audioPlayer = nil
+        throw TTSError.playbackFailed
+    }
+
+    private func speakWithSystemVoice(_ text: String) async throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
+        try session.setActive(true)
+
+        await MainActor.run {
+            self.fallbackSynth.stopSpeaking(at: .immediate)
+            let utterance = AVSpeechUtterance(string: text)
+            utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+            self.fallbackSynth.speak(utterance)
         }
 
-        try? session.setActive(false, options: .notifyOthersOnDeactivation)
+        while isSpeaking {
+            let stillSpeaking = await MainActor.run {
+                self.fallbackSynth.isSpeaking
+            }
+            if !stillSpeaking {
+                break
+            }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
     }
 
     private func startPlayback(data: Data) throws {
@@ -114,6 +152,9 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
             _isSpeaking = false
             audioPlayer?.stop()
             audioPlayer = nil
+        }
+        await MainActor.run {
+            self.fallbackSynth.stopSpeaking(at: .immediate)
         }
         playbackTask?.cancel()
         playbackTask = nil

@@ -71,6 +71,9 @@ test("resolveDeviceForTool falls back to single global online device for new ses
   const resolve = store.resolveDeviceForTool("session-new-after-reconnect");
   assert.equal(resolve.error, undefined);
   assert.equal(resolve.device?.deviceId, "device-one");
+  assert.equal(resolve.device?.sessionId, "session-new-after-reconnect");
+  assert.equal(store.getSessionDevices("session-original").length, 0);
+  assert.equal(store.getSessionDevices("session-new-after-reconnect")[0]?.deviceId, "device-one");
 });
 
 test("resolveDeviceForTool allows explicit deviceId across session churn", () => {
@@ -89,4 +92,7 @@ test("resolveDeviceForTool allows explicit deviceId across session churn", () =>
   const resolve = store.resolveDeviceForTool("session-new", "device-explicit");
   assert.equal(resolve.error, undefined);
   assert.equal(resolve.device?.deviceId, "device-explicit");
+  assert.equal(resolve.device?.sessionId, "session-new");
+  assert.equal(store.getSessionDevices("session-original").length, 0);
+  assert.equal(store.getSessionDevices("session-new")[0]?.deviceId, "device-explicit");
 });
