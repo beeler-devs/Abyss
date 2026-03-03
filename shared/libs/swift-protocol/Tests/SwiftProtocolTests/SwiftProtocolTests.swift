@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SwiftProtocol
 
@@ -11,4 +12,32 @@ func eventEnvelopeDefaultsProtocolVersion() {
     )
 
     #expect(envelope.protocolVersion == AbyssProtocol.version)
+}
+
+@Test("Bridge v1 capability defaults are enabled")
+func bridgeCapabilitiesDefaults() {
+    let capabilities = BridgeCapabilities()
+
+    #expect(capabilities.execRun)
+    #expect(capabilities.execStart)
+    #expect(capabilities.execCancel)
+    #expect(capabilities.fsSearch)
+    #expect(capabilities.gitPush)
+}
+
+@Test("Bridge exec output event payload is codable")
+func bridgeExecOutputPayloadCodable() throws {
+    let payload = BridgeExecOutputEventPayload(
+        deviceId: "device-1",
+        commandId: "cmd-1",
+        stream: "stdout",
+        chunk: "hello",
+        isFinal: false
+    )
+
+    let encoded = try JSONEncoder().encode(payload)
+    let decoded = try JSONDecoder().decode(BridgeExecOutputEventPayload.self, from: encoded)
+
+    #expect(decoded.commandId == "cmd-1")
+    #expect(decoded.chunk == "hello")
 }

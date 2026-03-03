@@ -8,6 +8,8 @@ interface LogContext {
   deviceId?: string;
   pairingCode?: string;
   kind?: string;
+  type?: string;
+  cancelled?: boolean;
   deviceName?: string;
 }
 
@@ -26,6 +28,8 @@ function contextPrefix(context?: LogContext): string {
   if (context.deviceId) parts.push(`device=${context.deviceId}`);
   if (context.pairingCode) parts.push(`pairing=${context.pairingCode}`);
   if (context.kind) parts.push(`kind=${context.kind}`);
+  if (context.type) parts.push(`type=${context.type}`);
+  if (typeof context.cancelled === "boolean") parts.push(`cancelled=${context.cancelled}`);
   if (context.deviceName) parts.push(`deviceName=${context.deviceName}`);
 
   return parts.length ? `[${parts.join(" ")}] ` : "";

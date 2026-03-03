@@ -1,12 +1,12 @@
-# Abyss Event Protocol (Bridge v0)
+# Abyss Event Protocol (Bridge v1)
 
-All WebSocket events use the same envelope:
+All WebSocket events use this envelope:
 
 ```json
 {
   "id": "evt_123",
   "type": "tool.call",
-  "timestamp": "2026-03-01T12:00:00.000Z",
+  "timestamp": "2026-03-02T12:00:00.000Z",
   "sessionId": "session-abc",
   "protocolVersion": 1,
   "payload": {}
@@ -14,14 +14,15 @@ All WebSocket events use the same envelope:
 ```
 
 Required envelope fields:
+
 - `id`: unique event id
 - `type`: event type
 - `timestamp`: ISO8601 UTC string
-- `sessionId`: iOS session id for conductor events; bridge device session id for bridge registration traffic
+- `sessionId`: iOS session id for conductor traffic; bridge device id for bridge-originated exec stream traffic
 - `protocolVersion`: integer protocol version (`1`)
 - `payload`: event payload object
 
-## Bridge Events
+## Bridge pairing and presence
 
 ### `bridge.pair.request` (iOS -> server)
 
@@ -37,7 +38,23 @@ Required envelope fields:
   "deviceId": "uuid",
   "deviceName": "Ben's MacBook",
   "workspaceRoot": "/Users/ben/project",
-  "capabilities": { "execRun": true, "readFile": true },
+  "workspaceRoots": ["/Users/ben/project", "/Users/ben/second-repo"],
+  "capabilities": {
+    "execRun": true,
+    "readFile": true,
+    "execStart": true,
+    "execCancel": true,
+    "execStatus": true,
+    "execOutputEvents": true,
+    "fsSearch": true,
+    "fsReadRange": true,
+    "fsApplyPatch": true,
+    "gitStatus": true,
+    "gitDiff": true,
+    "gitStage": true,
+    "gitCommit": true,
+    "gitPush": true
+  },
   "protocolVersion": 1
 }
 ```
@@ -51,14 +68,10 @@ Required envelope fields:
 ### `bridge.status` (server -> iOS)
 
 ```json
-{ "deviceId": "uuid", "status": "online", "lastSeen": "2026-03-01T12:00:00.000Z" }
+{ "deviceId": "uuid", "status": "online", "lastSeen": "2026-03-02T12:00:00.000Z" }
 ```
 
 ### `bridge.device.selection.required` (server -> iOS)
-
-Emitted when a bridge tool call omitted `deviceId` but multiple online bridge devices are paired to the session.
-
-Payload:
 
 ```json
 {
@@ -69,10 +82,39 @@ Payload:
 }
 ```
 
-## Tool Flow Events
+## Bridge exec streaming events
+
+### `bridge.exec.output` (bridge -> server -> iOS)
+
+```json
+{
+  "deviceId": "uuid",
+  "commandId": "cmd-uuid",
+  "stream": "stdout",
+  "chunk": "line text...",
+  "isFinal": false
+}
+```
+
+### `bridge.exec.finished` (bridge -> server -> iOS)
+
+```json
+{
+  "deviceId": "uuid",
+  "commandId": "cmd-uuid",
+  "exitCode": 0,
+  "stdoutTail": "...",
+  "stderrTail": "..."
+}
+```
+
+## Tool flow events
 
 Bridge tools still use standard formal tool events:
+
 - `tool.call`
 - `tool.result`
 
-The server forwards `tool.call` to the bridge connection and relays normalized `tool.result` back to iOS timeline and conductor state.
+For backward compatibility:
+
+- `bridge.exec.run` remains available and is implemented using Bridge v1 command lifecycle on the server side.

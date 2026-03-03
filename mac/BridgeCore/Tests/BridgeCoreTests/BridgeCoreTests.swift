@@ -2,50 +2,95 @@ import Foundation
 import Testing
 @testable import BridgeCore
 
-@Test("Workspace policy allows path inside workspace")
-func workspacePolicyAllowsNestedPath() throws {
-    let root = URL(fileURLWithPath: "/tmp/bridge-policy-workspace")
-    let policy = WorkspacePolicy(workspaceRoot: root)
+@Test("Workspace policy allows path inside allowlisted roots")
+func workspacePolicyAllowsAllowlistedRoots() throws {
+    let policy = WorkspacePolicy(workspaceRoots: [
+        URL(fileURLWithPath: "/tmp/bridge-policy-1"),
+        URL(fileURLWithPath: "/tmp/bridge-policy-2"),
+    ])
 
-    let resolved = try policy.resolve(relativePath: "src/main.swift")
-    #expect(resolved.path == "/tmp/bridge-policy-workspace/src/main.swift")
+    let first = try policy.resolve(relativePath: "src/main.swift")
+    #expect(first.path == "/tmp/bridge-policy-1/src/main.swift")
+
+    let second = try policy.resolve(path: "/tmp/bridge-policy-2/README.md", relativeTo: policy.primaryWorkspaceRoot)
+    #expect(second.path == "/tmp/bridge-policy-2/README.md")
 }
 
-@Test("Workspace policy rejects parent traversal")
-func workspacePolicyRejectsTraversal() {
-    let root = URL(fileURLWithPath: "/tmp/bridge-policy-workspace")
-    let policy = WorkspacePolicy(workspaceRoot: root)
+@Test("Workspace policy rejects traversal and denylisted paths")
+func workspacePolicyRejectsTraversalAndDenylist() {
+    let policy = WorkspacePolicy(workspaceRoot: URL(fileURLWithPath: "/tmp/bridge-policy-workspace"))
 
     #expect(throws: Error.self) {
         try policy.resolve(relativePath: "../secrets.txt")
     }
+
+    #expect(throws: Error.self) {
+        try policy.resolve(relativePath: ".env")
+    }
+
+    #expect(throws: Error.self) {
+        try policy.resolve(relativePath: "keys/id_rsa")
+    }
 }
 
-@Test("Process executor truncates long output")
-func processExecutorTruncatesOutput() throws {
-    let executor = ProcessExecutor()
-    let result = try executor.run(
-        command: "python - <<'PY'\nprint('x' * 5000)\nPY",
-        cwd: URL(fileURLWithPath: "/tmp"),
-        timeoutSec: 5,
-        outputLimitBytes: 512
-    )
+@Test("Command manager enforces timeout")
+func commandManagerTimeout() async throws {
+    let manager = CommandManager(tailLimitBytes: 16_000, chunkLimitBytes: 1024, timeoutCapSec: 30)
 
-    #expect(result.exitCode == 0)
-    #expect(result.stdout.contains("...[truncated]"))
-}
-
-@Test("Process executor times out")
-func processExecutorTimesOut() throws {
-    let executor = ProcessExecutor()
-    let result = try executor.run(
+    let started = try await manager.start(
         command: "sleep 2",
         cwd: URL(fileURLWithPath: "/tmp"),
-        timeoutSec: 1,
-        outputLimitBytes: 512
+        env: nil,
+        timeoutSec: 1
     )
 
-    #expect(result.timedOut == true)
-    #expect(result.exitCode == -1)
-    #expect(result.stderr.contains("timed out"))
+    guard let completion = await manager.waitForCompletion(commandId: started.commandId) else {
+        Issue.record("Expected completion")
+        return
+    }
+
+    #expect(completion.state == .timedOut)
+}
+
+@Test("Command manager supports cancellation")
+func commandManagerCancellation() async throws {
+    let manager = CommandManager(tailLimitBytes: 16_000, chunkLimitBytes: 1024, timeoutCapSec: 30)
+
+    let started = try await manager.start(
+        command: "sleep 10",
+        cwd: URL(fileURLWithPath: "/tmp"),
+        env: nil,
+        timeoutSec: 20
+    )
+
+    try await Task.sleep(nanoseconds: 200_000_000)
+    let cancelled = await manager.cancel(commandId: started.commandId)
+    #expect(cancelled == true)
+
+    guard let completion = await manager.waitForCompletion(commandId: started.commandId) else {
+        Issue.record("Expected completion")
+        return
+    }
+
+    #expect(completion.state == .cancelled)
+}
+
+@Test("Command manager truncates tail output")
+func commandManagerTailTruncation() async throws {
+    let manager = CommandManager(tailLimitBytes: 256, chunkLimitBytes: 64, timeoutCapSec: 30)
+
+    let started = try await manager.start(
+        command: "python - <<'PY'\nprint('x' * 5000)\nPY",
+        cwd: URL(fileURLWithPath: "/tmp"),
+        env: nil,
+        timeoutSec: 5
+    )
+
+    guard let completion = await manager.waitForCompletion(commandId: started.commandId) else {
+        Issue.record("Expected completion")
+        return
+    }
+
+    #expect(completion.exitCode == 0)
+    #expect(completion.stdoutTail.contains("truncated"))
 }

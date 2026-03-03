@@ -11,7 +11,7 @@
         "deviceId": { "type": "string" },
         "command": { "type": "string", "minLength": 1 },
         "cwd": { "type": "string" },
-        "timeoutSec": { "type": "number", "minimum": 1, "maximum": 600 }
+        "timeoutSec": { "type": "number", "minimum": 1, "maximum": 900 }
       },
       "additionalProperties": false
     },
@@ -22,6 +22,82 @@
         "exitCode": { "type": "integer" },
         "stdout": { "type": "string" },
         "stderr": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.start.args": {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "command": { "type": "string", "minLength": 1 },
+        "cwd": { "type": "string" },
+        "env": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "timeoutSec": { "type": "number", "minimum": 1, "maximum": 900 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.start.result": {
+      "type": "object",
+      "required": ["commandId", "startedAt"],
+      "properties": {
+        "commandId": { "type": "string", "minLength": 1 },
+        "startedAt": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.cancel.args": {
+      "type": "object",
+      "required": ["commandId"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "commandId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.cancel.result": {
+      "type": "object",
+      "required": ["cancelled"],
+      "properties": {
+        "cancelled": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.status.args": {
+      "type": "object",
+      "required": ["commandId"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "commandId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.status.result": {
+      "type": "object",
+      "required": ["state"],
+      "properties": {
+        "state": { "type": "string", "enum": ["running", "finished", "failed", "cancelled", "timed_out"] },
+        "exitCode": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.output.subscribe.args": {
+      "type": "object",
+      "required": ["commandId"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "commandId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.output.subscribe.result": {
+      "type": "object",
+      "required": ["subscribed"],
+      "properties": {
+        "subscribed": { "type": "boolean" }
       },
       "additionalProperties": false
     },
@@ -39,6 +115,197 @@
       "required": ["content"],
       "properties": {
         "content": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.fs.search.args": {
+      "type": "object",
+      "required": ["query"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "query": { "type": "string", "minLength": 1 },
+        "root": { "type": "string" },
+        "globs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "maxItems": 32
+        },
+        "maxResults": { "type": "integer", "minimum": 1, "maximum": 500 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.fs.search.result": {
+      "type": "object",
+      "required": ["matches"],
+      "properties": {
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "line", "snippet"],
+            "properties": {
+              "path": { "type": "string" },
+              "line": { "type": "integer", "minimum": 1 },
+              "snippet": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bridge.fs.readRange.args": {
+      "type": "object",
+      "required": ["path", "startLine", "endLine"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "path": { "type": "string", "minLength": 1 },
+        "startLine": { "type": "integer", "minimum": 1 },
+        "endLine": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.fs.readRange.result": {
+      "type": "object",
+      "required": ["content"],
+      "properties": {
+        "content": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.fs.applyPatch.args": {
+      "type": "object",
+      "required": ["unifiedDiff"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "unifiedDiff": { "type": "string", "minLength": 1 },
+        "constraints": {
+          "type": "object",
+          "properties": {
+            "allowedPaths": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "maxItems": 200
+            },
+            "noReformat": { "type": "boolean" },
+            "maxDiffLines": { "type": "integer", "minimum": 1, "maximum": 10000 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "bridge.fs.applyPatch.result": {
+      "type": "object",
+      "required": ["applied", "filesChanged"],
+      "properties": {
+        "applied": { "type": "boolean" },
+        "filesChanged": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.status.args": {
+      "type": "object",
+      "properties": {
+        "deviceId": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.status.result": {
+      "type": "object",
+      "required": ["branch", "changedFiles", "stagedFiles"],
+      "properties": {
+        "branch": { "type": "string" },
+        "changedFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "stagedFiles": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.diff.args": {
+      "type": "object",
+      "properties": {
+        "deviceId": { "type": "string" },
+        "staged": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.diff.result": {
+      "type": "object",
+      "required": ["diff"],
+      "properties": {
+        "diff": { "type": "string" },
+        "truncated": { "type": "boolean" },
+        "tail": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.stage.args": {
+      "type": "object",
+      "required": ["paths"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.stage.result": {
+      "type": "object",
+      "required": ["staged"],
+      "properties": {
+        "staged": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.commit.args": {
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "message": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.commit.result": {
+      "type": "object",
+      "required": ["commitSha"],
+      "properties": {
+        "commitSha": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.push.args": {
+      "type": "object",
+      "required": ["remote", "branch"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "remote": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "bridge.git.push.result": {
+      "type": "object",
+      "required": ["pushed"],
+      "properties": {
+        "pushed": { "type": "boolean" }
       },
       "additionalProperties": false
     }

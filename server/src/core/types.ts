@@ -71,6 +71,8 @@ export interface SessionState {
   >;
   recentTranscriptTrace: string[];
   transcriptCount: number;
+  activeBridgeCommandId?: string;
+  activeBridgeDeviceId?: string;
 }
 
 export interface BridgeToolExecutionRequest {

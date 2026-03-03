@@ -245,9 +245,60 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
         deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
         command: { type: "string", description: "Shell command to execute (example: npm test)." },
         cwd: { type: "string", description: "Optional relative directory under workspace root." },
-        timeoutSec: { type: "number", description: "Optional command timeout in seconds (max 600)." },
+        timeoutSec: { type: "number", description: "Optional command timeout in seconds (max 900)." },
       },
       required: ["command"],
+    },
+  },
+  {
+    name: "bridge.exec.start",
+    description: "Start a shell command on Bridge and stream output with bridge.exec.output events.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        command: { type: "string" },
+        cwd: { type: "string" },
+        env: { type: "object" },
+        timeoutSec: { type: "number" },
+      },
+      required: ["command"],
+    },
+  },
+  {
+    name: "bridge.exec.cancel",
+    description: "Cancel a running Bridge command by commandId.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        commandId: { type: "string" },
+      },
+      required: ["commandId"],
+    },
+  },
+  {
+    name: "bridge.exec.status",
+    description: "Check status for a Bridge commandId.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        commandId: { type: "string" },
+      },
+      required: ["commandId"],
+    },
+  },
+  {
+    name: "bridge.exec.output.subscribe",
+    description: "Subscribe to output stream for a Bridge commandId (no-op when push events already enabled).",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        commandId: { type: "string" },
+      },
+      required: ["commandId"],
     },
   },
   {
@@ -261,6 +312,106 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
         path: { type: "string", description: "Relative file path under workspace root." },
       },
       required: ["path"],
+    },
+  },
+  {
+    name: "bridge.fs.search",
+    description: "Search text in the Bridge workspace using ripgrep when available.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        query: { type: "string" },
+        root: { type: "string" },
+        globs: { type: "array" },
+        maxResults: { type: "number" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "bridge.fs.readRange",
+    description: "Read a line range from a Bridge workspace file.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        path: { type: "string" },
+        startLine: { type: "number" },
+        endLine: { type: "number" },
+      },
+      required: ["path", "startLine", "endLine"],
+    },
+  },
+  {
+    name: "bridge.fs.applyPatch",
+    description: "Apply a unified diff patch inside the Bridge workspace.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        unifiedDiff: { type: "string" },
+        constraints: { type: "object" },
+      },
+      required: ["unifiedDiff"],
+    },
+  },
+  {
+    name: "bridge.git.status",
+    description: "Get git branch and changed/staged files for the Bridge workspace.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+      },
+    },
+  },
+  {
+    name: "bridge.git.diff",
+    description: "Get git diff (optionally staged) for the Bridge workspace.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        staged: { type: "boolean" },
+      },
+    },
+  },
+  {
+    name: "bridge.git.stage",
+    description: "Stage selected file paths in Bridge workspace.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        paths: { type: "array" },
+      },
+      required: ["paths"],
+    },
+  },
+  {
+    name: "bridge.git.commit",
+    description: "Commit staged Bridge workspace changes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        message: { type: "string" },
+      },
+      required: ["message"],
+    },
+  },
+  {
+    name: "bridge.git.push",
+    description: "Push a branch from Bridge workspace to remote.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        remote: { type: "string" },
+        branch: { type: "string" },
+      },
+      required: ["remote", "branch"],
     },
   },
 ];
@@ -458,6 +609,28 @@ export class ConductorService {
       }
 
       case "audio.output.interrupted": {
+        if (this.bridgeToolExecutor && session.activeBridgeCommandId) {
+          const cancelArgs: Record<string, unknown> = {
+            commandId: session.activeBridgeCommandId,
+          };
+          if (session.activeBridgeDeviceId) {
+            cancelArgs.deviceId = session.activeBridgeDeviceId;
+          }
+
+          const cancelResult = await this.bridgeToolExecutor({
+            callId: crypto.randomUUID(),
+            sessionId: session.sessionId,
+            toolName: "bridge.exec.cancel",
+            args: cancelArgs,
+            timeoutMs: 5_000,
+          }, emit);
+
+          if (!cancelResult.error) {
+            session.activeBridgeCommandId = undefined;
+            session.activeBridgeDeviceId = undefined;
+          }
+        }
+
         logger.info("audio output interrupted", {
           sessionId: session.sessionId,
           eventId: event.id,
@@ -757,6 +930,33 @@ export class ConductorService {
       }
     }
 
+    const searchMatch = normalized.match(/^(search|find)(?: for)?\s+['"]?(.+?)['"]?$/i);
+    if (searchMatch) {
+      const query = searchMatch[2]?.trim();
+      if (query) {
+        return {
+          id: crypto.randomUUID(),
+          name: "bridge.fs.search",
+          input: { query },
+        };
+      }
+    }
+
+    const rangeMatch = normalized.match(/^(open|read)\s+(.+?)\s+(?:around|at)\s+line\s+(\d+)$/i);
+    if (rangeMatch) {
+      const path = rangeMatch[2]?.trim();
+      const center = Number.parseInt(rangeMatch[3] ?? "", 10);
+      if (path && Number.isFinite(center) && center > 0) {
+        const startLine = Math.max(1, center - 20);
+        const endLine = center + 20;
+        return {
+          id: crypto.randomUUID(),
+          name: "bridge.fs.readRange",
+          input: { path, startLine, endLine },
+        };
+      }
+    }
+
     const readMatch = normalized.match(/^(read file|open file)\s+(.+)$/i);
     if (readMatch) {
       const path = readMatch[2]?.trim();
@@ -989,20 +1189,55 @@ export class ConductorService {
         }
 
         case "bridge.exec.run":
-        case "bridge.fs.readFile": {
+        case "bridge.exec.start":
+        case "bridge.exec.cancel":
+        case "bridge.exec.status":
+        case "bridge.exec.output.subscribe":
+        case "bridge.fs.readFile":
+        case "bridge.fs.search":
+        case "bridge.fs.readRange":
+        case "bridge.fs.applyPatch":
+        case "bridge.git.status":
+        case "bridge.git.diff":
+        case "bridge.git.stage":
+        case "bridge.git.commit":
+        case "bridge.git.push": {
           if (!this.bridgeToolExecutor) {
             return { result: null, error: "bridge_not_configured" };
           }
 
           const timeoutSecRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
-          const timeoutMs = Math.max(1, Math.min(600, Math.trunc(timeoutSecRaw ?? 60))) * 1_000;
-          return await this.bridgeToolExecutor({
+          const timeoutMs = Math.max(1, Math.min(900, Math.trunc(timeoutSecRaw ?? 60))) * 1_000;
+          const bridgeResult = await this.bridgeToolExecutor({
             callId,
             sessionId: session.sessionId,
             toolName,
             args,
             timeoutMs,
           }, emit);
+
+          if (!bridgeResult.error && bridgeResult.result) {
+            if (toolName === "bridge.exec.start") {
+              try {
+                const parsed = JSON.parse(bridgeResult.result) as Record<string, unknown>;
+                const commandId = typeof parsed.commandId === "string" ? parsed.commandId : undefined;
+                const deviceId = typeof args.deviceId === "string" ? args.deviceId : undefined;
+                if (commandId) {
+                  session.activeBridgeCommandId = commandId;
+                  session.activeBridgeDeviceId = deviceId;
+                }
+              } catch {
+                // ignore parse failure
+              }
+            }
+
+            if (toolName === "bridge.exec.cancel") {
+              session.activeBridgeCommandId = undefined;
+              session.activeBridgeDeviceId = undefined;
+            }
+          }
+
+          return bridgeResult;
         }
 
         default:
@@ -1250,6 +1485,7 @@ export class ConductorService {
     };
 
     const timer = setInterval(poll, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
+    timer.unref?.();
     this.conversationPollers.set(agentId, timer);
     poll().catch(() => {});
   }

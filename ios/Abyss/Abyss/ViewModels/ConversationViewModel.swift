@@ -943,6 +943,8 @@ final class ConversationViewModel: ObservableObject {
                 )
             }
             eventBus.emit(event)
+        case .bridgeExecOutput, .bridgeExecFinished:
+            eventBus.emit(event)
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult, .error,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,
                 .agentCompleted, .bridgePairRequest:
