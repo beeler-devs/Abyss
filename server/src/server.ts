@@ -503,7 +503,11 @@ function emitToSession(event: { sessionId: string }, preferredSocket?: WebSocket
 }
 
 function emitBridgeStatusSnapshot(sessionId: string, preferredSocket?: WebSocket): void {
-  const devices = bridgeState.getSessionDevices(sessionId);
+  const sessionDevices = bridgeState.getSessionDevices(sessionId);
+  const devices = sessionDevices.length > 0
+    ? sessionDevices
+    : bridgeState.getOnlineDevices();
+
   for (const device of devices) {
     emitToSession(makeEvent("bridge.status", sessionId, {
       deviceId: device.deviceId,

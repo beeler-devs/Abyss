@@ -237,3 +237,41 @@ test("bridge.exec.output is routed to paired session", () => {
   assert.ok(routed);
   assert.equal(routed?.sessionId, "session-b");
 });
+
+test("router can execute for a new iOS session when only one bridge is globally online", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-old", "ONE111", "Only Mac");
+  state.registerBridge({
+    pairingCode: "ONE111",
+    deviceId: "device-only",
+    deviceName: "Only Mac",
+    workspaceRoot: "/workspace-only",
+    capabilities: { execRun: true, readFile: true },
+  });
+
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      setImmediate(() => {
+        router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+          callId: String(event.payload.callId),
+          result: JSON.stringify({ content: "from-global-fallback" }),
+          error: null,
+        }), "device-only");
+      });
+      return true;
+    },
+    emitToIOS: () => {},
+  });
+
+  const output = await router.execute({
+    callId: "call-fallback",
+    sessionId: "session-new",
+    toolName: "bridge.fs.readFile",
+    args: { path: "README.md" },
+    timeoutMs: 200,
+  });
+
+  assert.equal(output.error, null);
+  assert.ok(output.result?.includes("from-global-fallback"));
+});
