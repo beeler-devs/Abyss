@@ -147,14 +147,13 @@ wss.on("connection", (socket, request) => {
     }
 
     if (context.kind === "bridge") {
-      if (event.type === "tool.result") {
-        const handled = bridgeRouter.handleBridgeToolResult(event);
-        if (!handled) {
-          logger.warn("bridge tool.result had no pending call", {
-            callId: typeof event.payload.callId === "string" ? event.payload.callId : undefined,
-            deviceId: context.deviceId,
-          });
-        }
+      const handled = bridgeRouter.handleBridgeEvent(event, context.deviceId);
+      if (!handled) {
+        logger.warn("bridge event had no pending route", {
+          type: event.type,
+          callId: typeof event.payload.callId === "string" ? event.payload.callId : undefined,
+          deviceId: context.deviceId,
+        });
       }
       return;
     }
@@ -185,6 +184,14 @@ wss.on("connection", (socket, request) => {
 
     if (event.type === "session.start") {
       emitBridgeStatusSnapshot(event.sessionId, socket);
+    }
+
+    if (event.type === "audio.output.interrupted") {
+      const cancelled = await bridgeRouter.cancelActiveCommand(event.sessionId);
+      logger.info("audio interrupt bridge cancel attempted", {
+        sessionId: event.sessionId,
+        cancelled,
+      });
     }
 
     await conductor.handleEvent(event, (outbound) => {
@@ -250,6 +257,7 @@ async function handleBridgeRegister(
   const deviceId = readString(payload, "deviceId");
   const deviceName = readString(payload, "deviceName");
   const workspaceRoot = readString(payload, "workspaceRoot");
+  const workspaceRoots = readStringArray(payload, "workspaceRoots");
   const capabilities = readCapabilities(payload.capabilities);
 
   if (!pairingCode || !deviceId || !deviceName || !workspaceRoot || !capabilities) {
@@ -265,6 +273,7 @@ async function handleBridgeRegister(
     deviceId,
     deviceName,
     workspaceRoot,
+    workspaceRoots,
     capabilities,
   });
 
@@ -538,5 +547,44 @@ function readCapabilities(value: unknown): BridgeCapabilities | undefined {
     return undefined;
   }
 
-  return { execRun, readFile };
+  return {
+    execRun,
+    readFile,
+    execStart: optionalBoolean(raw.execStart),
+    execCancel: optionalBoolean(raw.execCancel),
+    execStatus: optionalBoolean(raw.execStatus),
+    execOutputEvents: optionalBoolean(raw.execOutputEvents),
+    fsSearch: optionalBoolean(raw.fsSearch),
+    fsReadRange: optionalBoolean(raw.fsReadRange),
+    fsApplyPatch: optionalBoolean(raw.fsApplyPatch),
+    gitStatus: optionalBoolean(raw.gitStatus),
+    gitDiff: optionalBoolean(raw.gitDiff),
+    gitStage: optionalBoolean(raw.gitStage),
+    gitCommit: optionalBoolean(raw.gitCommit),
+    gitPush: optionalBoolean(raw.gitPush),
+  };
+}
+
+function readStringArray(payload: Record<string, unknown>, key: string): string[] | undefined {
+  const value = payload[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const result: string[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") {
+      continue;
+    }
+    const trimmed = item.trim();
+    if (trimmed) {
+      result.push(trimmed);
+    }
+  }
+
+  return result.length > 0 ? result : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
 }

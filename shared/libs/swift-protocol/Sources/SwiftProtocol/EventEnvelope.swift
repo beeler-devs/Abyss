@@ -47,6 +47,18 @@ public enum JSONValue: Codable, Sendable, Equatable {
         return nil
     }
 
+    public var boolValue: Bool? {
+        if case .bool(let value) = self { return value }
+        return nil
+    }
+
+    public var intValue: Int? {
+        if case .number(let value) = self {
+            return Int(value)
+        }
+        return nil
+    }
+
     public init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
 
@@ -101,6 +113,7 @@ public struct BridgeRegisterPayload: Codable, Sendable {
     public let deviceId: String
     public let deviceName: String
     public let workspaceRoot: String
+    public let workspaceRoots: [String]?
     public let capabilities: BridgeCapabilities
     public let protocolVersion: Int
 
@@ -109,6 +122,7 @@ public struct BridgeRegisterPayload: Codable, Sendable {
         deviceId: String,
         deviceName: String,
         workspaceRoot: String,
+        workspaceRoots: [String]? = nil,
         capabilities: BridgeCapabilities,
         protocolVersion: Int = AbyssProtocol.version
     ) {
@@ -116,18 +130,58 @@ public struct BridgeRegisterPayload: Codable, Sendable {
         self.deviceId = deviceId
         self.deviceName = deviceName
         self.workspaceRoot = workspaceRoot
+        self.workspaceRoots = workspaceRoots
         self.capabilities = capabilities
         self.protocolVersion = protocolVersion
     }
 }
 
 public struct BridgeCapabilities: Codable, Sendable {
-    public let execRun: Bool
-    public let readFile: Bool
+    public var execRun: Bool
+    public var readFile: Bool
+    public var execStart: Bool
+    public var execCancel: Bool
+    public var execStatus: Bool
+    public var execOutputEvents: Bool
+    public var fsSearch: Bool
+    public var fsReadRange: Bool
+    public var fsApplyPatch: Bool
+    public var gitStatus: Bool
+    public var gitDiff: Bool
+    public var gitStage: Bool
+    public var gitCommit: Bool
+    public var gitPush: Bool
 
-    public init(execRun: Bool = true, readFile: Bool = true) {
+    public init(
+        execRun: Bool = true,
+        readFile: Bool = true,
+        execStart: Bool = true,
+        execCancel: Bool = true,
+        execStatus: Bool = true,
+        execOutputEvents: Bool = true,
+        fsSearch: Bool = true,
+        fsReadRange: Bool = true,
+        fsApplyPatch: Bool = true,
+        gitStatus: Bool = true,
+        gitDiff: Bool = true,
+        gitStage: Bool = true,
+        gitCommit: Bool = true,
+        gitPush: Bool = true
+    ) {
         self.execRun = execRun
         self.readFile = readFile
+        self.execStart = execStart
+        self.execCancel = execCancel
+        self.execStatus = execStatus
+        self.execOutputEvents = execOutputEvents
+        self.fsSearch = fsSearch
+        self.fsReadRange = fsReadRange
+        self.fsApplyPatch = fsApplyPatch
+        self.gitStatus = gitStatus
+        self.gitDiff = gitDiff
+        self.gitStage = gitStage
+        self.gitCommit = gitCommit
+        self.gitPush = gitPush
     }
 }
 
@@ -181,6 +235,134 @@ public struct BridgeExecRunResult: Codable, Sendable {
     }
 }
 
+public struct BridgeExecStartArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let command: String
+    public let cwd: String?
+    public let env: [String: String]?
+    public let timeoutSec: Int?
+
+    public init(
+        deviceId: String? = nil,
+        command: String,
+        cwd: String? = nil,
+        env: [String: String]? = nil,
+        timeoutSec: Int? = nil
+    ) {
+        self.deviceId = deviceId
+        self.command = command
+        self.cwd = cwd
+        self.env = env
+        self.timeoutSec = timeoutSec
+    }
+}
+
+public struct BridgeExecStartResult: Codable, Sendable {
+    public let commandId: String
+    public let startedAt: String
+
+    public init(commandId: String, startedAt: String) {
+        self.commandId = commandId
+        self.startedAt = startedAt
+    }
+}
+
+public struct BridgeExecCancelArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let commandId: String
+
+    public init(deviceId: String? = nil, commandId: String) {
+        self.deviceId = deviceId
+        self.commandId = commandId
+    }
+}
+
+public struct BridgeExecCancelResult: Codable, Sendable {
+    public let cancelled: Bool
+
+    public init(cancelled: Bool) {
+        self.cancelled = cancelled
+    }
+}
+
+public struct BridgeExecStatusArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let commandId: String
+
+    public init(deviceId: String? = nil, commandId: String) {
+        self.deviceId = deviceId
+        self.commandId = commandId
+    }
+}
+
+public enum BridgeExecState: String, Codable, Sendable {
+    case running
+    case finished
+    case failed
+    case cancelled
+    case timedOut = "timed_out"
+}
+
+public struct BridgeExecStatusResult: Codable, Sendable {
+    public let state: BridgeExecState
+    public let exitCode: Int32?
+
+    public init(state: BridgeExecState, exitCode: Int32?) {
+        self.state = state
+        self.exitCode = exitCode
+    }
+}
+
+public struct BridgeExecOutputSubscribeArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let commandId: String
+
+    public init(deviceId: String? = nil, commandId: String) {
+        self.deviceId = deviceId
+        self.commandId = commandId
+    }
+}
+
+public struct BridgeExecOutputSubscribeResult: Codable, Sendable {
+    public let subscribed: Bool
+
+    public init(subscribed: Bool) {
+        self.subscribed = subscribed
+    }
+}
+
+public struct BridgeExecOutputEventPayload: Codable, Sendable {
+    public let deviceId: String
+    public let commandId: String
+    public let stream: String
+    public let chunk: String
+    public let isFinal: Bool
+
+    public init(deviceId: String, commandId: String, stream: String, chunk: String, isFinal: Bool) {
+        self.deviceId = deviceId
+        self.commandId = commandId
+        self.stream = stream
+        self.chunk = chunk
+        self.isFinal = isFinal
+    }
+}
+
+public struct BridgeExecFinishedEventPayload: Codable, Sendable {
+    public let deviceId: String
+    public let commandId: String
+    public let exitCode: Int32
+    public let stdoutTail: String
+    public let stderrTail: String
+
+    public init(deviceId: String, commandId: String, exitCode: Int32, stdoutTail: String, stderrTail: String) {
+        self.deviceId = deviceId
+        self.commandId = commandId
+        self.exitCode = exitCode
+        self.stdoutTail = stdoutTail
+        self.stderrTail = stderrTail
+    }
+}
+
 public struct BridgeReadFileArguments: Codable, Sendable {
     public let deviceId: String?
     public let path: String
@@ -196,5 +378,203 @@ public struct BridgeReadFileResult: Codable, Sendable {
 
     public init(content: String) {
         self.content = content
+    }
+}
+
+public struct BridgeSearchArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let query: String
+    public let root: String?
+    public let globs: [String]?
+    public let maxResults: Int?
+
+    public init(
+        deviceId: String? = nil,
+        query: String,
+        root: String? = nil,
+        globs: [String]? = nil,
+        maxResults: Int? = nil
+    ) {
+        self.deviceId = deviceId
+        self.query = query
+        self.root = root
+        self.globs = globs
+        self.maxResults = maxResults
+    }
+}
+
+public struct BridgeSearchMatch: Codable, Sendable {
+    public let path: String
+    public let line: Int
+    public let snippet: String
+
+    public init(path: String, line: Int, snippet: String) {
+        self.path = path
+        self.line = line
+        self.snippet = snippet
+    }
+}
+
+public struct BridgeSearchResult: Codable, Sendable {
+    public let matches: [BridgeSearchMatch]
+
+    public init(matches: [BridgeSearchMatch]) {
+        self.matches = matches
+    }
+}
+
+public struct BridgeReadRangeArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let path: String
+    public let startLine: Int
+    public let endLine: Int
+
+    public init(deviceId: String? = nil, path: String, startLine: Int, endLine: Int) {
+        self.deviceId = deviceId
+        self.path = path
+        self.startLine = startLine
+        self.endLine = endLine
+    }
+}
+
+public struct BridgeReadRangeResult: Codable, Sendable {
+    public let content: String
+
+    public init(content: String) {
+        self.content = content
+    }
+}
+
+public struct BridgeApplyPatchConstraints: Codable, Sendable {
+    public let allowedPaths: [String]?
+    public let noReformat: Bool?
+    public let maxDiffLines: Int?
+
+    public init(allowedPaths: [String]? = nil, noReformat: Bool? = nil, maxDiffLines: Int? = nil) {
+        self.allowedPaths = allowedPaths
+        self.noReformat = noReformat
+        self.maxDiffLines = maxDiffLines
+    }
+}
+
+public struct BridgeApplyPatchArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let unifiedDiff: String
+    public let constraints: BridgeApplyPatchConstraints?
+
+    public init(deviceId: String? = nil, unifiedDiff: String, constraints: BridgeApplyPatchConstraints? = nil) {
+        self.deviceId = deviceId
+        self.unifiedDiff = unifiedDiff
+        self.constraints = constraints
+    }
+}
+
+public struct BridgeApplyPatchResult: Codable, Sendable {
+    public let applied: Bool
+    public let filesChanged: [String]
+    public let reason: String?
+
+    public init(applied: Bool, filesChanged: [String], reason: String? = nil) {
+        self.applied = applied
+        self.filesChanged = filesChanged
+        self.reason = reason
+    }
+}
+
+public struct BridgeGitStatusArguments: Codable, Sendable {
+    public let deviceId: String?
+
+    public init(deviceId: String? = nil) {
+        self.deviceId = deviceId
+    }
+}
+
+public struct BridgeGitStatusResult: Codable, Sendable {
+    public let branch: String
+    public let changedFiles: [String]
+    public let stagedFiles: [String]
+
+    public init(branch: String, changedFiles: [String], stagedFiles: [String]) {
+        self.branch = branch
+        self.changedFiles = changedFiles
+        self.stagedFiles = stagedFiles
+    }
+}
+
+public struct BridgeGitDiffArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let staged: Bool?
+
+    public init(deviceId: String? = nil, staged: Bool? = nil) {
+        self.deviceId = deviceId
+        self.staged = staged
+    }
+}
+
+public struct BridgeGitDiffResult: Codable, Sendable {
+    public let diff: String
+    public let truncated: Bool?
+    public let tail: String?
+
+    public init(diff: String, truncated: Bool? = nil, tail: String? = nil) {
+        self.diff = diff
+        self.truncated = truncated
+        self.tail = tail
+    }
+}
+
+public struct BridgeGitStageArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let paths: [String]
+
+    public init(deviceId: String? = nil, paths: [String]) {
+        self.deviceId = deviceId
+        self.paths = paths
+    }
+}
+
+public struct BridgeGitStageResult: Codable, Sendable {
+    public let staged: [String]
+
+    public init(staged: [String]) {
+        self.staged = staged
+    }
+}
+
+public struct BridgeGitCommitArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let message: String
+
+    public init(deviceId: String? = nil, message: String) {
+        self.deviceId = deviceId
+        self.message = message
+    }
+}
+
+public struct BridgeGitCommitResult: Codable, Sendable {
+    public let commitSha: String
+
+    public init(commitSha: String) {
+        self.commitSha = commitSha
+    }
+}
+
+public struct BridgeGitPushArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let remote: String
+    public let branch: String
+
+    public init(deviceId: String? = nil, remote: String, branch: String) {
+        self.deviceId = deviceId
+        self.remote = remote
+        self.branch = branch
+    }
+}
+
+public struct BridgeGitPushResult: Codable, Sendable {
+    public let pushed: Bool
+
+    public init(pushed: Bool) {
+        self.pushed = pushed
     }
 }

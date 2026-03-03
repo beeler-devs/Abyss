@@ -134,6 +134,10 @@ struct EventRow: View {
                 Image(systemName: "desktopcomputer").foregroundStyle(.green)
             case .bridgeStatus:
                 Image(systemName: "wifi").foregroundStyle(.teal)
+            case .bridgeExecOutput:
+                Image(systemName: "text.line.first.and.arrowtriangle.forward").foregroundStyle(.blue)
+            case .bridgeExecFinished:
+                Image(systemName: "terminal").foregroundStyle(.green)
             }
         }
     }
@@ -180,6 +184,11 @@ struct EventRow: View {
             return "bridge.paired: \(payload.deviceName) [\(payload.status)]"
         case .bridgeStatus(let payload):
             return "bridge.status: \(payload.deviceId.prefix(8)) [\(payload.status)]"
+        case .bridgeExecOutput(let payload):
+            let chunk = payload.chunk.replacingOccurrences(of: "\n", with: " ")
+            return "bridge.exec.output[\(payload.stream)]: \(chunk.prefix(40))"
+        case .bridgeExecFinished(let payload):
+            return "bridge.exec.finished: \(payload.commandId.prefix(8)) exit=\(payload.exitCode)"
         }
     }
 

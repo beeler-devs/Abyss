@@ -21,13 +21,31 @@
         "deviceId": { "type": "string", "minLength": 1 },
         "deviceName": { "type": "string", "minLength": 1 },
         "workspaceRoot": { "type": "string", "minLength": 1 },
+        "workspaceRoots": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1,
+          "maxItems": 32
+        },
         "protocolVersion": { "type": "integer", "minimum": 1 },
         "capabilities": {
           "type": "object",
           "required": ["execRun", "readFile"],
           "properties": {
             "execRun": { "type": "boolean" },
-            "readFile": { "type": "boolean" }
+            "readFile": { "type": "boolean" },
+            "execStart": { "type": "boolean" },
+            "execCancel": { "type": "boolean" },
+            "execStatus": { "type": "boolean" },
+            "execOutputEvents": { "type": "boolean" },
+            "fsSearch": { "type": "boolean" },
+            "fsReadRange": { "type": "boolean" },
+            "fsApplyPatch": { "type": "boolean" },
+            "gitStatus": { "type": "boolean" },
+            "gitDiff": { "type": "boolean" },
+            "gitStage": { "type": "boolean" },
+            "gitCommit": { "type": "boolean" },
+            "gitPush": { "type": "boolean" }
           },
           "additionalProperties": false
         }
@@ -51,6 +69,30 @@
         "deviceId": { "type": "string" },
         "status": { "type": "string", "enum": ["online", "offline"] },
         "lastSeen": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.output": {
+      "type": "object",
+      "required": ["deviceId", "commandId", "stream", "chunk", "isFinal"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "commandId": { "type": "string" },
+        "stream": { "type": "string", "enum": ["stdout", "stderr"] },
+        "chunk": { "type": "string" },
+        "isFinal": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.exec.finished": {
+      "type": "object",
+      "required": ["deviceId", "commandId", "exitCode", "stdoutTail", "stderrTail"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "commandId": { "type": "string" },
+        "exitCode": { "type": "integer" },
+        "stdoutTail": { "type": "string" },
+        "stderrTail": { "type": "string" }
       },
       "additionalProperties": false
     }

@@ -35,6 +35,8 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgePairPending(BridgePairPending)
         case bridgePaired(BridgePaired)
         case bridgeStatus(BridgeStatus)
+        case bridgeExecOutput(BridgeExecOutput)
+        case bridgeExecFinished(BridgeExecFinished)
     }
 
     // MARK: - Payloads
@@ -151,6 +153,22 @@ struct Event: Identifiable, Codable, Sendable {
         let deviceId: String
         let status: String
         let lastSeen: String?
+    }
+
+    struct BridgeExecOutput: Codable, Sendable {
+        let deviceId: String
+        let commandId: String
+        let stream: String
+        let chunk: String
+        let isFinal: Bool
+    }
+
+    struct BridgeExecFinished: Codable, Sendable {
+        let deviceId: String
+        let commandId: String
+        let exitCode: Int
+        let stdoutTail: String
+        let stderrTail: String
     }
 }
 
@@ -276,6 +294,8 @@ extension Event.Kind {
         case .bridgePairPending(let payload): return "bridge.pair.pending: \(payload.pairingCode)"
         case .bridgePaired(let payload): return "bridge.paired: \(payload.deviceName)"
         case .bridgeStatus(let payload): return "bridge.status: \(payload.status)"
+        case .bridgeExecOutput(let payload): return "bridge.exec.output: \(payload.commandId.prefix(8))"
+        case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
         }
     }
 }

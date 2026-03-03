@@ -177,6 +177,49 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(mockSTT.startCallCount, 2)
     }
 
+    func testInterruptEmitsTTSStopBeforeAudioInterruptedEvent() async {
+        let mockConductor = MockConductorClient()
+        let mockSTT = MockSpeechTranscriber()
+        let mockTTS = MockTextToSpeech()
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: mockSTT,
+            tts: mockTTS,
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.setChatActive(true)
+        await waitForCondition { mockSTT.startCallCount == 1 }
+
+        viewModel.interruptAssistantSpeech()
+        await waitForCondition {
+            viewModel.eventBus.events.contains(where: {
+                if case .audioOutputInterrupted = $0.kind { return true }
+                return false
+            })
+        }
+
+        let events = viewModel.eventBus.events
+        guard let ttsStopIndex = events.firstIndex(where: {
+            if case .toolCall(let call) = $0.kind { return call.name == "tts.stop" }
+            return false
+        }) else {
+            XCTFail("Expected tts.stop event")
+            return
+        }
+
+        guard let interruptedIndex = events.firstIndex(where: {
+            if case .audioOutputInterrupted = $0.kind { return true }
+            return false
+        }) else {
+            XCTFail("Expected audio.output.interrupted event")
+            return
+        }
+
+        XCTAssertLessThan(ttsStopIndex, interruptedIndex)
+    }
+
     private func waitForCondition(
         timeoutNanoseconds: UInt64 = 1_000_000_000,
         pollNanoseconds: UInt64 = 20_000_000,

@@ -68,6 +68,51 @@ final class WebSocketConductorClientTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testBridgeExecOutputDeduplicatesRepeatedEventID() async throws {
+        let transport = MockWebSocketTransport()
+        let client = WebSocketConductorClient(
+            backendURL: URL(string: "ws://localhost:8080/ws")!,
+            transportFactory: { transport }
+        )
+
+        var receivedEvents: [Event] = []
+        let collector = Task {
+            for await event in client.inboundEvents {
+                await MainActor.run {
+                    receivedEvents.append(event)
+                }
+            }
+        }
+
+        try await client.connect(sessionId: "session-1", githubToken: nil)
+
+        let outputEvent = Event(
+            id: "evt-bridge-output-1",
+            timestamp: Date(),
+            sessionId: "session-1",
+            kind: .bridgeExecOutput(.init(
+                deviceId: "device-1",
+                commandId: "cmd-1",
+                stream: "stdout",
+                chunk: "line\n",
+                isFinal: false
+            ))
+        )
+
+        transport.emitInboundText(try encodeEnvelope(EventEnvelope(event: outputEvent)))
+        transport.emitInboundText(try encodeEnvelope(EventEnvelope(event: outputEvent)))
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        let outputEvents = receivedEvents.filter {
+            if case .bridgeExecOutput = $0.kind { return true }
+            return false
+        }
+        XCTAssertEqual(outputEvents.count, 1)
+
+        collector.cancel()
+        await client.disconnect()
+    }
+
     private func encodeEnvelope(_ envelope: EventEnvelope) throws -> String {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

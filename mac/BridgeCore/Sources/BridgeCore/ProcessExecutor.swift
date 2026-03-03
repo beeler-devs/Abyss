@@ -84,7 +84,8 @@ public struct ProcessExecutor: Sendable {
             exitCode: timeoutResult.exitCode,
             stdout: stdout,
             stderr: stderr,
-            timedOut: timeoutResult.timedOut
+            timedOut: timeoutResult.timedOut,
+            cancelled: false
         )
     }
 

@@ -146,6 +146,24 @@ struct EventEnvelope: Codable, Sendable {
             }
             type = "bridge.status"
             payload = p
+        case .bridgeExecOutput(let value):
+            type = "bridge.exec.output"
+            payload = [
+                "deviceId": .string(value.deviceId),
+                "commandId": .string(value.commandId),
+                "stream": .string(value.stream),
+                "chunk": .string(value.chunk),
+                "isFinal": .bool(value.isFinal),
+            ]
+        case .bridgeExecFinished(let value):
+            type = "bridge.exec.finished"
+            payload = [
+                "deviceId": .string(value.deviceId),
+                "commandId": .string(value.commandId),
+                "exitCode": .number(Double(value.exitCode)),
+                "stdoutTail": .string(value.stdoutTail),
+                "stderrTail": .string(value.stderrTail),
+            ]
         }
     }
 
@@ -252,6 +270,22 @@ struct EventEnvelope: Codable, Sendable {
                 deviceId: try requireString("deviceId"),
                 status: payload["status"]?.stringValue ?? "offline",
                 lastSeen: payload["lastSeen"]?.stringValue
+            ))
+        case "bridge.exec.output":
+            kind = .bridgeExecOutput(Event.BridgeExecOutput(
+                deviceId: try requireString("deviceId"),
+                commandId: try requireString("commandId"),
+                stream: payload["stream"]?.stringValue ?? "stdout",
+                chunk: payload["chunk"]?.stringValue ?? "",
+                isFinal: payload["isFinal"]?.boolValue ?? false
+            ))
+        case "bridge.exec.finished":
+            kind = .bridgeExecFinished(Event.BridgeExecFinished(
+                deviceId: try requireString("deviceId"),
+                commandId: try requireString("commandId"),
+                exitCode: payload["exitCode"]?.intValue ?? -1,
+                stdoutTail: payload["stdoutTail"]?.stringValue ?? "",
+                stderrTail: payload["stderrTail"]?.stringValue ?? ""
             ))
         case "bridge.device.selection.required":
             kind = .error(Event.ErrorInfo(

@@ -3,6 +3,18 @@ export type BridgeDeviceStatus = "online" | "offline";
 export interface BridgeCapabilities {
   execRun: boolean;
   readFile: boolean;
+  execStart?: boolean;
+  execCancel?: boolean;
+  execStatus?: boolean;
+  execOutputEvents?: boolean;
+  fsSearch?: boolean;
+  fsReadRange?: boolean;
+  fsApplyPatch?: boolean;
+  gitStatus?: boolean;
+  gitDiff?: boolean;
+  gitStage?: boolean;
+  gitCommit?: boolean;
+  gitPush?: boolean;
 }
 
 export interface PairingRequest {
@@ -18,6 +30,7 @@ export interface BridgeRegistration {
   deviceId: string;
   deviceName: string;
   workspaceRoot: string;
+  workspaceRoots?: string[];
   capabilities: BridgeCapabilities;
 }
 
@@ -26,6 +39,7 @@ export interface BridgeDeviceRecord {
   sessionId: string;
   deviceName: string;
   workspaceRoot: string;
+  workspaceRoots?: string[];
   capabilities: BridgeCapabilities;
   status: BridgeDeviceStatus;
   lastSeen: string;
@@ -102,6 +116,7 @@ export class BridgeStateStore {
       sessionId: pairing?.sessionId ?? existing!.sessionId,
       deviceName: registration.deviceName,
       workspaceRoot: registration.workspaceRoot,
+      workspaceRoots: registration.workspaceRoots,
       capabilities: registration.capabilities,
       status: "online",
       lastSeen: nowIso,
