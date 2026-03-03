@@ -94,3 +94,24 @@ func commandManagerTailTruncation() async throws {
     #expect(completion.exitCode == 0)
     #expect(completion.stdoutTail.contains("truncated"))
 }
+
+@Test("Claude JSON parser handles successful output")
+func parseClaudeJSONSuccess() {
+    let parsed = parseClaudeCLIResult(
+        from: "{\"type\":\"result\",\"result\":\"Applied fix\",\"session_id\":\"abc-123\",\"is_error\":false}"
+    )
+
+    #expect(parsed?.result == "Applied fix")
+    #expect(parsed?.sessionId == "abc-123")
+    #expect(parsed?.isError == false)
+}
+
+@Test("Claude JSON parser handles error output")
+func parseClaudeJSONError() {
+    let parsed = parseClaudeCLIResult(
+        from: "{\"type\":\"result\",\"result\":\"Not logged in\",\"session_id\":\"abc-123\",\"is_error\":true}"
+    )
+
+    #expect(parsed?.result == "Not logged in")
+    #expect(parsed?.isError == true)
+}

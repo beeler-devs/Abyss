@@ -29,6 +29,7 @@ export interface BridgeCapabilities {
   gitStage?: boolean;
   gitCommit?: boolean;
   gitPush?: boolean;
+  claudeRun?: boolean;
 }
 
 export interface BridgeRegisterPayload {
@@ -216,4 +217,17 @@ export interface BridgeGitPushArgs {
 
 export interface BridgeGitPushResult {
   pushed: boolean;
+}
+
+export interface BridgeClaudeRunArgs {
+  deviceId?: string;
+  prompt: string;
+  cwd?: string;
+  timeoutSec?: number;
+  allowedTools?: string;
+}
+
+export interface BridgeClaudeRunResult {
+  result: string;
+  sessionId?: string;
 }

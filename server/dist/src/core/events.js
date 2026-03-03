@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+export const PROTOCOL_VERSION = 1;
 export function parseIncomingEvent(raw, maxBytes) {
     const size = Buffer.byteLength(raw, "utf8");
     if (size > maxBytes) {
@@ -19,6 +20,7 @@ export function parseIncomingEvent(raw, maxBytes) {
     const type = value.type;
     const timestamp = value.timestamp;
     const sessionId = value.sessionId;
+    const protocolVersion = value.protocolVersion;
     const payload = value.payload;
     if (typeof id !== "string" || !id.trim()) {
         return { error: "missing_id" };
@@ -32,6 +34,11 @@ export function parseIncomingEvent(raw, maxBytes) {
     if (typeof sessionId !== "string" || !sessionId.trim()) {
         return { error: "missing_session_id" };
     }
+    if (typeof protocolVersion !== "number"
+        || !Number.isInteger(protocolVersion)
+        || protocolVersion <= 0) {
+        return { error: "missing_protocol_version" };
+    }
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
         return { error: "missing_payload" };
     }
@@ -41,6 +48,7 @@ export function parseIncomingEvent(raw, maxBytes) {
             type,
             timestamp,
             sessionId,
+            protocolVersion,
             payload: payload,
         },
     };
@@ -51,8 +59,17 @@ export function makeEvent(type, sessionId, payload, id = crypto.randomUUID(), ti
         type,
         timestamp,
         sessionId,
+        protocolVersion: PROTOCOL_VERSION,
         payload,
     };
+}
+export function makeDeterministicEventId(seed) {
+    const normalized = seed.trim();
+    const hash = crypto
+        .createHash("sha256")
+        .update(normalized || "abyss")
+        .digest("hex");
+    return `evt_${hash.slice(0, 24)}`;
 }
 export function asString(value) {
     return typeof value === "string" ? value : undefined;

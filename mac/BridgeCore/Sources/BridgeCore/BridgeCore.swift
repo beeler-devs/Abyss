@@ -444,6 +444,43 @@ public actor BridgeCore {
 
                 resultText = encodeJSONString(try gitPush(remote: args.remote, branch: args.branch))
 
+            case "bridge.claude.run":
+                let args = try decodeArguments(BridgeClaudeRunArguments.self, json: payload.arguments)
+                let cwd = try policy.resolveCWD(relativeCWD: args.cwd)
+                let timeoutSec = max(1, min(args.timeoutSec ?? 120, 600))
+                let allowedTools = args.allowedTools ?? "Bash,Read,Edit"
+
+                func shellEscape(_ str: String) -> String {
+                    return "'" + str.replacingOccurrences(of: "'", with: "'\\''") + "'"
+                }
+
+                let command = "claude -p \(shellEscape(args.prompt)) --allowedTools \(shellEscape(allowedTools)) --output-format json"
+
+                let result = try executor.run(
+                    command: command,
+                    cwd: cwd,
+                    timeoutSec: timeoutSec,
+                    outputLimitBytes: config.outputLimitBytes
+                )
+                lastExitCode = result.exitCode
+                await emitStatus()
+
+                let claudeOutput = result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let parsed = parseClaudeCLIResult(from: claudeOutput)
+                let fallbackError = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if result.exitCode != 0 || parsed?.isError == true {
+                    let errorMsg = firstNonEmptyString([
+                        parsed?.result,
+                        fallbackError,
+                        claudeOutput,
+                    ]) ?? "claude exited with code \(result.exitCode)"
+                    throw BridgeCoreError.internalError(errorMsg)
+                }
+
+                let resultString = firstNonEmptyString([parsed?.result, claudeOutput]) ?? ""
+                resultText = encodeJSONString(BridgeClaudeRunResult(result: resultString, sessionId: parsed?.sessionId))
+
             default:
                 throw BridgeCoreError.unsupportedTool(payload.name)
             }
@@ -1033,4 +1070,33 @@ public actor BridgeCore {
         }
         return deduped
     }
+}
+
+struct ClaudeCLIResult: Decodable, Sendable {
+    let result: String?
+    let sessionId: String?
+    let isError: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case result
+        case sessionId = "session_id"
+        case isError = "is_error"
+    }
+}
+
+func parseClaudeCLIResult(from output: String) -> ClaudeCLIResult? {
+    guard !output.isEmpty, let data = output.data(using: .utf8) else {
+        return nil
+    }
+    return try? JSONDecoder().decode(ClaudeCLIResult.self, from: data)
+}
+
+func firstNonEmptyString(_ candidates: [String?]) -> String? {
+    for candidate in candidates {
+        guard let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+            continue
+        }
+        return value
+    }
+    return nil
 }

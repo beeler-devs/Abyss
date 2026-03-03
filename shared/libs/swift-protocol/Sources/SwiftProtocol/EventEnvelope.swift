@@ -151,6 +151,7 @@ public struct BridgeCapabilities: Codable, Sendable {
     public var gitStage: Bool
     public var gitCommit: Bool
     public var gitPush: Bool
+    public var claudeRun: Bool
 
     public init(
         execRun: Bool = true,
@@ -166,7 +167,8 @@ public struct BridgeCapabilities: Codable, Sendable {
         gitDiff: Bool = true,
         gitStage: Bool = true,
         gitCommit: Bool = true,
-        gitPush: Bool = true
+        gitPush: Bool = true,
+        claudeRun: Bool = false
     ) {
         self.execRun = execRun
         self.readFile = readFile
@@ -182,6 +184,7 @@ public struct BridgeCapabilities: Codable, Sendable {
         self.gitStage = gitStage
         self.gitCommit = gitCommit
         self.gitPush = gitPush
+        self.claudeRun = claudeRun
     }
 }
 
@@ -576,5 +579,31 @@ public struct BridgeGitPushResult: Codable, Sendable {
 
     public init(pushed: Bool) {
         self.pushed = pushed
+    }
+}
+
+public struct BridgeClaudeRunArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let prompt: String
+    public let cwd: String?
+    public let timeoutSec: Int?
+    public let allowedTools: String?
+
+    public init(deviceId: String? = nil, prompt: String, cwd: String? = nil, timeoutSec: Int? = nil, allowedTools: String? = nil) {
+        self.deviceId = deviceId
+        self.prompt = prompt
+        self.cwd = cwd
+        self.timeoutSec = timeoutSec
+        self.allowedTools = allowedTools
+    }
+}
+
+public struct BridgeClaudeRunResult: Codable, Sendable {
+    public let result: String
+    public let sessionId: String?
+
+    public init(result: String, sessionId: String? = nil) {
+        self.result = result
+        self.sessionId = sessionId
     }
 }

@@ -45,7 +45,8 @@
             "gitDiff": { "type": "boolean" },
             "gitStage": { "type": "boolean" },
             "gitCommit": { "type": "boolean" },
-            "gitPush": { "type": "boolean" }
+            "gitPush": { "type": "boolean" },
+            "claudeRun": { "type": "boolean" }
           },
           "additionalProperties": false
         }

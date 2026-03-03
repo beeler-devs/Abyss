@@ -213,6 +213,39 @@ Result:
 { "pushed": true }
 ```
 
+## `bridge.claude.run`
+
+Arguments:
+
+```json
+{
+  "deviceId": "string (optional)",
+  "prompt": "string",
+  "cwd": "string (optional, relative to workspace root)",
+  "timeoutSec": 120,
+  "allowedTools": "Bash,Read,Edit"
+}
+```
+
+Result:
+
+```json
+{
+  "result": "...",
+  "sessionId": "string (optional)"
+}
+```
+
+Rules:
+- `prompt` is required
+- `timeoutSec` defaults to `120`, capped to `600`
+- `timeoutSec` must be an integer number of seconds
+- `allowedTools` defaults to `Bash,Read,Edit`
+- output is truncated by bridge policy
+- `cwd` must stay inside workspace root
+- requires Claude Code CLI installed and authenticated on the Mac
+- selected bridge must advertise `claudeRun: true` capability
+
 ## Routing Rules
 
 - If `deviceId` is omitted and exactly one online bridge is paired, server routes there.
