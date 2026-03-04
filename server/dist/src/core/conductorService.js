@@ -200,9 +200,60 @@ const SERVER_BRIDGE_TOOLS = [
                 deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
                 command: { type: "string", description: "Shell command to execute (example: npm test)." },
                 cwd: { type: "string", description: "Optional relative directory under workspace root." },
-                timeoutSec: { type: "integer", description: "Optional command timeout in seconds (max 600)." },
+                timeoutSec: { type: "number", description: "Optional command timeout in seconds (max 900)." },
             },
             required: ["command"],
+        },
+    },
+    {
+        name: "bridge.exec.start",
+        description: "Start a shell command on Bridge and stream output with bridge.exec.output events.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                command: { type: "string" },
+                cwd: { type: "string" },
+                env: { type: "object" },
+                timeoutSec: { type: "number" },
+            },
+            required: ["command"],
+        },
+    },
+    {
+        name: "bridge.exec.cancel",
+        description: "Cancel a running Bridge command by commandId.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                commandId: { type: "string" },
+            },
+            required: ["commandId"],
+        },
+    },
+    {
+        name: "bridge.exec.status",
+        description: "Check status for a Bridge commandId.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                commandId: { type: "string" },
+            },
+            required: ["commandId"],
+        },
+    },
+    {
+        name: "bridge.exec.output.subscribe",
+        description: "Subscribe to output stream for a Bridge commandId (no-op when push events already enabled).",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                commandId: { type: "string" },
+            },
+            required: ["commandId"],
         },
     },
     {
@@ -218,6 +269,106 @@ const SERVER_BRIDGE_TOOLS = [
         },
     },
     {
+        name: "bridge.fs.search",
+        description: "Search text in the Bridge workspace using ripgrep when available.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                query: { type: "string" },
+                root: { type: "string" },
+                globs: { type: "array" },
+                maxResults: { type: "number" },
+            },
+            required: ["query"],
+        },
+    },
+    {
+        name: "bridge.fs.readRange",
+        description: "Read a line range from a Bridge workspace file.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                path: { type: "string" },
+                startLine: { type: "number" },
+                endLine: { type: "number" },
+            },
+            required: ["path", "startLine", "endLine"],
+        },
+    },
+    {
+        name: "bridge.fs.applyPatch",
+        description: "Apply a unified diff patch inside the Bridge workspace.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                unifiedDiff: { type: "string" },
+                constraints: { type: "object" },
+            },
+            required: ["unifiedDiff"],
+        },
+    },
+    {
+        name: "bridge.git.status",
+        description: "Get git branch and changed/staged files for the Bridge workspace.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+            },
+        },
+    },
+    {
+        name: "bridge.git.diff",
+        description: "Get git diff (optionally staged) for the Bridge workspace.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                staged: { type: "boolean" },
+            },
+        },
+    },
+    {
+        name: "bridge.git.stage",
+        description: "Stage selected file paths in Bridge workspace.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                paths: { type: "array" },
+            },
+            required: ["paths"],
+        },
+    },
+    {
+        name: "bridge.git.commit",
+        description: "Commit staged Bridge workspace changes.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                message: { type: "string" },
+            },
+            required: ["message"],
+        },
+    },
+    {
+        name: "bridge.git.push",
+        description: "Push a branch from Bridge workspace to remote.",
+        input_schema: {
+            type: "object",
+            properties: {
+                deviceId: { type: "string" },
+                remote: { type: "string" },
+                branch: { type: "string" },
+            },
+            required: ["remote", "branch"],
+        },
+    },
+    {
         name: "bridge.claude.run",
         description: "Run Claude Code on a paired Mac to execute an AI-assisted task (e.g. fix a bug, analyze code). Requires a bridge device with claudeRun capability. For simple shell commands use bridge.exec.run instead.",
         input_schema: {
@@ -226,8 +377,9 @@ const SERVER_BRIDGE_TOOLS = [
                 deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
                 prompt: { type: "string", description: "The task prompt for Claude Code (e.g. 'fix the failing test in src/auth.ts')." },
                 cwd: { type: "string", description: "Optional relative directory under workspace root." },
-                timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 120, max 600)." },
-                allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit)." },
+                timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 660, max 660)." },
+                allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit)." },
+                maxTurns: { type: "integer", description: "Max agentic turns for Claude Code (default 30, max 100). Lower values finish faster but may leave tasks incomplete." },
             },
             required: ["prompt"],
         },
@@ -272,6 +424,8 @@ export class ConductorService {
     webhookPendingTtlMs;
     now;
     bridgeToolExecutor;
+    conversationPollers = new Map();
+    static CONVERSATION_POLL_INTERVAL_MS = 3_000;
     bridgeToolAvailability;
     constructor(provider, config, dependencies = {}) {
         this.provider = provider;
@@ -378,6 +532,25 @@ export class ConductorService {
                 return;
             }
             case "audio.output.interrupted": {
+                if (this.bridgeToolExecutor && session.activeBridgeCommandId) {
+                    const cancelArgs = {
+                        commandId: session.activeBridgeCommandId,
+                    };
+                    if (session.activeBridgeDeviceId) {
+                        cancelArgs.deviceId = session.activeBridgeDeviceId;
+                    }
+                    const cancelResult = await this.bridgeToolExecutor({
+                        callId: crypto.randomUUID(),
+                        sessionId: session.sessionId,
+                        toolName: "bridge.exec.cancel",
+                        args: cancelArgs,
+                        timeoutMs: 5_000,
+                    }, emit);
+                    if (!cancelResult.error) {
+                        session.activeBridgeCommandId = undefined;
+                        session.activeBridgeDeviceId = undefined;
+                    }
+                }
                 logger.info("audio output interrupted", {
                     sessionId: session.sessionId,
                     eventId: event.id,
@@ -621,6 +794,31 @@ export class ConductorService {
                 };
             }
         }
+        const searchMatch = normalized.match(/^(search|find)(?: for)?\s+['"]?(.+?)['"]?$/i);
+        if (searchMatch) {
+            const query = searchMatch[2]?.trim();
+            if (query) {
+                return {
+                    id: crypto.randomUUID(),
+                    name: "bridge.fs.search",
+                    input: { query },
+                };
+            }
+        }
+        const rangeMatch = normalized.match(/^(open|read)\s+(.+?)\s+(?:around|at)\s+line\s+(\d+)$/i);
+        if (rangeMatch) {
+            const path = rangeMatch[2]?.trim();
+            const center = Number.parseInt(rangeMatch[3] ?? "", 10);
+            if (path && Number.isFinite(center) && center > 0) {
+                const startLine = Math.max(1, center - 20);
+                const endLine = center + 20;
+                return {
+                    id: crypto.randomUUID(),
+                    name: "bridge.fs.readRange",
+                    input: { path, startLine, endLine },
+                };
+            }
+        }
         const readMatch = normalized.match(/^(read file|open file)\s+(.+)$/i);
         if (readMatch) {
             const path = readMatch[2]?.trim();
@@ -702,6 +900,9 @@ export class ConductorService {
                         summary: statusResult.summary,
                         spawnCallId: existing?.spawnCallId,
                     });
+                    if (isTerminalAgentStatus(statusResult.status)) {
+                        this.stopConversationPolling(agentId);
+                    }
                     return {
                         result: stableJSONStringify({
                             agentId,
@@ -805,26 +1006,59 @@ export class ConductorService {
                     };
                 }
                 case "bridge.exec.run":
-                case "bridge.fs.readFile": {
+                case "bridge.exec.start":
+                case "bridge.exec.cancel":
+                case "bridge.exec.status":
+                case "bridge.exec.output.subscribe":
+                case "bridge.fs.readFile":
+                case "bridge.fs.search":
+                case "bridge.fs.readRange":
+                case "bridge.fs.applyPatch":
+                case "bridge.git.status":
+                case "bridge.git.diff":
+                case "bridge.git.stage":
+                case "bridge.git.commit":
+                case "bridge.git.push": {
                     if (!this.bridgeToolExecutor) {
                         return { result: null, error: "bridge_not_configured" };
                     }
                     const timeoutSecRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
-                    const timeoutMs = Math.max(1, Math.min(600, Math.trunc(timeoutSecRaw ?? 60))) * 1_000;
-                    return await this.bridgeToolExecutor({
+                    const timeoutMs = Math.max(1, Math.min(900, Math.trunc(timeoutSecRaw ?? 60))) * 1_000;
+                    const bridgeResult = await this.bridgeToolExecutor({
                         callId,
                         sessionId: session.sessionId,
                         toolName,
                         args,
                         timeoutMs,
                     }, emit);
+                    if (!bridgeResult.error && bridgeResult.result) {
+                        if (toolName === "bridge.exec.start") {
+                            try {
+                                const parsed = JSON.parse(bridgeResult.result);
+                                const commandId = typeof parsed.commandId === "string" ? parsed.commandId : undefined;
+                                const deviceId = typeof args.deviceId === "string" ? args.deviceId : undefined;
+                                if (commandId) {
+                                    session.activeBridgeCommandId = commandId;
+                                    session.activeBridgeDeviceId = deviceId;
+                                }
+                            }
+                            catch {
+                                // ignore parse failure
+                            }
+                        }
+                        if (toolName === "bridge.exec.cancel") {
+                            session.activeBridgeCommandId = undefined;
+                            session.activeBridgeDeviceId = undefined;
+                        }
+                    }
+                    return bridgeResult;
                 }
                 case "bridge.claude.run": {
                     if (!this.bridgeToolExecutor) {
                         return { result: null, error: "bridge_not_configured" };
                     }
                     const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
-                    const claudeTimeoutMs = Math.max(1, Math.min(600, Math.trunc(claudeTimeoutRaw ?? 120))) * 1_000;
+                    const claudeTimeoutMs = Math.max(1, Math.min(660, Math.trunc(claudeTimeoutRaw ?? 660))) * 1_000;
                     return await this.bridgeToolExecutor({
                         callId,
                         sessionId: session.sessionId,
@@ -909,6 +1143,7 @@ export class ConductorService {
             eventSeed: `spawn:${spawnCallId}`,
             webhookDriven: this.cursorClient.hasWebhookConfig(),
         });
+        this.startConversationPolling(details.agentId, sessionId, emit);
         const pending = this.sessions.takePendingWebhook(run.agentId, this.now().getTime());
         if (!pending) {
             return;
@@ -939,8 +1174,10 @@ export class ConductorService {
             timestamp: parsedWebhook.occurredAt,
         });
         if (!isTerminalAgentStatus(normalizedStatus)) {
+            this.startConversationPolling(parsedWebhook.agent.agentId, sessionId, emit);
             return;
         }
+        this.stopConversationPolling(parsedWebhook.agent.agentId);
         const completedPayload = {
             agentId: updatedRun.agentId,
             status: normalizedStatus,
@@ -979,6 +1216,65 @@ export class ConductorService {
             branchName: run.branchName,
             webhookDriven: options.webhookDriven,
         }, eventId, timestamp));
+    }
+    startConversationPolling(agentId, sessionId, emit) {
+        if (this.conversationPollers.has(agentId)) {
+            return;
+        }
+        const poll = async () => {
+            const run = this.sessions.getCursorRun(agentId);
+            if (!run || isTerminalAgentStatus(run.status)) {
+                this.stopConversationPolling(agentId);
+                await this.pollConversation(agentId, sessionId, emit);
+                return;
+            }
+            await this.pollConversation(agentId, sessionId, emit);
+        };
+        const timer = setInterval(poll, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
+        timer.unref?.();
+        this.conversationPollers.set(agentId, timer);
+        poll().catch(() => { });
+    }
+    stopConversationPolling(agentId) {
+        const timer = this.conversationPollers.get(agentId);
+        if (timer) {
+            clearInterval(timer);
+            this.conversationPollers.delete(agentId);
+        }
+    }
+    async pollConversation(agentId, sessionId, emit) {
+        try {
+            const result = await this.cursorClient.conversation(agentId);
+            const run = this.sessions.getCursorRun(agentId);
+            const lastSeenId = run?.lastSeenConversationMessageId;
+            let newMessages = result.messages;
+            if (lastSeenId) {
+                const lastSeenIndex = result.messages.findIndex((m) => m.id === lastSeenId);
+                if (lastSeenIndex >= 0) {
+                    newMessages = result.messages.slice(lastSeenIndex + 1);
+                }
+            }
+            if (newMessages.length === 0) {
+                return;
+            }
+            const lastMsg = newMessages[newMessages.length - 1];
+            if (run) {
+                run.lastSeenConversationMessageId = lastMsg.id;
+            }
+            const eventId = makeDeterministicEventId(`agent.conversation|${agentId}|${lastMsg.id}`);
+            emit(makeEvent("agent.conversation", sessionId, {
+                agentId,
+                messages: newMessages.map((m) => ({
+                    id: m.id,
+                    type: m.type,
+                    text: m.text,
+                })),
+            }, eventId));
+        }
+        catch (error) {
+            const message = error instanceof Error ? error.message : "unknown";
+            logger.warn(`conversation poll failed for ${agentId}: ${message}`, { agentId });
+        }
     }
 }
 function stableJSONStringify(value) {

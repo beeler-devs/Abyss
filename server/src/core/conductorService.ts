@@ -27,6 +27,7 @@ import {
 export interface ConductorServiceConfig {
   maxTurns: number;
   rateLimitPerMinute: number;
+  traceMaxEntries?: number;
 }
 
 export interface ConductorServiceDependencies {
@@ -35,6 +36,7 @@ export interface ConductorServiceDependencies {
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
   bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
+  verboseToolRoutingLogs?: boolean;
 }
 
 export interface CursorWebhookHandleResult {
@@ -425,8 +427,9 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
         deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
         prompt: { type: "string", description: "The task prompt for Claude Code (e.g. 'fix the failing test in src/auth.ts')." },
         cwd: { type: "string", description: "Optional relative directory under workspace root." },
-        timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 300, max 600)." },
+        timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 660, max 660)." },
         allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit)." },
+        maxTurns: { type: "integer", description: "Max agentic turns for Claude Code (default 30, max 100). Lower values finish faster but may leave tasks incomplete." },
       },
       required: ["prompt"],
     },
@@ -484,15 +487,21 @@ export class ConductorService {
   private readonly conversationPollers = new Map<string, ReturnType<typeof setInterval>>();
   private static readonly CONVERSATION_POLL_INTERVAL_MS = 3_000;
   private readonly bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
+  private readonly verboseToolRoutingLogs: boolean;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
-    this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute);
+    this.sessions = new SessionStore(
+      config.maxTurns,
+      config.rateLimitPerMinute,
+      config.traceMaxEntries ?? 120,
+    );
     this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
     this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
+    this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
   }
 
   createRateLimiter() {
@@ -739,7 +748,6 @@ export class ConductorService {
     session.recentTranscriptTrace = [];
 
     const tracePush = (value: string): void => {
-      session.recentTranscriptTrace.push(value);
       this.sessions.recordTrace(session, value);
     };
 
@@ -820,12 +828,36 @@ export class ConductorService {
 
           if (this.shouldExecuteServerTool(toolCall.name)) {
             tracePush(`tool.server:${toolCall.name}`);
+            const dispatchPreview = this.verboseToolRoutingLogs
+              ? ` args=${summarizeArgsForLog(toolCall.input)}`
+              : "";
+            logger.info(
+              `tool.server.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}${dispatchPreview}`,
+              {
+                sessionId: session.sessionId,
+                eventId: sourceEventId,
+                callId,
+              },
+            );
+            const startedAtMs = Date.now();
             const execution = await this.executeServerTool(
               session,
               callId,
               toolCall.name,
               toolCall.input,
               emit,
+            );
+            const outcome = execution.error ? "error" : "ok";
+            const errorPreview = execution.error && this.verboseToolRoutingLogs
+              ? ` error=${summarizeValueForLog(execution.error)}`
+              : "";
+            logger.info(
+              `tool.server.result tool=${toolCall.name} outcome=${outcome} durationMs=${Date.now() - startedAtMs}${errorPreview}`,
+              {
+                sessionId: session.sessionId,
+                eventId: sourceEventId,
+                callId,
+              },
             );
 
             this.sessions.appendTurn(session, {
@@ -1268,7 +1300,7 @@ export class ConductorService {
           }
 
           const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
-          const claudeTimeoutMs = Math.max(1, Math.min(600, Math.trunc(claudeTimeoutRaw ?? 300))) * 1_000;
+          const claudeTimeoutMs = Math.max(1, Math.min(660, Math.trunc(claudeTimeoutRaw ?? 660))) * 1_000;
           return await this.bridgeToolExecutor({
             callId,
             sessionId: session.sessionId,
@@ -1601,4 +1633,47 @@ function sortJSONValue(value: unknown): unknown {
     .map(([key, nested]) => [key, sortJSONValue(nested)] as const);
 
   return Object.fromEntries(entries);
+}
+
+function summarizeArgsForLog(args: Record<string, unknown>, maxLen = 80): string {
+  const preferredKeys = ["prompt", "command", "repoUrl", "repository", "path", "query", "pattern"];
+  for (const key of preferredKeys) {
+    if (!(key in args)) {
+      continue;
+    }
+    const summary = summarizeValueForLog(args[key], maxLen);
+    if (summary) {
+      return `${key}=${summary}`;
+    }
+  }
+
+  const keys = Object.keys(args).sort();
+  if (keys.length === 0) {
+    return "keys=[]";
+  }
+  return summarizeValueForLog(`keys=[${keys.join(",")}]`, maxLen) ?? "keys=[]";
+}
+
+function summarizeValueForLog(value: unknown, maxLen = 80): string | null {
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    const json = JSON.stringify(value);
+    if (!json) {
+      return null;
+    }
+    text = json;
+  }
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized.length <= maxLen) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLen - 1)}…`;
 }

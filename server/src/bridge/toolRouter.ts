@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { makeEvent } from "../core/events.js";
+import { logger } from "../core/logger.js";
 import { EventEnvelope } from "../core/types.js";
 import { BridgeDeviceRecord, BridgeStateStore } from "./state.js";
 
@@ -47,6 +48,13 @@ interface BridgeExecFinishedPayload {
   stderrTail: string;
 }
 
+interface ActiveClaudeRunMeta {
+  sessionId: string;
+  callId: string;
+  startedAtMs: number;
+  timeoutMs: number;
+}
+
 export interface BridgeToolRouteRequest {
   callId: string;
   sessionId: string;
@@ -59,6 +67,7 @@ export interface BridgeToolRouterDependencies {
   state: BridgeStateStore;
   sendToBridge: (deviceId: string, event: EventEnvelope) => boolean;
   emitToIOS: (event: EventEnvelope) => void;
+  verboseToolRoutingLogs?: boolean;
 }
 
 export class BridgeToolRouter {
@@ -69,16 +78,25 @@ export class BridgeToolRouter {
   private readonly pendingRunsByCommandId = new Map<string, PendingRunWaiter[]>();
   private readonly activeCommandBySession = new Map<string, { commandId: string; deviceId: string }>();
   private readonly narrationByCommandId = new Map<string, CommandNarrationState>();
+  // stream-json parsing for bridge.claude.run
+  private readonly activeClaudeRunsByDeviceId = new Map<string, ActiveClaudeRunMeta>();
+  private readonly activeClaudeRunByCommandId = new Map<string, ActiveClaudeRunMeta>();
+  private readonly activeClaudeCommandIdByDeviceId = new Map<string, string>(); // deviceId → commandId
+  private readonly claudeLineBuffers = new Map<string, string>(); // commandId → partial line
+  private readonly lastClaudeProgressAt = new Map<string, number>(); // commandId → ms
+  private readonly claudeExitCodeByCommandId = new Map<string, number>();
+  private readonly verboseToolRoutingLogs: boolean;
 
   constructor(deps: BridgeToolRouterDependencies) {
     this.state = deps.state;
     this.sendToBridge = deps.sendToBridge;
     this.emitToIOS = deps.emitToIOS;
+    this.verboseToolRoutingLogs = deps.verboseToolRoutingLogs ?? false;
   }
 
   async execute(request: BridgeToolRouteRequest): Promise<{ result: string | null; error: string | null }> {
     const requestedDeviceId = optionalString(request.args.deviceId);
-    const resolved = this.state.resolveDeviceForTool(request.sessionId, requestedDeviceId, request.toolName);
+    const resolved = this.state.resolveDeviceForTool(request.sessionId, requestedDeviceId);
 
     if (!resolved.device) {
       if (resolved.selectionRequired?.length) {
@@ -208,12 +226,39 @@ export class BridgeToolRouter {
         this.narrationByCommandId.delete(commandId);
       }
     }
+
+    const claudeCommandId = this.activeClaudeCommandIdByDeviceId.get(deviceId);
+    if (claudeCommandId) {
+      this.activeClaudeCommandIdByDeviceId.delete(deviceId);
+      this.activeClaudeRunByCommandId.delete(claudeCommandId);
+      this.claudeLineBuffers.delete(claudeCommandId);
+      this.lastClaudeProgressAt.delete(claudeCommandId);
+      this.claudeExitCodeByCommandId.delete(claudeCommandId);
+    }
+    this.activeClaudeRunsByDeviceId.delete(deviceId);
   }
 
   private async executeClaudeRun(
     request: BridgeToolRouteRequest,
     deviceId: string,
   ): Promise<{ result: string | null; error: string | null }> {
+    const startedAtMs = Date.now();
+    this.activeClaudeRunsByDeviceId.set(deviceId, {
+      sessionId: request.sessionId,
+      callId: request.callId,
+      startedAtMs,
+      timeoutMs: request.timeoutMs,
+    });
+
+    const promptPreview = this.verboseToolRoutingLogs
+      ? ` prompt=${summarizeValueForLog(request.args.prompt) ?? "<empty>"}`
+      : "";
+    logger.info(`bridge.claude.run.start timeoutMs=${request.timeoutMs}${promptPreview}`, {
+      sessionId: request.sessionId,
+      deviceId,
+      callId: request.callId,
+    });
+
     this.emitAssistantSpeechToolCall(
       request.sessionId,
       "Running Claude Code on your Mac. This may take a few minutes.",
@@ -229,19 +274,59 @@ export class BridgeToolRouter {
       minuteCount += 1;
     }, 60_000);
 
-    const result = await this.invokeBridgeTool({
-      callId: request.callId,
-      resultCallId: request.callId,
-      sessionId: request.sessionId,
-      deviceId,
-      toolName: request.toolName,
-      args: request.args,
-      timeoutMs: request.timeoutMs,
-      emitResultToIOS: true,
-    });
+    let finishError: string | null = null;
+    try {
+      const result = await this.invokeBridgeTool({
+        callId: request.callId,
+        resultCallId: request.callId,
+        sessionId: request.sessionId,
+        deviceId,
+        toolName: request.toolName,
+        args: request.args,
+        timeoutMs: request.timeoutMs,
+        emitResultToIOS: true,
+      });
 
-    clearInterval(progressInterval);
-    return result;
+      if (result.error === "bridge_tool_timeout") {
+        finishError = "bridge.claude.run timed out. Do not retry bridge.claude.run. Tell the user Claude Code took too long and the task did not complete.";
+        return {
+          result: null,
+          error: finishError,
+        };
+      }
+
+      finishError = result.error;
+      return result;
+    } catch (error) {
+      finishError = error instanceof Error ? error.message : "unknown_bridge_claude_run_error";
+      throw error;
+    } finally {
+      clearInterval(progressInterval);
+      const commandId = this.activeClaudeCommandIdByDeviceId.get(deviceId);
+      const exitCode = commandId ? this.claudeExitCodeByCommandId.get(commandId) : undefined;
+      const outcome = finishError ? "error" : "ok";
+      const errorPreview = finishError
+        ? ` error=${summarizeValueForLog(finishError) ?? "unknown"}`
+        : "";
+      const exitCodePreview = typeof exitCode === "number" ? ` exitCode=${exitCode}` : "";
+      logger.info(
+        `bridge.claude.run.finish commandId=${commandId ?? "unknown"} outcome=${outcome}${exitCodePreview} durationMs=${Date.now() - startedAtMs}${errorPreview}`,
+        {
+          sessionId: request.sessionId,
+          deviceId,
+          callId: request.callId,
+        },
+      );
+
+      this.activeClaudeRunsByDeviceId.delete(deviceId);
+      if (commandId) {
+        this.activeClaudeCommandIdByDeviceId.delete(deviceId);
+        this.activeClaudeRunByCommandId.delete(commandId);
+        this.claudeLineBuffers.delete(commandId);
+        this.lastClaudeProgressAt.delete(commandId);
+        this.claudeExitCodeByCommandId.delete(commandId);
+      }
+    }
   }
 
   private async executeLegacyRun(
@@ -504,7 +589,7 @@ export class BridgeToolRouter {
     const payloadDeviceId = optionalString(event.payload.deviceId) ?? bridgeDeviceId;
     const commandId = optionalString(event.payload.commandId);
     const stream = optionalString(event.payload.stream);
-    const chunk = optionalString(event.payload.chunk) ?? "";
+    const chunk = typeof event.payload.chunk === "string" ? event.payload.chunk : "";
     const isFinal = typeof event.payload.isFinal === "boolean" ? event.payload.isFinal : false;
 
     if (!payloadDeviceId || !commandId || (stream !== "stdout" && stream !== "stderr")) {
@@ -514,6 +599,20 @@ export class BridgeToolRouter {
     const device = this.state.getDevice(payloadDeviceId);
     if (!device) {
       return false;
+    }
+
+    const activeClaude = this.activeClaudeRunsByDeviceId.get(payloadDeviceId);
+    if (activeClaude && activeClaude.sessionId === device.sessionId && stream === "stdout") {
+      if (!this.activeClaudeCommandIdByDeviceId.has(payloadDeviceId)) {
+        this.activeClaudeCommandIdByDeviceId.set(payloadDeviceId, commandId);
+        this.activeClaudeRunByCommandId.set(commandId, activeClaude);
+        logger.info(`bridge.claude.run.command_bound commandId=${commandId}`, {
+          sessionId: activeClaude.sessionId,
+          deviceId: payloadDeviceId,
+          callId: activeClaude.callId,
+        });
+      }
+      this.handleClaudeOutputChunk(device.sessionId, commandId, chunk);
     }
 
     this.emitToIOS(makeEvent("bridge.exec.output", device.sessionId, {
@@ -554,6 +653,73 @@ export class BridgeToolRouter {
     return true;
   }
 
+  private handleClaudeOutputChunk(sessionId: string, commandId: string, chunk: string): void {
+    const buffer = (this.claudeLineBuffers.get(commandId) ?? "") + chunk;
+    const lines = buffer.split("\n");
+    this.claudeLineBuffers.set(commandId, lines.pop() ?? "");
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        const event = JSON.parse(trimmed);
+        if (event.type !== "assistant") {
+          continue;
+        }
+
+        const contents = Array.isArray(event.message?.content) ? event.message.content : [];
+        for (const rawBlock of contents) {
+          if (!rawBlock || typeof rawBlock !== "object") {
+            continue;
+          }
+          const block = rawBlock as { type?: unknown; name?: unknown; input?: unknown };
+          if (block.type !== "tool_use") {
+            continue;
+          }
+
+          const label = buildClaudeProgressLabel(
+            typeof block.name === "string" ? block.name : "",
+            asRecord(block.input),
+          );
+          if (!label) {
+            continue;
+          }
+
+          const now = Date.now();
+          const last = this.lastClaudeProgressAt.get(commandId) ?? 0;
+          if (now - last < 3_000) {
+            continue;
+          }
+          this.lastClaudeProgressAt.set(commandId, now);
+
+          this.emitAssistantSpeechToolCall(sessionId, label);
+          if (this.verboseToolRoutingLogs) {
+            const runMeta = this.activeClaudeRunByCommandId.get(commandId);
+            logger.info(
+              `bridge.claude.run.progress commandId=${commandId} label=${summarizeValueForLog(label) ?? "unknown"}`,
+              {
+                sessionId,
+                callId: runMeta?.callId,
+              },
+            );
+          }
+        }
+      } catch {
+        // Ignore parse errors for malformed lines from partial/mixed output streams.
+        if (this.verboseToolRoutingLogs) {
+          const runMeta = this.activeClaudeRunByCommandId.get(commandId);
+          logger.info(
+            `bridge.claude.run.progress_parse_error commandId=${commandId} line=${summarizeValueForLog(trimmed) ?? "<empty>"}`,
+            {
+              sessionId,
+              callId: runMeta?.callId,
+            },
+          );
+        }
+      }
+    }
+  }
+
   private forwardExecFinished(event: EventEnvelope, bridgeDeviceId?: string): boolean {
     const payload = parseBridgeExecFinishedPayload(event.payload, bridgeDeviceId);
     if (!payload) {
@@ -572,6 +738,21 @@ export class BridgeToolRouter {
       stdoutTail: payload.stdoutTail,
       stderrTail: payload.stderrTail,
     }, event.id, event.timestamp));
+
+    const isActiveClaudeCommand = this.activeClaudeRunByCommandId.has(payload.commandId)
+      || [...this.activeClaudeCommandIdByDeviceId.values()].includes(payload.commandId);
+    if (isActiveClaudeCommand) {
+      this.claudeExitCodeByCommandId.set(payload.commandId, payload.exitCode);
+    } else {
+      this.claudeLineBuffers.delete(payload.commandId);
+      this.lastClaudeProgressAt.delete(payload.commandId);
+      for (const [did, cid] of this.activeClaudeCommandIdByDeviceId) {
+        if (cid === payload.commandId) {
+          this.activeClaudeCommandIdByDeviceId.delete(did);
+          break;
+        }
+      }
+    }
 
     const narration = this.narrationByCommandId.get(payload.commandId);
     if (narration) {
@@ -656,6 +837,13 @@ function optionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return value as Record<string, unknown>;
+}
+
 function parseJSON<T>(value: string): T | undefined {
   try {
     return JSON.parse(value) as T;
@@ -674,6 +862,63 @@ function shortenForNarration(value: string, max = 60): string {
     return trimmed;
   }
   return `${trimmed.slice(0, max - 1)}…`;
+}
+
+function summarizeValueForLog(value: unknown, maxLen = 80): string | null {
+  let text: string;
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    const json = JSON.stringify(value);
+    if (!json) {
+      return null;
+    }
+    text = json;
+  }
+
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return null;
+  }
+  if (normalized.length <= maxLen) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLen - 1)}…`;
+}
+
+function buildClaudeProgressLabel(toolName: string, input: Record<string, unknown>): string | null {
+  switch (toolName) {
+    case "Bash": {
+      const cmd = String(input.command ?? "").slice(0, 60);
+      return cmd ? `Running terminal command: ${cmd}` : "Running a terminal command";
+    }
+    case "Read": {
+      const path = input.file_path ?? input.path;
+      return path ? `Reading ${path}` : null;
+    }
+    case "Write": {
+      const path = input.file_path ?? input.path;
+      return path ? `Writing ${path}` : null;
+    }
+    case "Edit": {
+      const path = input.file_path ?? input.path;
+      return path ? `Editing ${path}` : null;
+    }
+    case "Glob":
+      return "Searching for files";
+    case "Grep":
+      return input.pattern ? `Searching for: ${input.pattern}` : "Searching code";
+    case "WebFetch":
+      return "Fetching a web page";
+    case "WebSearch":
+      return input.query ? `Searching the web: ${input.query}` : "Searching the web";
+    case "LS":
+      return "Listing files";
+    case "MultiEdit":
+      return "Applying multiple edits";
+    default:
+      return toolName ? `Using ${toolName}` : null;
+  }
 }
 
 function parseBridgeExecFinishedPayload(

@@ -14,7 +14,10 @@ export function chunkText(text, minChunk = 30, maxChunk = 80) {
                 end = breakpoint;
             }
         }
-        chunks.push(text.slice(cursor, end).trimStart());
+        const chunk = text.slice(cursor, end);
+        if (chunk.length > 0) {
+            chunks.push(chunk);
+        }
         cursor = end;
     }
     return chunks.filter((chunk) => chunk.length > 0);

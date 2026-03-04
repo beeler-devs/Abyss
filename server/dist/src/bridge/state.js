@@ -43,6 +43,7 @@ export class BridgeStateStore {
             sessionId: pairing?.sessionId ?? existing.sessionId,
             deviceName: registration.deviceName,
             workspaceRoot: registration.workspaceRoot,
+            workspaceRoots: registration.workspaceRoots,
             capabilities: registration.capabilities,
             status: "online",
             lastSeen: nowIso,
@@ -94,40 +95,53 @@ export class BridgeStateStore {
         if (!ids) {
             return [];
         }
-        return [...ids]
+        return sortDevices([...ids]
             .map((id) => this.devicesById.get(id))
-            .filter((device) => Boolean(device))
-            .sort((left, right) => left.deviceName.localeCompare(right.deviceName));
+            .filter((device) => Boolean(device)));
     }
-    resolveDeviceForTool(sessionId, requestedDeviceId, toolName) {
-        const devices = this.getSessionDevices(sessionId);
-        const onlineDevices = devices.filter((device) => device.status === "online");
-        const capableDevices = onlineDevices.filter((device) => supportsTool(device.capabilities, toolName));
+    getOnlineDevices() {
+        return sortDevices([...this.devicesById.values()].filter((device) => device.status === "online"));
+    }
+    resolveDeviceForTool(sessionId, requestedDeviceId) {
+        const sessionDevices = this.getSessionDevices(sessionId);
+        const sessionOnlineDevices = sessionDevices.filter((device) => device.status === "online");
+        const globalOnlineDevices = this.getOnlineDevices();
         if (requestedDeviceId) {
-            const requested = devices.find((device) => device.deviceId === requestedDeviceId);
+            const requested = this.devicesById.get(requestedDeviceId);
             if (!requested) {
                 return { error: "bridge_device_not_paired" };
             }
             if (requested.status !== "online") {
                 return { error: "bridge_device_offline" };
             }
-            if (!supportsTool(requested.capabilities, toolName)) {
-                return { error: "bridge_tool_not_supported_on_device" };
-            }
-            return { device: requested };
+            return { device: this.rebindDeviceToSession(requested, sessionId) };
         }
-        if (onlineDevices.length === 0) {
+        if (sessionOnlineDevices.length === 1) {
+            return { device: sessionOnlineDevices[0] };
+        }
+        if (sessionOnlineDevices.length > 1) {
+            return {
+                error: "bridge_device_selection_required",
+                selectionRequired: sessionOnlineDevices.map((device) => ({
+                    deviceId: device.deviceId,
+                    deviceName: device.deviceName,
+                    status: device.status,
+                    lastSeen: device.lastSeen,
+                })),
+            };
+        }
+        // Session churn resilience:
+        // iOS can reconnect with a new session id while bridge remains online and paired.
+        // If exactly one bridge is online globally, route to it instead of returning not paired.
+        if (globalOnlineDevices.length === 1) {
+            return { device: this.rebindDeviceToSession(globalOnlineDevices[0], sessionId) };
+        }
+        if (globalOnlineDevices.length === 0) {
             return { error: "bridge_not_paired" };
-        }
-        if (capableDevices.length === 0) {
-            return { error: "bridge_tool_not_supported" };
-        }
-        if (capableDevices.length === 1) {
-            return { device: capableDevices[0] };
         }
         return {
             error: "bridge_device_selection_required",
-            selectionRequired: capableDevices.map((device) => ({
+            selectionRequired: globalOnlineDevices.map((device) => ({
                 deviceId: device.deviceId,
                 deviceName: device.deviceName,
                 status: device.status,
@@ -147,22 +161,30 @@ export class BridgeStateStore {
         this.prunePendingPairings();
         return this.pendingPairingCodes.has(normalizePairingCode(pairingCode));
     }
+    rebindDeviceToSession(device, sessionId) {
+        if (device.sessionId === sessionId) {
+            return device;
+        }
+        const previousSet = this.sessionToDeviceIds.get(device.sessionId);
+        previousSet?.delete(device.deviceId);
+        if (previousSet && previousSet.size === 0) {
+            this.sessionToDeviceIds.delete(device.sessionId);
+        }
+        const nextSet = this.sessionToDeviceIds.get(sessionId) ?? new Set();
+        nextSet.add(device.deviceId);
+        this.sessionToDeviceIds.set(sessionId, nextSet);
+        const rebound = {
+            ...device,
+            sessionId,
+            lastSeen: new Date(this.nowMs()).toISOString(),
+        };
+        this.devicesById.set(device.deviceId, rebound);
+        return rebound;
+    }
 }
 function normalizePairingCode(code) {
     return code.trim().toUpperCase();
 }
-function supportsTool(capabilities, toolName) {
-    if (!toolName) {
-        return true;
-    }
-    switch (toolName) {
-        case "bridge.exec.run":
-            return capabilities.execRun;
-        case "bridge.fs.readFile":
-            return capabilities.readFile;
-        case "bridge.claude.run":
-            return capabilities.claudeRun;
-        default:
-            return true;
-    }
+function sortDevices(devices) {
+    return devices.sort((left, right) => left.deviceName.localeCompare(right.deviceName));
 }

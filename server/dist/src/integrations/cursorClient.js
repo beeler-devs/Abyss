@@ -72,6 +72,27 @@ export class CursorClient {
         const normalizedAgentId = this.normalizeAgentId(agentId);
         await this.requestJSON("POST", `/v0/agents/${encodeURIComponent(normalizedAgentId)}/stop`);
     }
+    async conversation(agentId) {
+        this.assertConfigured();
+        const normalizedAgentId = this.normalizeAgentId(agentId);
+        const payload = await this.requestJSON("GET", `/v0/agents/${encodeURIComponent(normalizedAgentId)}/conversation`);
+        const messages = Array.isArray(payload.messages)
+            ? payload.messages.flatMap((msg) => {
+                const id = asString(msg.id);
+                const type = asString(msg.type);
+                const text = asString(msg.text);
+                if (!id || !type || !text)
+                    return [];
+                if (type !== "user_message" && type !== "assistant_message")
+                    return [];
+                return [{ id, type: type, text }];
+            })
+            : [];
+        return {
+            id: asString(payload.id) ?? normalizedAgentId,
+            messages,
+        };
+    }
     async repositories() {
         this.assertConfigured();
         const payload = await this.requestJSON("GET", "/v0/repositories");

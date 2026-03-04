@@ -121,14 +121,13 @@ wss.on("connection", (socket, request) => {
             return;
         }
         if (context.kind === "bridge") {
-            if (event.type === "tool.result") {
-                const handled = bridgeRouter.handleBridgeToolResult(event);
-                if (!handled) {
-                    logger.warn("bridge tool.result had no pending call", {
-                        callId: typeof event.payload.callId === "string" ? event.payload.callId : undefined,
-                        deviceId: context.deviceId,
-                    });
-                }
+            const handled = bridgeRouter.handleBridgeEvent(event, context.deviceId);
+            if (!handled) {
+                logger.warn("bridge event had no pending route", {
+                    type: event.type,
+                    callId: typeof event.payload.callId === "string" ? event.payload.callId : undefined,
+                    deviceId: context.deviceId,
+                });
             }
             return;
         }
@@ -152,6 +151,16 @@ wss.on("connection", (socket, request) => {
             sessionId: event.sessionId,
             eventId: event.id,
         });
+        if (event.type === "session.start") {
+            emitBridgeStatusSnapshot(event.sessionId, socket);
+        }
+        if (event.type === "audio.output.interrupted") {
+            const cancelled = await bridgeRouter.cancelActiveCommand(event.sessionId);
+            logger.info("audio interrupt bridge cancel attempted", {
+                sessionId: event.sessionId,
+                cancelled,
+            });
+        }
         await conductor.handleEvent(event, (outbound) => {
             logger.info(`outbound ${outbound.type}`, {
                 sessionId: outbound.sessionId,
@@ -203,6 +212,7 @@ async function handleBridgeRegister(socket, event, context) {
     const deviceId = readString(payload, "deviceId");
     const deviceName = readString(payload, "deviceName");
     const workspaceRoot = readString(payload, "workspaceRoot");
+    const workspaceRoots = readStringArray(payload, "workspaceRoots");
     const capabilities = readCapabilities(payload.capabilities);
     if (!pairingCode || !deviceId || !deviceName || !workspaceRoot || !capabilities) {
         safeSend(socket, makeEvent("error", event.sessionId, {
@@ -211,11 +221,13 @@ async function handleBridgeRegister(socket, event, context) {
         }));
         return;
     }
+    const wasAlreadyPaired = bridgeState.getDevice(deviceId)?.status === "online";
     const registration = bridgeState.registerBridge({
         pairingCode,
         deviceId,
         deviceName,
         workspaceRoot,
+        workspaceRoots,
         capabilities,
     });
     if (!registration.device) {
@@ -235,17 +247,20 @@ async function handleBridgeRegister(socket, event, context) {
         sessionId: registration.device.sessionId,
         status: "online",
     }));
-    emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
-        deviceId: registration.device.deviceId,
-        deviceName: registration.device.deviceName,
-        status: "online",
-    }));
-    emitToSession(makeEvent("bridge.status", registration.device.sessionId, {
-        deviceId: registration.device.deviceId,
-        status: "online",
-        lastSeen: registration.device.lastSeen,
-    }));
-    logger.info("bridge registered", {
+    // Only emit bridge.paired/status to iOS on initial pair — not on 8s heartbeat re-registers
+    if (!wasAlreadyPaired) {
+        emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
+            deviceId: registration.device.deviceId,
+            deviceName: registration.device.deviceName,
+            status: "online",
+        }));
+        emitToSession(makeEvent("bridge.status", registration.device.sessionId, {
+            deviceId: registration.device.deviceId,
+            status: "online",
+            lastSeen: registration.device.lastSeen,
+        }));
+    }
+    logger.info(wasAlreadyPaired ? "bridge heartbeat" : "bridge registered", {
         sessionId: registration.device.sessionId,
         deviceId,
         deviceName,
@@ -405,6 +420,19 @@ function emitToSession(event, preferredSocket) {
     }
     safeSend(socket, event);
 }
+function emitBridgeStatusSnapshot(sessionId, preferredSocket) {
+    const sessionDevices = bridgeState.getSessionDevices(sessionId);
+    const devices = sessionDevices.length > 0
+        ? sessionDevices
+        : bridgeState.getOnlineDevices();
+    for (const device of devices) {
+        emitToSession(makeEvent("bridge.status", sessionId, {
+            deviceId: device.deviceId,
+            status: device.status,
+            lastSeen: device.lastSeen,
+        }), preferredSocket);
+    }
+}
 function safeSend(socket, event) {
     if (socket.readyState !== WebSocket.OPEN) {
         return;
@@ -436,7 +464,43 @@ function readCapabilities(value) {
         return undefined;
     }
     const claudeRun = typeof raw.claudeRun === "boolean" ? raw.claudeRun : false;
-    return { execRun, readFile, claudeRun };
+    return {
+        execRun,
+        readFile,
+        execStart: optionalBoolean(raw.execStart),
+        execCancel: optionalBoolean(raw.execCancel),
+        execStatus: optionalBoolean(raw.execStatus),
+        execOutputEvents: optionalBoolean(raw.execOutputEvents),
+        fsSearch: optionalBoolean(raw.fsSearch),
+        fsReadRange: optionalBoolean(raw.fsReadRange),
+        fsApplyPatch: optionalBoolean(raw.fsApplyPatch),
+        gitStatus: optionalBoolean(raw.gitStatus),
+        gitDiff: optionalBoolean(raw.gitDiff),
+        gitStage: optionalBoolean(raw.gitStage),
+        gitCommit: optionalBoolean(raw.gitCommit),
+        gitPush: optionalBoolean(raw.gitPush),
+        claudeRun,
+    };
+}
+function readStringArray(payload, key) {
+    const value = payload[key];
+    if (!Array.isArray(value)) {
+        return undefined;
+    }
+    const result = [];
+    for (const item of value) {
+        if (typeof item !== "string") {
+            continue;
+        }
+        const trimmed = item.trim();
+        if (trimmed) {
+            result.push(trimmed);
+        }
+    }
+    return result.length > 0 ? result : undefined;
+}
+function optionalBoolean(value) {
+    return typeof value === "boolean" ? value : undefined;
 }
 function bridgeDeviceSupportsTool(capabilities, toolName) {
     switch (toolName) {
@@ -445,7 +509,7 @@ function bridgeDeviceSupportsTool(capabilities, toolName) {
         case "bridge.fs.readFile":
             return capabilities.readFile;
         case "bridge.claude.run":
-            return capabilities.claudeRun;
+            return capabilities.claudeRun ?? false;
         default:
             return false;
     }

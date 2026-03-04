@@ -4,6 +4,26 @@ import assert from "node:assert/strict";
 import { BridgeStateStore } from "../src/bridge/state.js";
 import { BridgeToolRouter } from "../src/bridge/toolRouter.js";
 import { makeEvent } from "../src/core/events.js";
+import { logger } from "../src/core/logger.js";
+
+type CapturedInfoLog = {
+  message: string;
+  context?: Record<string, unknown>;
+};
+
+function captureInfoLogs(): { entries: CapturedInfoLog[]; restore: () => void } {
+  const entries: CapturedInfoLog[] = [];
+  const original = logger.info;
+  logger.info = (message: string, context?: Record<string, unknown>) => {
+    entries.push({ message, context });
+  };
+  return {
+    entries,
+    restore: () => {
+      logger.info = original;
+    },
+  };
+}
 
 function setupRouter() {
   const state = new BridgeStateStore();
@@ -75,7 +95,7 @@ test("bridge.claude.run routes through bridge tool router", async () => {
     sendToBridge: (_deviceId, event) => {
       forwardedToolName = String(event.payload.name);
       setImmediate(() => {
-        router.handleBridgeToolResult(makeEvent("tool.result", "bridge-session", {
+        router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
           callId: String(event.payload.callId),
           result: JSON.stringify({ result: "Fixed the failing test", sessionId: null }),
           error: null,
@@ -102,7 +122,7 @@ test("bridge.claude.run routes through bridge tool router", async () => {
 });
 
 
-test("bridge tool routing returns timeout and marks device offline", async () => {
+test("bridge tool routing returns timeout without forcing offline status", async () => {
   const state = setupRouter();
 
   const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
@@ -124,10 +144,10 @@ test("bridge tool routing returns timeout and marks device offline", async () =>
 
   assert.equal(output.result, null);
   assert.equal(output.error, "bridge_tool_timeout");
-
-  const statusEvent = emitted.find((event) => event.type === "bridge.status");
-  assert.ok(statusEvent);
-  assert.equal(statusEvent?.payload.status, "offline");
+  const offlineStatusEvent = emitted.find((event) => (
+    event.type === "bridge.status" && event.payload.status === "offline"
+  ));
+  assert.equal(offlineStatusEvent, undefined);
 });
 
 test("bridge.exec.run compatibility path forwards stream and resolves after finished", async () => {
@@ -386,4 +406,148 @@ test("bridge.exec streaming events follow reassociated session after reconnect f
   const finishedEvent = emitted.find((event) => event.type === "bridge.exec.finished");
   assert.equal(outputEvent?.sessionId, "session-new");
   assert.equal(finishedEvent?.sessionId, "session-new");
+});
+
+test("bridge.claude.run emits lifecycle logs", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-claude-logs", "CLG111", "Claude Mac");
+  state.registerBridge({
+    pairingCode: "CLG111",
+    deviceId: "device-claude-logs",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      const callId = String(event.payload.callId);
+      if (String(event.payload.name) === "bridge.claude.run") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-logs", {
+            deviceId: "device-claude-logs",
+            commandId: "cmd-claude-logs",
+            stream: "stdout",
+            chunk: "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"file_path\":\"test.txt\"}}]}}\n",
+            isFinal: false,
+          }), "device-claude-logs");
+          router.handleBridgeEvent(makeEvent("bridge.exec.finished", "device-claude-logs", {
+            deviceId: "device-claude-logs",
+            commandId: "cmd-claude-logs",
+            exitCode: 0,
+            stdoutTail: "",
+            stderrTail: "",
+          }), "device-claude-logs");
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId,
+            result: JSON.stringify({ result: "done" }),
+            error: null,
+          }), "device-claude-logs");
+        });
+      }
+      return true;
+    },
+    emitToIOS: () => undefined,
+  });
+
+  const logs = captureInfoLogs();
+  try {
+    const output = await router.execute({
+      callId: "call-claude-logs",
+      sessionId: "session-claude-logs",
+      toolName: "bridge.claude.run",
+      args: { prompt: "do stuff" },
+      timeoutMs: 500,
+    });
+    assert.equal(output.error, null);
+  } finally {
+    logs.restore();
+  }
+
+  assert.ok(logs.entries.some((entry) => entry.message.includes("bridge.claude.run.start")));
+  assert.ok(logs.entries.some((entry) => entry.message.includes("bridge.claude.run.command_bound commandId=cmd-claude-logs")));
+  assert.ok(logs.entries.some((entry) => entry.message.includes("bridge.claude.run.finish commandId=cmd-claude-logs")));
+});
+
+test("bridge.claude.run verbose mode logs parsed tool_use progress", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-claude-progress", "CLG222", "Claude Mac");
+  state.registerBridge({
+    pairingCode: "CLG222",
+    deviceId: "device-claude-progress",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  const assistantToolUseLine = JSON.stringify({
+    type: "assistant",
+    message: {
+      content: [{
+        type: "tool_use",
+        name: "Bash",
+        input: { command: "npm test" },
+      }],
+    },
+  }) + "\n";
+
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const router = new BridgeToolRouter({
+    state,
+    verboseToolRoutingLogs: true,
+    sendToBridge: (_deviceId, event) => {
+      const callId = String(event.payload.callId);
+      if (String(event.payload.name) === "bridge.claude.run") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-progress", {
+            deviceId: "device-claude-progress",
+            commandId: "cmd-claude-progress",
+            stream: "stdout",
+            chunk: assistantToolUseLine,
+            isFinal: false,
+          }), "device-claude-progress");
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId,
+            result: JSON.stringify({ result: "done" }),
+            error: null,
+          }), "device-claude-progress");
+        });
+      }
+      return true;
+    },
+    emitToIOS: (event) => {
+      emitted.push({ type: event.type, payload: event.payload });
+    },
+  });
+
+  const logs = captureInfoLogs();
+  try {
+    const output = await router.execute({
+      callId: "call-claude-progress",
+      sessionId: "session-claude-progress",
+      toolName: "bridge.claude.run",
+      args: { prompt: "run tests" },
+      timeoutMs: 500,
+    });
+    assert.equal(output.error, null);
+  } finally {
+    logs.restore();
+  }
+
+  const narratedProgress = emitted.some((event) => (
+    event.type === "tool.call"
+    && event.payload.name === "tts.speak"
+    && typeof event.payload.arguments === "string"
+    && event.payload.arguments.includes("Running terminal command: npm test")
+  ));
+  assert.equal(
+    narratedProgress,
+    true,
+    `expected parsed tool_use narration, emitted=${JSON.stringify(emitted)} logs=${JSON.stringify(logs.entries.map((entry) => entry.message))}`,
+  );
+  assert.ok(
+    logs.entries.some((entry) => entry.message.includes("bridge.claude.run.progress")),
+    `expected progress log, got: ${logs.entries.map((entry) => entry.message).join(" | ")}`,
+  );
 });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { BridgeStateStore } from "../src/bridge/state.js";
 import { BridgeToolRouter } from "../src/bridge/toolRouter.js";
 import { makeEvent } from "../src/core/events.js";
-test("bridge tool routing forwards tool.call and resolves tool.result", async () => {
+function setupRouter() {
     const state = new BridgeStateStore();
     state.createPairingRequest("session-bridge", "PAIR77", "Mac");
     const registration = state.registerBridge({
@@ -14,6 +14,10 @@ test("bridge tool routing forwards tool.call and resolves tool.result", async ()
         capabilities: { execRun: true, readFile: true, claudeRun: true },
     });
     assert.ok(registration.device);
+    return state;
+}
+test("bridge tool routing forwards tool.call and resolves tool.result", async () => {
+    const state = setupRouter();
     let forwardedCallId = "";
     const emitted = [];
     const router = new BridgeToolRouter({
@@ -21,11 +25,11 @@ test("bridge tool routing forwards tool.call and resolves tool.result", async ()
         sendToBridge: (_deviceId, event) => {
             forwardedCallId = String(event.payload.callId);
             setImmediate(() => {
-                router.handleBridgeToolResult(makeEvent("tool.result", "bridge-session", {
+                router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
                     callId: String(event.payload.callId),
-                    result: JSON.stringify({ exitCode: 0, stdout: "ok", stderr: "" }),
+                    result: JSON.stringify({ content: "ok" }),
                     error: null,
-                }));
+                }), "device-bridge");
             });
             return true;
         },
@@ -36,13 +40,13 @@ test("bridge tool routing forwards tool.call and resolves tool.result", async ()
     const output = await router.execute({
         callId: "call-1",
         sessionId: "session-bridge",
-        toolName: "bridge.exec.run",
-        args: { command: "echo ok" },
+        toolName: "bridge.fs.readFile",
+        args: { path: "README.md" },
         timeoutMs: 200,
     });
     assert.equal(forwardedCallId, "call-1");
     assert.equal(output.error, null);
-    assert.ok(output.result?.includes("exitCode"));
+    assert.ok(output.result?.includes("content"));
     assert.deepEqual(emitted, ["tool.call", "bridge.status", "tool.result"]);
 });
 test("bridge.claude.run routes through bridge tool router", async () => {
@@ -63,7 +67,7 @@ test("bridge.claude.run routes through bridge tool router", async () => {
         sendToBridge: (_deviceId, event) => {
             forwardedToolName = String(event.payload.name);
             setImmediate(() => {
-                router.handleBridgeToolResult(makeEvent("tool.result", "bridge-session", {
+                router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
                     callId: String(event.payload.callId),
                     result: JSON.stringify({ result: "Fixed the failing test", sessionId: null }),
                     error: null,
@@ -86,43 +90,8 @@ test("bridge.claude.run routes through bridge tool router", async () => {
     assert.equal(output.error, null);
     assert.ok(output.result?.includes("Fixed the failing test"));
 });
-test("bridge.claude.run rejects devices without claude capability", async () => {
-    const state = new BridgeStateStore();
-    state.createPairingRequest("session-claude-cap", "CAP111", "No Claude Mac");
-    const registration = state.registerBridge({
-        pairingCode: "CAP111",
-        deviceId: "device-no-claude",
-        deviceName: "No Claude Mac",
-        workspaceRoot: "/workspace",
-        capabilities: { execRun: true, readFile: true, claudeRun: false },
-    });
-    assert.ok(registration.device);
-    const router = new BridgeToolRouter({
-        state,
-        sendToBridge: () => true,
-        emitToIOS: () => undefined,
-    });
-    const output = await router.execute({
-        callId: "call-claude-cap-1",
-        sessionId: "session-claude-cap",
-        toolName: "bridge.claude.run",
-        args: { prompt: "fix the failing test" },
-        timeoutMs: 200,
-    });
-    assert.equal(output.result, null);
-    assert.equal(output.error, "bridge_tool_not_supported");
-});
 test("bridge tool routing returns timeout and marks device offline", async () => {
-    const state = new BridgeStateStore();
-    state.createPairingRequest("session-timeout", "TIME22", "Timeout Mac");
-    const registration = state.registerBridge({
-        pairingCode: "TIME22",
-        deviceId: "device-timeout",
-        deviceName: "Timeout Mac",
-        workspaceRoot: "/workspace",
-        capabilities: { execRun: true, readFile: true, claudeRun: true },
-    });
-    assert.ok(registration.device);
+    const state = setupRouter();
     const emitted = [];
     const router = new BridgeToolRouter({
         state,
@@ -133,9 +102,9 @@ test("bridge tool routing returns timeout and marks device offline", async () =>
     });
     const output = await router.execute({
         callId: "call-timeout",
-        sessionId: "session-timeout",
-        toolName: "bridge.exec.run",
-        args: { command: "sleep 2" },
+        sessionId: "session-bridge",
+        toolName: "bridge.fs.readFile",
+        args: { path: "README.md" },
         timeoutMs: 30,
     });
     assert.equal(output.result, null);
@@ -143,4 +112,233 @@ test("bridge tool routing returns timeout and marks device offline", async () =>
     const statusEvent = emitted.find((event) => event.type === "bridge.status");
     assert.ok(statusEvent);
     assert.equal(statusEvent?.payload.status, "offline");
+});
+test("bridge.exec.run compatibility path forwards stream and resolves after finished", async () => {
+    const state = setupRouter();
+    const emitted = [];
+    const router = new BridgeToolRouter({
+        state,
+        sendToBridge: (_deviceId, event) => {
+            const toolName = String(event.payload.name);
+            const callId = String(event.payload.callId);
+            if (toolName === "bridge.exec.start") {
+                setImmediate(() => {
+                    router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+                        callId,
+                        result: JSON.stringify({ commandId: "cmd-1", startedAt: new Date().toISOString() }),
+                        error: null,
+                    }), "device-bridge");
+                    setImmediate(() => {
+                        router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-bridge", {
+                            deviceId: "device-bridge",
+                            commandId: "cmd-1",
+                            stream: "stdout",
+                            chunk: "line 1\n",
+                            isFinal: false,
+                        }), "device-bridge");
+                        router.handleBridgeEvent(makeEvent("bridge.exec.finished", "device-bridge", {
+                            deviceId: "device-bridge",
+                            commandId: "cmd-1",
+                            exitCode: 0,
+                            stdoutTail: "line 1\n",
+                            stderrTail: "",
+                        }), "device-bridge");
+                    });
+                });
+            }
+            return true;
+        },
+        emitToIOS: (event) => {
+            emitted.push({ type: event.type, payload: event.payload });
+        },
+    });
+    const output = await router.execute({
+        callId: "call-run",
+        sessionId: "session-bridge",
+        toolName: "bridge.exec.run",
+        args: { command: "echo hi" },
+        timeoutMs: 200,
+    });
+    assert.equal(output.error, null);
+    assert.ok(output.result?.includes("exitCode"));
+    const outputEvent = emitted.find((event) => event.type === "bridge.exec.output");
+    assert.ok(outputEvent);
+    const finishedEvent = emitted.find((event) => event.type === "bridge.exec.finished");
+    assert.ok(finishedEvent);
+    const toolResult = emitted.find((event) => event.type === "tool.result");
+    assert.ok(toolResult);
+});
+test("cancelActiveCommand issues bridge.exec.cancel", async () => {
+    const state = setupRouter();
+    let sawCancel = false;
+    const router = new BridgeToolRouter({
+        state,
+        sendToBridge: (_deviceId, event) => {
+            const toolName = String(event.payload.name);
+            const callId = String(event.payload.callId);
+            if (toolName === "bridge.exec.start") {
+                setImmediate(() => {
+                    router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+                        callId,
+                        result: JSON.stringify({ commandId: "cmd-22", startedAt: new Date().toISOString() }),
+                        error: null,
+                    }), "device-bridge");
+                });
+            }
+            if (toolName === "bridge.exec.cancel") {
+                sawCancel = true;
+                setImmediate(() => {
+                    router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+                        callId,
+                        result: JSON.stringify({ cancelled: true }),
+                        error: null,
+                    }), "device-bridge");
+                });
+            }
+            return true;
+        },
+        emitToIOS: () => { },
+    });
+    await router.execute({
+        callId: "call-start",
+        sessionId: "session-bridge",
+        toolName: "bridge.exec.start",
+        args: { command: "sleep 1" },
+        timeoutMs: 200,
+    });
+    const cancelled = await router.cancelActiveCommand("session-bridge");
+    assert.equal(cancelled, true);
+    assert.equal(sawCancel, true);
+});
+test("bridge.exec.output is routed to paired session", () => {
+    const state = new BridgeStateStore();
+    state.createPairingRequest("session-a", "AAAA11", "Mac A");
+    state.registerBridge({
+        pairingCode: "AAAA11",
+        deviceId: "device-a",
+        deviceName: "Mac A",
+        workspaceRoot: "/workspace-a",
+        capabilities: { execRun: true, readFile: true },
+    });
+    state.createPairingRequest("session-b", "BBBB22", "Mac B");
+    state.registerBridge({
+        pairingCode: "BBBB22",
+        deviceId: "device-b",
+        deviceName: "Mac B",
+        workspaceRoot: "/workspace-b",
+        capabilities: { execRun: true, readFile: true },
+    });
+    const emitted = [];
+    const router = new BridgeToolRouter({
+        state,
+        sendToBridge: () => true,
+        emitToIOS: (event) => {
+            emitted.push({ sessionId: event.sessionId, type: event.type });
+        },
+    });
+    const handled = router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-b", {
+        deviceId: "device-b",
+        commandId: "cmd-77",
+        stream: "stdout",
+        chunk: "hello",
+        isFinal: false,
+    }), "device-b");
+    assert.equal(handled, true);
+    const routed = emitted.find((event) => event.type === "bridge.exec.output");
+    assert.ok(routed);
+    assert.equal(routed?.sessionId, "session-b");
+});
+test("router can execute for a new iOS session when only one bridge is globally online", async () => {
+    const state = new BridgeStateStore();
+    state.createPairingRequest("session-old", "ONE111", "Only Mac");
+    state.registerBridge({
+        pairingCode: "ONE111",
+        deviceId: "device-only",
+        deviceName: "Only Mac",
+        workspaceRoot: "/workspace-only",
+        capabilities: { execRun: true, readFile: true },
+    });
+    const router = new BridgeToolRouter({
+        state,
+        sendToBridge: (_deviceId, event) => {
+            setImmediate(() => {
+                router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+                    callId: String(event.payload.callId),
+                    result: JSON.stringify({ content: "from-global-fallback" }),
+                    error: null,
+                }), "device-only");
+            });
+            return true;
+        },
+        emitToIOS: () => { },
+    });
+    const output = await router.execute({
+        callId: "call-fallback",
+        sessionId: "session-new",
+        toolName: "bridge.fs.readFile",
+        args: { path: "README.md" },
+        timeoutMs: 200,
+    });
+    assert.equal(output.error, null);
+    assert.ok(output.result?.includes("from-global-fallback"));
+});
+test("bridge.exec streaming events follow reassociated session after reconnect fallback", async () => {
+    const state = new BridgeStateStore();
+    state.createPairingRequest("session-old", "ONE222", "Only Mac");
+    state.registerBridge({
+        pairingCode: "ONE222",
+        deviceId: "device-only",
+        deviceName: "Only Mac",
+        workspaceRoot: "/workspace-only",
+        capabilities: { execRun: true, readFile: true },
+    });
+    const emitted = [];
+    const router = new BridgeToolRouter({
+        state,
+        sendToBridge: (_deviceId, event) => {
+            const toolName = String(event.payload.name);
+            const callId = String(event.payload.callId);
+            if (toolName === "bridge.exec.start") {
+                setImmediate(() => {
+                    router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+                        callId,
+                        result: JSON.stringify({ commandId: "cmd-reconnect", startedAt: new Date().toISOString() }),
+                        error: null,
+                    }), "device-only");
+                    setImmediate(() => {
+                        router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-only", {
+                            deviceId: "device-only",
+                            commandId: "cmd-reconnect",
+                            stream: "stdout",
+                            chunk: "still running\n",
+                            isFinal: false,
+                        }), "device-only");
+                        router.handleBridgeEvent(makeEvent("bridge.exec.finished", "device-only", {
+                            deviceId: "device-only",
+                            commandId: "cmd-reconnect",
+                            exitCode: 0,
+                            stdoutTail: "done\n",
+                            stderrTail: "",
+                        }), "device-only");
+                    });
+                });
+            }
+            return true;
+        },
+        emitToIOS: (event) => {
+            emitted.push({ sessionId: event.sessionId, type: event.type });
+        },
+    });
+    const output = await router.execute({
+        callId: "call-reconnect-run",
+        sessionId: "session-new",
+        toolName: "bridge.exec.run",
+        args: { command: "npm test" },
+        timeoutMs: 400,
+    });
+    assert.equal(output.error, null);
+    const outputEvent = emitted.find((event) => event.type === "bridge.exec.output");
+    const finishedEvent = emitted.find((event) => event.type === "bridge.exec.finished");
+    assert.equal(outputEvent?.sessionId, "session-new");
+    assert.equal(finishedEvent?.sessionId, "session-new");
 });

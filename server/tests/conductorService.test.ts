@@ -3,7 +3,27 @@ import assert from "node:assert/strict";
 
 import { ConductorService } from "../src/core/conductorService.js";
 import { makeEvent } from "../src/core/events.js";
+import { logger } from "../src/core/logger.js";
 import { ModelProvider, ConversationTurn, ModelResponse, ToolCallRequest } from "../src/core/types.js";
+
+type CapturedInfoLog = {
+  message: string;
+  context?: Record<string, unknown>;
+};
+
+function captureInfoLogs(): { entries: CapturedInfoLog[]; restore: () => void } {
+  const entries: CapturedInfoLog[] = [];
+  const original = logger.info;
+  logger.info = (message: string, context?: Record<string, unknown>) => {
+    entries.push({ message, context });
+  };
+  return {
+    entries,
+    restore: () => {
+      logger.info = original;
+    },
+  };
+}
 
 class StubProvider implements ModelProvider {
   readonly name = "stub";
@@ -286,7 +306,7 @@ test("deterministic 'run tests' intent invokes bridge.exec.run", async () => {
   assert.equal(hasFinalSpeech, true);
 });
 
-test("bridge.claude.run tool executes through bridgeToolExecutor with 120s default timeout", async () => {
+test("bridge.claude.run tool executes through bridgeToolExecutor with 660s default timeout", async () => {
   const provider = new SequenceProvider([
     {
       toolCalls: [{
@@ -320,7 +340,7 @@ test("bridge.claude.run tool executes through bridgeToolExecutor with 120s defau
   assert.equal(bridgeRequests.length, 1);
   assert.equal(bridgeRequests[0]?.toolName, "bridge.claude.run");
   assert.equal(bridgeRequests[0]?.args.prompt, "fix the failing test in src/auth.ts");
-  assert.equal(bridgeRequests[0]?.timeoutMs, 120_000);
+  assert.equal(bridgeRequests[0]?.timeoutMs, 660_000);
 });
 
 test("bridge tools exposed to the model are filtered by session availability", async () => {
@@ -340,4 +360,75 @@ test("bridge tools exposed to the model are filtered by session availability", a
   assert.equal(provider.toolNames.includes("bridge.exec.run"), true);
   assert.equal(provider.toolNames.includes("bridge.fs.readFile"), true);
   assert.equal(provider.toolNames.includes("bridge.claude.run"), false);
+});
+
+test("trace contains one server marker per bridge tool execution", async () => {
+  const provider = new SequenceProvider([
+    { text: "Finished." },
+  ]);
+
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+    traceMaxEntries: 120,
+  }, {
+    bridgeToolExecutor: async () => ({
+      result: JSON.stringify({ exitCode: 0, stdout: "ok", stderr: "" }),
+      error: null,
+    }),
+  });
+
+  const logs = captureInfoLogs();
+  try {
+    await service.handleEvent(makeEvent("user.audio.transcript.final", "session-trace-dedupe", {
+      text: "run tests",
+    }), () => undefined);
+  } finally {
+    logs.restore();
+  }
+
+  const traceLog = logs.entries.find((entry) => entry.message.includes("transcript.final trace #1"));
+  assert.ok(traceLog, "expected transcript trace log");
+  const bridgeMarkerCount = (traceLog?.message.match(/tool\.server:bridge\.exec\.run/g) ?? []).length;
+  assert.equal(bridgeMarkerCount, 1);
+});
+
+test("server tool lifecycle logs are emitted for bridge.claude.run", async () => {
+  const provider = new SequenceProvider([
+    {
+      toolCalls: [{
+        id: "tc-claude-log-1",
+        name: "bridge.claude.run",
+        input: { prompt: "fix it" },
+      }],
+    },
+    { text: "Done." },
+  ]);
+
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    bridgeToolExecutor: async () => ({
+      result: JSON.stringify({ result: "ok" }),
+      error: null,
+    }),
+  });
+
+  const logs = captureInfoLogs();
+  try {
+    await service.handleEvent(makeEvent("user.audio.transcript.final", "session-claude-log", {
+      text: "optimize this code",
+    }), () => undefined);
+  } finally {
+    logs.restore();
+  }
+
+  const dispatch = logs.entries.find((entry) => entry.message.includes("tool.server.dispatch tool=bridge.claude.run"));
+  const result = logs.entries.find((entry) => entry.message.includes("tool.server.result tool=bridge.claude.run outcome=ok"));
+  assert.ok(dispatch, "expected dispatch log");
+  assert.ok(result, "expected result log");
+  assert.equal(typeof dispatch?.context?.sessionId, "string");
+  assert.equal(typeof dispatch?.context?.eventId, "string");
+  assert.equal(typeof dispatch?.context?.callId, "string");
 });

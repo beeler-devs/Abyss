@@ -13,10 +13,12 @@ export class SessionStore {
   private readonly pendingCursorWebhooks = new Map<string, PendingCursorWebhookRecord>();
   private readonly maxTurns: number;
   private readonly rateLimitPerMinute: number;
+  private readonly traceMaxEntries: number;
 
-  constructor(maxTurns: number, rateLimitPerMinute: number) {
+  constructor(maxTurns: number, rateLimitPerMinute: number, traceMaxEntries: number = 120) {
     this.maxTurns = maxTurns;
     this.rateLimitPerMinute = rateLimitPerMinute;
+    this.traceMaxEntries = Math.max(1, traceMaxEntries);
   }
 
   getOrCreate(sessionId: string): SessionState {
@@ -49,7 +51,7 @@ export class SessionStore {
 
   recordTrace(state: SessionState, marker: string): void {
     state.recentTranscriptTrace.push(marker);
-    if (state.recentTranscriptTrace.length > 24) {
+    if (state.recentTranscriptTrace.length > this.traceMaxEntries) {
       state.recentTranscriptTrace.shift();
     }
   }

@@ -55,6 +55,7 @@ export class SessionStore {
             branchName: partial.branchName ?? existing?.branchName,
             summary: partial.summary ?? existing?.summary,
             spawnCallId: partial.spawnCallId ?? existing?.spawnCallId,
+            lastSeenConversationMessageId: partial.lastSeenConversationMessageId ?? existing?.lastSeenConversationMessageId,
         };
         if (merged.spawnCallId) {
             this.cursorAgentBySpawnCallId.set(merged.spawnCallId, merged.agentId);

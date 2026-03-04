@@ -18,6 +18,8 @@ const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "anthropic").toLowerCase()
 const MAX_EVENT_BYTES = parseInteger(process.env.MAX_EVENT_BYTES, 65_536);
 const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
+const TRANSCRIPT_TRACE_MAX_ENTRIES = parseInteger(process.env.TRANSCRIPT_TRACE_MAX_ENTRIES, 120);
+const VERBOSE_TOOL_ROUTING_LOGS = parseBoolean(process.env.VERBOSE_TOOL_ROUTING_LOGS, false);
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? "";
 const CURSOR_API_KEY = process.env.CURSOR_API_KEY ?? "";
@@ -63,6 +65,7 @@ const bridgeRouter = new BridgeToolRouter({
   emitToIOS: (event) => {
     emitToSession(event);
   },
+  verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
 });
 
 const conductor = new ConductorService(
@@ -70,6 +73,7 @@ const conductor = new ConductorService(
   {
     maxTurns: MAX_TURNS,
     rateLimitPerMinute: SESSION_RATE_LIMIT_PER_MIN,
+    traceMaxEntries: TRANSCRIPT_TRACE_MAX_ENTRIES,
   },
   {
     cursorClient: new CursorClient({
@@ -84,6 +88,7 @@ const conductor = new ConductorService(
         .filter((device) => device.status === "online");
       return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
     },
+    verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
   },
 );
 
@@ -274,6 +279,8 @@ async function handleBridgeRegister(
     return;
   }
 
+  const wasAlreadyPaired = bridgeState.getDevice(deviceId)?.status === "online";
+
   const registration = bridgeState.registerBridge({
     pairingCode,
     deviceId,
@@ -304,19 +311,22 @@ async function handleBridgeRegister(
     status: "online",
   }));
 
-  emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
-    deviceId: registration.device.deviceId,
-    deviceName: registration.device.deviceName,
-    status: "online",
-  }));
+  // Only emit bridge.paired/status to iOS on initial pair — not on 8s heartbeat re-registers
+  if (!wasAlreadyPaired) {
+    emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
+      deviceId: registration.device.deviceId,
+      deviceName: registration.device.deviceName,
+      status: "online",
+    }));
 
-  emitToSession(makeEvent("bridge.status", registration.device.sessionId, {
-    deviceId: registration.device.deviceId,
-    status: "online",
-    lastSeen: registration.device.lastSeen,
-  }));
+    emitToSession(makeEvent("bridge.status", registration.device.sessionId, {
+      deviceId: registration.device.deviceId,
+      status: "online",
+      lastSeen: registration.device.lastSeen,
+    }));
+  }
 
-  logger.info("bridge registered", {
+  logger.info(wasAlreadyPaired ? "bridge heartbeat" : "bridge registered", {
     sessionId: registration.device.sessionId,
     deviceId,
     deviceName,
@@ -496,6 +506,22 @@ function parseInteger(raw: string | undefined, fallback: number): number {
     return fallback;
   }
   return value;
+}
+
+function parseBoolean(raw: string | undefined, fallback: boolean): boolean {
+  if (!raw) {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off"].includes(normalized)) {
+    return false;
+  }
+
+  return fallback;
 }
 
 function emitToSession(event: { sessionId: string }, preferredSocket?: WebSocket): void {

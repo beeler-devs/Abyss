@@ -21,6 +21,10 @@ function contextPrefix(context) {
         parts.push(`pairing=${context.pairingCode}`);
     if (context.kind)
         parts.push(`kind=${context.kind}`);
+    if (context.type)
+        parts.push(`type=${context.type}`);
+    if (typeof context.cancelled === "boolean")
+        parts.push(`cancelled=${context.cancelled}`);
     if (context.deviceName)
         parts.push(`deviceName=${context.deviceName}`);
     return parts.length ? `[${parts.join(" ")}] ` : "";

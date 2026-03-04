@@ -75,6 +75,8 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 - `MAX_EVENT_BYTES` (default `65536`)
 - `MAX_TURNS` (default `20`)
 - `SESSION_RATE_LIMIT_PER_MIN` (default `30`)
+- `TRANSCRIPT_TRACE_MAX_ENTRIES` (default `120`)
+- `VERBOSE_TOOL_ROUTING_LOGS` (default `false`)
 - `ANTHROPIC_API_KEY` (required for `anthropic`)
 - `ANTHROPIC_MODEL` (default `claude-haiku-4-5`)
 - `ANTHROPIC_MAX_TOKENS` (default `512`)
@@ -87,6 +89,16 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 - `CURSOR_WEBHOOK_MAX_BYTES` (default `512000`)
 - `BEDROCK_MODEL_ID` (for scaffold)
 - `AWS_REGION` (for scaffold)
+
+## Routing observability checks
+
+When debugging server tool routing/fallback behavior, grep server logs for:
+
+- `tool.server.dispatch`
+- `tool.server.result`
+- `bridge.claude.run.start`
+- `bridge.claude.run.command_bound`
+- `bridge.claude.run.finish`
 
 ## Switching providers
 
