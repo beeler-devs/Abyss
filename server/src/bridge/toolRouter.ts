@@ -107,6 +107,10 @@ export class BridgeToolRouter {
       return await this.executeLegacyRun(request, resolved.device);
     }
 
+    if (request.toolName === "bridge.claude.run") {
+      return await this.executeClaudeRun(request, resolved.device.deviceId);
+    }
+
     return await this.invokeBridgeTool({
       callId: request.callId,
       resultCallId: request.callId,
@@ -204,6 +208,40 @@ export class BridgeToolRouter {
         this.narrationByCommandId.delete(commandId);
       }
     }
+  }
+
+  private async executeClaudeRun(
+    request: BridgeToolRouteRequest,
+    deviceId: string,
+  ): Promise<{ result: string | null; error: string | null }> {
+    this.emitAssistantSpeechToolCall(
+      request.sessionId,
+      "Running Claude Code on your Mac. This may take a few minutes.",
+    );
+    this.emitAssistantProgress(request.sessionId, "Claude Code is running…", true);
+
+    let minuteCount = 1;
+    const progressInterval = setInterval(() => {
+      this.emitAssistantSpeechToolCall(
+        request.sessionId,
+        minuteCount === 1 ? "Still working on it. Hang tight." : "Claude Code is still running.",
+      );
+      minuteCount += 1;
+    }, 60_000);
+
+    const result = await this.invokeBridgeTool({
+      callId: request.callId,
+      resultCallId: request.callId,
+      sessionId: request.sessionId,
+      deviceId,
+      toolName: request.toolName,
+      args: request.args,
+      timeoutMs: request.timeoutMs,
+      emitResultToIOS: true,
+    });
+
+    clearInterval(progressInterval);
+    return result;
   }
 
   private async executeLegacyRun(
@@ -321,7 +359,8 @@ export class BridgeToolRouter {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pendingByCallId.delete(request.callId);
-        this.markOfflineAndEmitStatus(request.deviceId, request.sessionId);
+        // Do NOT mark the bridge offline here — a slow tool (e.g. bridge.claude.run) doesn't
+        // mean the bridge connection is dead.  The WebSocket close handler will handle that.
 
         const timeoutError = "bridge_tool_timeout";
         if (request.emitResultToIOS) {

@@ -278,6 +278,7 @@ public actor BridgeCore {
         capabilities.gitStage = capabilities.gitStage && config.permissions.allowWritesApplyPatch
         capabilities.gitCommit = capabilities.gitCommit && config.permissions.allowWritesApplyPatch
         capabilities.gitPush = capabilities.gitPush && config.permissions.allowGitPush
+        capabilities.claudeRun = capabilities.claudeRun && config.permissions.allowClaudeRun
         return capabilities
     }
 
@@ -296,7 +297,12 @@ public actor BridgeCore {
                 await emitStatus()
             }
         case "tool.call":
-            try await handleToolCall(envelope)
+            // Fire-and-forget so the receive loop isn't blocked during long-running tools
+            // (e.g. bridge.claude.run). The actor's re-entrancy at await points means the
+            // connection loop can still call wsTask.receive() while the tool executes.
+            Task { [weak self] in
+                try? await self?.handleToolCall(envelope)
+            }
         default:
             break
         }
@@ -446,7 +452,7 @@ public actor BridgeCore {
 
             case "bridge.claude.run":
                 let args = try decodeArguments(BridgeClaudeRunArguments.self, json: payload.arguments)
-                let allowedTools = args.allowedTools ?? "Bash,Read,Edit"
+                let allowedTools = args.allowedTools ?? "Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit"
 
                 func shellEscape(_ str: String) -> String {
                     return "'" + str.replacingOccurrences(of: "'", with: "'\\''") + "'"
@@ -458,7 +464,7 @@ public actor BridgeCore {
                     command: command,
                     cwd: args.cwd,
                     env: nil,
-                    timeoutSec: args.timeoutSec ?? 120
+                    timeoutSec: args.timeoutSec ?? 300
                 )
                 guard let completion = await commandManager.waitForCompletion(commandId: start.commandId) else {
                     throw BridgeCoreError.internalError("command_not_found_after_start")
@@ -488,13 +494,14 @@ public actor BridgeCore {
                 throw BridgeCoreError.unsupportedTool(payload.name)
             }
 
-            try await sendEvent(
+            try? await sendEvent(
                 type: "tool.result",
                 sessionId: envelope.sessionId,
                 payload: ToolResultPayload(callId: payload.callId, result: resultText, error: nil)
             )
         } catch {
-            try await sendEvent(
+            // Use try? so a closed WebSocket doesn't propagate back and kill the connection loop.
+            try? await sendEvent(
                 type: "tool.result",
                 sessionId: envelope.sessionId,
                 payload: ToolResultPayload(
