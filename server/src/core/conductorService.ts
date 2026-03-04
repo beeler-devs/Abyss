@@ -425,8 +425,8 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
         deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
         prompt: { type: "string", description: "The task prompt for Claude Code (e.g. 'fix the failing test in src/auth.ts')." },
         cwd: { type: "string", description: "Optional relative directory under workspace root." },
-        timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 120, max 600)." },
-        allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit)." },
+        timeoutSec: { type: "integer", description: "Optional timeout in seconds (default 300, max 600)." },
+        allowedTools: { type: "string", description: "Comma-separated Claude Code tools to allow (default: Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit)." },
       },
       required: ["prompt"],
     },
@@ -1268,7 +1268,7 @@ export class ConductorService {
           }
 
           const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
-          const claudeTimeoutMs = Math.max(1, Math.min(600, Math.trunc(claudeTimeoutRaw ?? 120))) * 1_000;
+          const claudeTimeoutMs = Math.max(1, Math.min(600, Math.trunc(claudeTimeoutRaw ?? 300))) * 1_000;
           return await this.bridgeToolExecutor({
             callId,
             sessionId: session.sessionId,

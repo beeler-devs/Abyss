@@ -168,7 +168,7 @@ public struct BridgeCapabilities: Codable, Sendable {
         gitStage: Bool = true,
         gitCommit: Bool = true,
         gitPush: Bool = true,
-        claudeRun: Bool = false
+        claudeRun: Bool = true
     ) {
         self.execRun = execRun
         self.readFile = readFile

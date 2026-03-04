@@ -54,6 +54,7 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
     private let session: URLSession
     private nonisolated(unsafe) var socketTask: URLSessionWebSocketTask?
     private nonisolated(unsafe) var receiveTask: Task<Void, Never>?
+    private nonisolated(unsafe) var pingTask: Task<Void, Never>?
 
     private let stream: AsyncStream<String>
     private let continuation: AsyncStream<String>.Continuation
@@ -64,10 +65,12 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
         self.url = url
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = false
-        // WebSocket sessions should not expire during normal conversation pauses.
-        // Per-send responsiveness is enforced separately in send(text:).
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 300
+        // timeoutIntervalForRequest: max gap between receiving any server data.
+        // We send explicit pings every 30 s so 60 s gives a comfortable margin.
+        // timeoutIntervalForResource: no cap — sessions outlive long bridge.claude.run calls
+        // (which can take up to 5 min). Reconnect logic handles actual disconnects.
+        config.timeoutIntervalForRequest = 60
+        config.timeoutIntervalForResource = .infinity
         self.session = URLSession(configuration: config)
         let (stream, continuation) = AsyncStream<String>.makeStream()
         self.stream = stream
@@ -95,9 +98,17 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
         receiveTask = Task {
             await receiveLoop(task)
         }
+
+        pingTask?.cancel()
+        pingTask = Task { [weak self] in
+            await self?.pingLoop(task)
+        }
     }
 
     func disconnect() async {
+        pingTask?.cancel()
+        pingTask = nil
+
         receiveTask?.cancel()
         receiveTask = nil
 
@@ -140,6 +151,16 @@ final class URLSessionWebSocketTransport: NSObject, WebSocketTransport, @uncheck
                 try? await Task.sleep(nanoseconds: Self.connectReadyTimeoutNs)
                 oneShot.resolve(.failure(URLError(.timedOut)))
             }
+        }
+    }
+
+    private func pingLoop(_ task: URLSessionWebSocketTask) async {
+        // Send a WebSocket ping every 30 seconds to keep the connection alive
+        // through NAT/router idle timeouts during long-running operations like bridge.claude.run.
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard !Task.isCancelled else { break }
+            task.sendPing { _ in } // errors are surfaced through receiveLoop
         }
     }
 

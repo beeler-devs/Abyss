@@ -78,6 +78,7 @@ final class BridgeAppModel: ObservableObject {
     @Published var allowWritesApplyPatch = true
     @Published var allowGitPush = false
     @Published var requireGitPushConfirmation = true
+    @Published var allowClaudeRun = false
 
     private var bridgeCore: BridgeCore?
     private let defaults = UserDefaults.standard
@@ -94,6 +95,7 @@ final class BridgeAppModel: ObservableObject {
     private static let allowWritesApplyPatchKey = "bridge.permissions.allowWritesApplyPatch"
     private static let allowGitPushKey = "bridge.permissions.allowGitPush"
     private static let requireGitPushConfirmationKey = "bridge.permissions.requireGitPushConfirmation"
+    private static let allowClaudeRunKey = "bridge.permissions.allowClaudeRun"
 
     private let stableDeviceId: String
 
@@ -114,6 +116,7 @@ final class BridgeAppModel: ObservableObject {
         self.allowWritesApplyPatch = defaults.object(forKey: Self.allowWritesApplyPatchKey) as? Bool ?? true
         self.allowGitPush = defaults.object(forKey: Self.allowGitPushKey) as? Bool ?? false
         self.requireGitPushConfirmation = defaults.object(forKey: Self.requireGitPushConfirmationKey) as? Bool ?? true
+        self.allowClaudeRun = defaults.object(forKey: Self.allowClaudeRunKey) as? Bool ?? false
 
         restoreWorkspaces()
         bootstrapBridgeCore()
@@ -236,6 +239,7 @@ final class BridgeAppModel: ObservableObject {
         defaults.set(allowWritesApplyPatch, forKey: Self.allowWritesApplyPatchKey)
         defaults.set(allowGitPush, forKey: Self.allowGitPushKey)
         defaults.set(requireGitPushConfirmation, forKey: Self.requireGitPushConfirmationKey)
+        defaults.set(allowClaudeRun, forKey: Self.allowClaudeRunKey)
 
         Task {
             await bridgeCore?.updatePermissions(currentPermissions())
@@ -310,7 +314,8 @@ final class BridgeAppModel: ObservableObject {
             allowExecRun: allowExecRun,
             allowWritesApplyPatch: allowWritesApplyPatch,
             allowGitPush: allowGitPush,
-            requireGitPushConfirmation: requireGitPushConfirmation
+            requireGitPushConfirmation: requireGitPushConfirmation,
+            allowClaudeRun: allowClaudeRun
         )
     }
 
@@ -465,6 +470,8 @@ struct BridgeStatusView: View {
                         .onChange(of: model.allowGitPush) { _ in model.applyPermissions() }
                     Toggle("Require confirmation for git push", isOn: $model.requireGitPushConfirmation)
                         .onChange(of: model.requireGitPushConfirmation) { _ in model.applyPermissions() }
+                    Toggle("Allow Claude Code (bridge.claude.run)", isOn: $model.allowClaudeRun)
+                        .onChange(of: model.allowClaudeRun) { _ in model.applyPermissions() }
                 }
             }
 
