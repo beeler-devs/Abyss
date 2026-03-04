@@ -225,6 +225,7 @@ export interface BridgeClaudeRunArgs {
   cwd?: string;
   timeoutSec?: number;
   allowedTools?: string;
+  maxTurns?: number;
 }
 
 export interface BridgeClaudeRunResult {

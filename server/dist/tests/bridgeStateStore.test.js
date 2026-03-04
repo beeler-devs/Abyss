@@ -41,16 +41,39 @@ test("register binds device to requesting session", () => {
     const resolve = store.resolveDeviceForTool("session-2");
     assert.equal(resolve.error, "bridge_not_paired");
 });
-test("claude tool resolves only to claude-capable bridges", () => {
+test("resolveDeviceForTool falls back to single global online device for new session", () => {
     const store = new BridgeStateStore();
-    store.createPairingRequest("session-3", "NOCLD1", "No Claude");
-    store.registerBridge({
-        pairingCode: "NOCLD1",
-        deviceId: "device-no-claude",
-        deviceName: "No Claude",
+    store.createPairingRequest("session-original", "ABC999", "Dev Mac");
+    const registration = store.registerBridge({
+        pairingCode: "ABC999",
+        deviceId: "device-one",
+        deviceName: "Dev Mac",
         workspaceRoot: "/workspace",
-        capabilities: { execRun: true, readFile: true, claudeRun: false },
+        capabilities: { execRun: true, readFile: true },
     });
-    const resolve = store.resolveDeviceForTool("session-3", undefined, "bridge.claude.run");
-    assert.equal(resolve.error, "bridge_tool_not_supported");
+    assert.ok(registration.device);
+    const resolve = store.resolveDeviceForTool("session-new-after-reconnect");
+    assert.equal(resolve.error, undefined);
+    assert.equal(resolve.device?.deviceId, "device-one");
+    assert.equal(resolve.device?.sessionId, "session-new-after-reconnect");
+    assert.equal(store.getSessionDevices("session-original").length, 0);
+    assert.equal(store.getSessionDevices("session-new-after-reconnect")[0]?.deviceId, "device-one");
+});
+test("resolveDeviceForTool allows explicit deviceId across session churn", () => {
+    const store = new BridgeStateStore();
+    store.createPairingRequest("session-original", "XYZ123", "Dev Mac");
+    const registration = store.registerBridge({
+        pairingCode: "XYZ123",
+        deviceId: "device-explicit",
+        deviceName: "Dev Mac",
+        workspaceRoot: "/workspace",
+        capabilities: { execRun: true, readFile: true },
+    });
+    assert.ok(registration.device);
+    const resolve = store.resolveDeviceForTool("session-new", "device-explicit");
+    assert.equal(resolve.error, undefined);
+    assert.equal(resolve.device?.deviceId, "device-explicit");
+    assert.equal(resolve.device?.sessionId, "session-new");
+    assert.equal(store.getSessionDevices("session-original").length, 0);
+    assert.equal(store.getSessionDevices("session-new")[0]?.deviceId, "device-explicit");
 });

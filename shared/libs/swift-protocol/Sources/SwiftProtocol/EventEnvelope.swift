@@ -588,13 +588,15 @@ public struct BridgeClaudeRunArguments: Codable, Sendable {
     public let cwd: String?
     public let timeoutSec: Int?
     public let allowedTools: String?
+    public let maxTurns: Int?
 
-    public init(deviceId: String? = nil, prompt: String, cwd: String? = nil, timeoutSec: Int? = nil, allowedTools: String? = nil) {
+    public init(deviceId: String? = nil, prompt: String, cwd: String? = nil, timeoutSec: Int? = nil, allowedTools: String? = nil, maxTurns: Int? = nil) {
         self.deviceId = deviceId
         self.prompt = prompt
         self.cwd = cwd
         self.timeoutSec = timeoutSec
         self.allowedTools = allowedTools
+        self.maxTurns = maxTurns
     }
 }
 

@@ -27,7 +27,35 @@ export class AnthropicProvider {
         return response;
     }
     buildMessages(conversation) {
+        // Collect all resolved tool_use IDs from tool result turns.
+        const resolvedToolUseIds = new Set();
+        for (const turn of conversation) {
+            if (turn.role === "tool" && turn.tool_use_id) {
+                resolvedToolUseIds.add(turn.tool_use_id);
+            }
+        }
+        // Identify tool_use IDs that are orphaned (assistant turn exists but result is missing).
+        // We skip both the assistant turn and any results belonging to it.
+        const skippedToolUseIds = new Set();
+        for (const turn of conversation) {
+            if (turn.role === "assistant" && Array.isArray(turn.content)) {
+                if (turn.content.some((tc) => !resolvedToolUseIds.has(tc.id))) {
+                    for (const tc of turn.content) {
+                        skippedToolUseIds.add(tc.id);
+                    }
+                }
+            }
+        }
         const messages = [];
+        // Pending tool_result blocks to be batched into a single user message (Anthropic requires
+        // all tool results for a given assistant turn to be in one user message).
+        let pendingToolResults = [];
+        const flushToolResults = () => {
+            if (pendingToolResults.length > 0) {
+                messages.push({ role: "user", content: pendingToolResults });
+                pendingToolResults = [];
+            }
+        };
         for (const turn of conversation) {
             if (turn.role === "system") {
                 continue;
@@ -36,22 +64,23 @@ export class AnthropicProvider {
                 const toolUseId = asNonEmptyString(turn.tool_use_id);
                 const content = typeof turn.content === "string" ? turn.content : JSON.stringify(turn.content);
                 if (!toolUseId) {
+                    flushToolResults();
                     messages.push({ role: "user", content });
                     continue;
                 }
-                messages.push({
-                    role: "user",
-                    content: [
-                        {
-                            type: "tool_result",
-                            tool_use_id: toolUseId,
-                            content,
-                        },
-                    ],
-                });
+                // Skip tool results that belong to an orphaned (skipped) assistant turn.
+                if (skippedToolUseIds.has(toolUseId)) {
+                    continue;
+                }
+                pendingToolResults.push({ type: "tool_result", tool_use_id: toolUseId, content });
                 continue;
             }
+            flushToolResults();
             if (turn.role === "assistant" && Array.isArray(turn.content)) {
+                // Skip orphaned assistant tool-use turns entirely.
+                if (turn.content.some((tc) => skippedToolUseIds.has(tc.id))) {
+                    continue;
+                }
                 messages.push({
                     role: "assistant",
                     content: turn.content.map((toolCall) => ({
@@ -64,11 +93,13 @@ export class AnthropicProvider {
                 continue;
             }
             if ((turn.role === "user" || turn.role === "assistant") && typeof turn.content === "string") {
-                messages.push({
-                    role: turn.role,
-                    content: turn.content,
-                });
+                messages.push({ role: turn.role, content: turn.content });
             }
+        }
+        flushToolResults();
+        // Anthropic requires the first message to be from the user.
+        while (messages.length > 0 && messages[0].role !== "user") {
+            messages.shift();
         }
         return messages;
     }

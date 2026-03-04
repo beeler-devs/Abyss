@@ -458,13 +458,14 @@ public actor BridgeCore {
                     return "'" + str.replacingOccurrences(of: "'", with: "'\\''") + "'"
                 }
 
-                let command = "claude -p \(shellEscape(args.prompt)) --allowedTools \(shellEscape(allowedTools)) --output-format json"
+                let maxTurns = max(1, min(args.maxTurns ?? 30, 100))
+                let command = "claude -p \(shellEscape(args.prompt)) --allowedTools \(shellEscape(allowedTools)) --output-format stream-json --max-turns \(maxTurns)"
 
                 let start = try await startCommand(
                     command: command,
                     cwd: args.cwd,
                     env: nil,
-                    timeoutSec: args.timeoutSec ?? 300
+                    timeoutSec: args.timeoutSec ?? 540
                 )
                 guard let completion = await commandManager.waitForCompletion(commandId: start.commandId) else {
                     throw BridgeCoreError.internalError("command_not_found_after_start")
@@ -1083,22 +1084,30 @@ public actor BridgeCore {
 }
 
 struct ClaudeCLIResult: Decodable, Sendable {
+    let type: String?
     let result: String?
     let sessionId: String?
     let isError: Bool?
 
     enum CodingKeys: String, CodingKey {
-        case result
+        case type, result
         case sessionId = "session_id"
         case isError = "is_error"
     }
 }
 
+/// Parses stream-json output from `claude --output-format stream-json`.
+/// Each line is a separate JSON object; we scan for the line with `"type":"result"`.
 func parseClaudeCLIResult(from output: String) -> ClaudeCLIResult? {
-    guard !output.isEmpty, let data = output.data(using: .utf8) else {
-        return nil
+    guard !output.isEmpty else { return nil }
+    let decoder = JSONDecoder()
+    for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
+        guard let data = String(line).data(using: .utf8),
+              let event = try? decoder.decode(ClaudeCLIResult.self, from: data),
+              event.type == "result" else { continue }
+        return event
     }
-    return try? JSONDecoder().decode(ClaudeCLIResult.self, from: data)
+    return nil
 }
 
 func firstNonEmptyString(_ candidates: [String?]) -> String? {
