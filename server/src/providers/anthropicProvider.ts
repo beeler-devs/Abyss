@@ -102,13 +102,14 @@ export class AnthropicProvider implements ModelProvider {
       }
     }
 
-    // Identify tool_use IDs that are orphaned (assistant turn exists but result is missing).
-    // We skip both the assistant turn and any results belonging to it.
+    // Identify individual tool_use IDs that are orphaned (no matching tool result).
+    // We skip only the specific unresolved IDs, not the entire assistant turn,
+    // so that resolved tool calls within the same turn are preserved.
     const skippedToolUseIds = new Set<string>();
     for (const turn of conversation) {
       if (turn.role === "assistant" && Array.isArray(turn.content)) {
-        if (turn.content.some((tc) => !resolvedToolUseIds.has(tc.id))) {
-          for (const tc of turn.content) {
+        for (const tc of turn.content) {
+          if (!resolvedToolUseIds.has(tc.id)) {
             skippedToolUseIds.add(tc.id);
           }
         }
@@ -155,13 +156,14 @@ export class AnthropicProvider implements ModelProvider {
       flushToolResults();
 
       if (turn.role === "assistant" && Array.isArray(turn.content)) {
-        // Skip orphaned assistant tool-use turns entirely.
-        if (turn.content.some((tc) => skippedToolUseIds.has(tc.id))) {
+        // Filter out only the specific orphaned tool calls (those without a result).
+        const resolved = turn.content.filter((tc) => !skippedToolUseIds.has(tc.id));
+        if (resolved.length === 0) {
           continue;
         }
         messages.push({
           role: "assistant",
-          content: turn.content.map((toolCall) => ({
+          content: resolved.map((toolCall) => ({
             type: "tool_use",
             id: toolCall.id,
             name: toolCall.name,
@@ -193,8 +195,10 @@ export class AnthropicProvider implements ModelProvider {
     const messages = this.buildMessages(conversation);
     const toolList = (tools ?? []).filter((tool) => Boolean(tool.name));
     const withTools = toolList.length > 0;
+    // Tool-using turns need more tokens for structured JSON output.
+    // Scale up by 4x but cap at 8192 to stay within reasonable bounds.
     const maxTokens = withTools
-      ? Math.min(this.config.maxTokens * 4, 4096)
+      ? Math.min(this.config.maxTokens * 4, 8192)
       : this.config.maxTokens;
 
     // Anthropic tool names must match ^[a-zA-Z0-9_-]+$ — dots are not allowed.
@@ -280,7 +284,7 @@ export class AnthropicProvider implements ModelProvider {
 
     if (!text) {
       return {
-        fullText: "I heard you. I can continue once the model returns a full response.",
+        fullText: "I heard you, but the model returned an empty response. Could you try again?",
         toolCalls,
       };
     }

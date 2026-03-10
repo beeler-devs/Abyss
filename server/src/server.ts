@@ -380,15 +380,19 @@ async function handleCursorWebhook(
   const signatureHeader = req.headers["x-webhook-signature"];
   const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
 
-  let rawBody = "";
+  const bodyChunks: Buffer[] = [];
+  let bodyLength = 0;
   for await (const chunk of req) {
-    rawBody += chunk;
-    if (rawBody.length > MAX_WEBHOOK_BYTES) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    bodyLength += buf.length;
+    if (bodyLength > MAX_WEBHOOK_BYTES) {
       res.writeHead(413, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "payload_too_large" }));
       return;
     }
+    bodyChunks.push(buf);
   }
+  const rawBody = Buffer.concat(bodyChunks).toString("utf8");
 
   if (!verifyCursorWebhookSignature(rawBody, signature, CURSOR_WEBHOOK_SECRET)) {
     res.writeHead(401, { "Content-Type": "application/json" });
@@ -631,8 +635,32 @@ function bridgeDeviceSupportsTool(capabilities: BridgeCapabilities, toolName: st
   switch (toolName) {
     case "bridge.exec.run":
       return capabilities.execRun;
+    case "bridge.exec.start":
+      return capabilities.execStart ?? capabilities.execRun;
+    case "bridge.exec.cancel":
+      return capabilities.execCancel ?? capabilities.execRun;
+    case "bridge.exec.status":
+      return capabilities.execStatus ?? capabilities.execRun;
+    case "bridge.exec.output.subscribe":
+      return capabilities.execOutputEvents ?? capabilities.execRun;
     case "bridge.fs.readFile":
       return capabilities.readFile;
+    case "bridge.fs.search":
+      return capabilities.fsSearch ?? capabilities.readFile;
+    case "bridge.fs.readRange":
+      return capabilities.fsReadRange ?? capabilities.readFile;
+    case "bridge.fs.applyPatch":
+      return capabilities.fsApplyPatch ?? false;
+    case "bridge.git.status":
+      return capabilities.gitStatus ?? false;
+    case "bridge.git.diff":
+      return capabilities.gitDiff ?? false;
+    case "bridge.git.stage":
+      return capabilities.gitStage ?? false;
+    case "bridge.git.commit":
+      return capabilities.gitCommit ?? false;
+    case "bridge.git.push":
+      return capabilities.gitPush ?? false;
     case "bridge.claude.run":
       return capabilities.claudeRun ?? false;
     default:
