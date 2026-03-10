@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { makeEvent } from "../core/events.js";
 import { logger } from "../core/logger.js";
 import { EventEnvelope } from "../core/types.js";
+import { optionalString, summarizeValueForLog } from "../core/utils.js";
 import { BridgeDeviceRecord, BridgeStateStore } from "./state.js";
 
 interface PendingBridgeCall {
@@ -739,18 +740,17 @@ export class BridgeToolRouter {
       stderrTail: payload.stderrTail,
     }, event.id, event.timestamp));
 
+    // Check if this command belongs to an active Claude run.
+    // Use the deviceId-based map for an O(1) lookup instead of iterating all values.
     const isActiveClaudeCommand = this.activeClaudeRunByCommandId.has(payload.commandId)
-      || [...this.activeClaudeCommandIdByDeviceId.values()].includes(payload.commandId);
+      || this.activeClaudeCommandIdByDeviceId.get(payload.deviceId) === payload.commandId;
     if (isActiveClaudeCommand) {
       this.claudeExitCodeByCommandId.set(payload.commandId, payload.exitCode);
     } else {
       this.claudeLineBuffers.delete(payload.commandId);
       this.lastClaudeProgressAt.delete(payload.commandId);
-      for (const [did, cid] of this.activeClaudeCommandIdByDeviceId) {
-        if (cid === payload.commandId) {
-          this.activeClaudeCommandIdByDeviceId.delete(did);
-          break;
-        }
+      if (this.activeClaudeCommandIdByDeviceId.get(payload.deviceId) === payload.commandId) {
+        this.activeClaudeCommandIdByDeviceId.delete(payload.deviceId);
       }
     }
 
@@ -829,14 +829,6 @@ export class BridgeToolRouter {
   }
 }
 
-function optionalString(value: unknown): string | undefined {
-  if (typeof value !== "string") {
-    return undefined;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {};
@@ -862,28 +854,6 @@ function shortenForNarration(value: string, max = 60): string {
     return trimmed;
   }
   return `${trimmed.slice(0, max - 1)}…`;
-}
-
-function summarizeValueForLog(value: unknown, maxLen = 80): string | null {
-  let text: string;
-  if (typeof value === "string") {
-    text = value;
-  } else {
-    const json = JSON.stringify(value);
-    if (!json) {
-      return null;
-    }
-    text = json;
-  }
-
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return null;
-  }
-  if (normalized.length <= maxLen) {
-    return normalized;
-  }
-  return `${normalized.slice(0, maxLen - 1)}…`;
 }
 
 function buildClaudeProgressLabel(toolName: string, input: Record<string, unknown>): string | null {

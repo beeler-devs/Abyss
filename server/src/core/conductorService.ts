@@ -12,6 +12,7 @@ import {
 import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
+import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
 import {
   BridgeToolExecutor,
   CursorAgentMode,
@@ -457,25 +458,6 @@ function waitForToolResult(
   });
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  return value as Record<string, unknown>;
-}
-
-function stringFromRecord(record: Record<string, unknown>, ...keys: string[]): string | undefined {
-  for (const key of keys) {
-    const value = record[key];
-    if (typeof value === "string") {
-      const trimmed = value.trim();
-      if (trimmed.length) {
-        return trimmed;
-      }
-    }
-  }
-  return undefined;
-}
 
 export class ConductorService {
   private readonly provider: ModelProvider;
@@ -1545,16 +1527,19 @@ export class ConductorService {
     }
 
     const poll = async (): Promise<void> => {
-      const run = this.sessions.getCursorRun(agentId);
-      if (!run || isTerminalAgentStatus(run.status)) {
-        this.stopConversationPolling(agentId);
+      try {
         await this.pollConversation(agentId, sessionId, emit);
-        return;
+      } finally {
+        // Check terminal status *after* the final poll so we capture any
+        // remaining conversation messages before stopping.
+        const run = this.sessions.getCursorRun(agentId);
+        if (!run || isTerminalAgentStatus(run.status)) {
+          this.stopConversationPolling(agentId);
+        }
       }
-      await this.pollConversation(agentId, sessionId, emit);
     };
 
-    const timer = setInterval(poll, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
+    const timer = setInterval(() => { poll().catch(() => {}); }, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
     timer.unref?.();
     this.conversationPollers.set(agentId, timer);
     poll().catch(() => {});
@@ -1654,26 +1639,3 @@ function summarizeArgsForLog(args: Record<string, unknown>, maxLen = 80): string
   return summarizeValueForLog(`keys=[${keys.join(",")}]`, maxLen) ?? "keys=[]";
 }
 
-function summarizeValueForLog(value: unknown, maxLen = 80): string | null {
-  let text: string;
-  if (typeof value === "string") {
-    text = value;
-  } else {
-    const json = JSON.stringify(value);
-    if (!json) {
-      return null;
-    }
-    text = json;
-  }
-
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (!normalized) {
-    return null;
-  }
-
-  if (normalized.length <= maxLen) {
-    return normalized;
-  }
-
-  return `${normalized.slice(0, maxLen - 1)}…`;
-}

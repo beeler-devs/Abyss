@@ -43,6 +43,9 @@ export class SessionStore {
   appendTurn(state: SessionState, turn: ConversationTurn): void {
     state.history.push(turn);
 
+    // Each logical turn can produce up to 2 entries (user + assistant, or
+    // assistant tool-use + tool result), so the maximum history length is
+    // maxTurns * 2.  Keep only the most recent entries to bound memory.
     const maxEntries = this.maxTurns * 2;
     if (state.history.length > maxEntries) {
       state.history = state.history.slice(-maxEntries);
@@ -51,8 +54,8 @@ export class SessionStore {
 
   recordTrace(state: SessionState, marker: string): void {
     state.recentTranscriptTrace.push(marker);
-    if (state.recentTranscriptTrace.length > this.traceMaxEntries) {
-      state.recentTranscriptTrace.shift();
+    if (state.recentTranscriptTrace.length > this.traceMaxEntries * 2) {
+      state.recentTranscriptTrace = state.recentTranscriptTrace.slice(-this.traceMaxEntries);
     }
   }
 

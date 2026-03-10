@@ -18,6 +18,12 @@ export function chunkText(text: string, minChunk = 30, maxChunk = 80): string[] 
       }
     }
 
+    // Guard against zero-advance when no space is found within the target window
+    // (e.g. a single token longer than maxChunk). Force at least one character of progress.
+    if (end <= cursor) {
+      end = cursor + target;
+    }
+
     const chunk = text.slice(cursor, end);
     if (chunk.length > 0) {
       chunks.push(chunk);
@@ -25,7 +31,7 @@ export function chunkText(text: string, minChunk = 30, maxChunk = 80): string[] 
     cursor = end;
   }
 
-  return chunks.filter((chunk) => chunk.length > 0);
+  return chunks;
 }
 
 export async function* streamFromChunks(chunks: string[], delayMs: number): AsyncIterable<string> {

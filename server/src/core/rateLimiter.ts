@@ -2,6 +2,7 @@ export class SlidingWindowRateLimiter {
   private readonly maxEvents: number;
   private readonly windowMs: number;
   private readonly timestamps: number[] = [];
+  private head = 0;
 
   constructor(maxEvents: number, windowMs: number) {
     this.maxEvents = maxEvents;
@@ -11,7 +12,7 @@ export class SlidingWindowRateLimiter {
   allow(nowMs: number = Date.now()): boolean {
     this.prune(nowMs);
 
-    if (this.timestamps.length >= this.maxEvents) {
+    if (this.size() >= this.maxEvents) {
       return false;
     }
 
@@ -21,8 +22,19 @@ export class SlidingWindowRateLimiter {
 
   private prune(nowMs: number): void {
     const threshold = nowMs - this.windowMs;
-    while (this.timestamps.length && this.timestamps[0] < threshold) {
-      this.timestamps.shift();
+    while (this.head < this.timestamps.length && this.timestamps[this.head] < threshold) {
+      this.head += 1;
     }
+
+    // Compact the array when the dead prefix exceeds half the total length
+    // to prevent unbounded growth while avoiding frequent re-allocations.
+    if (this.head > this.timestamps.length / 2 && this.head > 32) {
+      this.timestamps.splice(0, this.head);
+      this.head = 0;
+    }
+  }
+
+  private size(): number {
+    return this.timestamps.length - this.head;
   }
 }
