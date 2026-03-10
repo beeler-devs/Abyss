@@ -54,6 +54,10 @@
 		A10000000000000100000031 /* RepositorySelectionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000031 /* RepositorySelectionCard.swift */; };
 		A10000000000000100000032 /* RepositorySelectionCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000032 /* RepositorySelectionCardView.swift */; };
 		A10000000000000100000033 /* RepositoriesSelectTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000033 /* RepositoriesSelectTool.swift */; };
+		A10000000000000100000034 /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000034 /* AppLogger.swift */; };
+		A10000000000000100000035 /* ConversationAudioPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000035 /* ConversationAudioPipeline.swift */; };
+		A10000000000000100000036 /* ConversationAgentManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000036 /* ConversationAgentManager.swift */; };
+		A10000000000000100000037 /* ConversationEventCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000037 /* ConversationEventCoordinator.swift */; };
 		B10000000000000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000100000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -105,6 +109,10 @@
 		A20000000000000100000031 /* RepositorySelectionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySelectionCard.swift; sourceTree = "<group>"; };
 		A20000000000000100000032 /* RepositorySelectionCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositorySelectionCardView.swift; sourceTree = "<group>"; };
 		A20000000000000100000033 /* RepositoriesSelectTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RepositoriesSelectTool.swift; sourceTree = "<group>"; };
+		A20000000000000100000034 /* AppLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLogger.swift; sourceTree = "<group>"; };
+		A20000000000000100000035 /* ConversationAudioPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationAudioPipeline.swift; sourceTree = "<group>"; };
+		A20000000000000100000036 /* ConversationAgentManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationAgentManager.swift; sourceTree = "<group>"; };
+		A20000000000000100000037 /* ConversationEventCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationEventCoordinator.swift; sourceTree = "<group>"; };
 		A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -153,6 +161,7 @@
 				A20000000000000100000002 /* Config.swift */,
 				A20000000000000100000023 /* UIConstants.swift */,
 				A20000000000000100000024 /* AppTheme.swift */,
+				A20000000000000100000034 /* AppLogger.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -191,6 +200,9 @@
 		A50000000000000100000006 /* ViewModels */ = {
 			isa = PBXGroup;
 			children = (
+				A20000000000000100000036 /* ConversationAgentManager.swift */,
+				A20000000000000100000035 /* ConversationAudioPipeline.swift */,
+				A20000000000000100000037 /* ConversationEventCoordinator.swift */,
 				A20000000000000100000009 /* ConversationViewModel.swift */,
 			);
 			path = ViewModels;
@@ -372,12 +384,16 @@
 				A10000000000000100000002 /* Config.swift in Sources */,
 				A10000000000000100000023 /* UIConstants.swift in Sources */,
 				A10000000000000100000024 /* AppTheme.swift in Sources */,
+				A10000000000000100000034 /* AppLogger.swift in Sources */,
 				A10000000000000100000003 /* ContentView.swift in Sources */,
 				A10000000000000100000004 /* MicButton.swift in Sources */,
 				A10000000000000100000005 /* TranscriptView.swift in Sources */,
 				A10000000000000100000006 /* EventTimelineView.swift in Sources */,
 				A10000000000000100000007 /* StateIndicator.swift in Sources */,
 				A10000000000000100000008 /* SettingsView.swift in Sources */,
+				A10000000000000100000036 /* ConversationAgentManager.swift in Sources */,
+				A10000000000000100000035 /* ConversationAudioPipeline.swift in Sources */,
+				A10000000000000100000037 /* ConversationEventCoordinator.swift in Sources */,
 				A10000000000000100000009 /* ConversationViewModel.swift in Sources */,
 				A1000000000000010000001F /* AgentProgressCardView.swift in Sources */,
 				A10000000000000100000032 /* RepositorySelectionCardView.swift in Sources */,
