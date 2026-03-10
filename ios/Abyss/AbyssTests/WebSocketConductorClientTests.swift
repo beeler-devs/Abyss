@@ -113,6 +113,37 @@ final class WebSocketConductorClientTests: XCTestCase {
         await client.disconnect()
     }
 
+    func testRememberedInboundEventIDsStayBounded() async throws {
+        let transport = MockWebSocketTransport()
+        let client = WebSocketConductorClient(
+            backendURL: URL(string: "ws://localhost:8080/ws")!,
+            transportFactory: { transport },
+            maxRememberedEventIDs: 3
+        )
+
+        let collector = Task {
+            for await _ in client.inboundEvents {}
+        }
+
+        try await client.connect(sessionId: "session-1", githubToken: nil)
+
+        for index in 0..<6 {
+            let event = Event(
+                id: "evt-\(index)",
+                timestamp: Date(),
+                sessionId: "session-1",
+                kind: .assistantSpeechPartial(.init(text: "chunk-\(index)"))
+            )
+            transport.emitInboundText(try encodeEnvelope(EventEnvelope(event: event)))
+        }
+
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        XCTAssertEqual(client.rememberedInboundEventCount, 3)
+
+        collector.cancel()
+        await client.disconnect()
+    }
+
     private func encodeEnvelope(_ envelope: EventEnvelope) throws -> String {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

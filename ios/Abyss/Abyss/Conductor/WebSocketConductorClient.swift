@@ -223,9 +223,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var currentSessionId: String?
     private var currentGithubToken: String?
 
-    private var seenInboundEventIDs: Set<String> = []
-    private var seenInboundEventOrder: [String] = []
-    private let maxRememberedEventIDs = 2_000
+    private var seenInboundEventIDs: BoundedEventIDCache
 
     private let stream: AsyncStream<Event>
     private let continuation: AsyncStream<Event>.Continuation
@@ -260,19 +258,22 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
 
 
     var inboundEvents: AsyncStream<Event> { stream }
+    var rememberedInboundEventCount: Int { seenInboundEventIDs.count }
 
     init(
         backendURL: URL,
         transportFactory: (@Sendable () -> WebSocketTransport)? = nil,
         reconnectBaseDelayNs: UInt64 = 500_000_000,
         reconnectMaxDelayNs: UInt64 = 30_000_000_000,
-        reconnectJitterRange: ClosedRange<Double> = 0.0...0.3
+        reconnectJitterRange: ClosedRange<Double> = 0.0...0.3,
+        maxRememberedEventIDs: Int = 2_000
     ) {
         self.backendURL = backendURL
         self.transportFactory = transportFactory ?? { URLSessionWebSocketTransport(url: backendURL) }
         self.reconnectBaseDelayNs = reconnectBaseDelayNs
         self.reconnectMaxDelayNs = reconnectMaxDelayNs
         self.reconnectJitterRange = reconnectJitterRange
+        self.seenInboundEventIDs = BoundedEventIDCache(capacity: maxRememberedEventIDs)
 
         let (stream, continuation) = AsyncStream<Event>.makeStream()
         self.stream = stream
@@ -365,13 +366,9 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
             return
         }
 
-        guard !seenInboundEventIDs.contains(envelope.id) else {
+        guard seenInboundEventIDs.insert(envelope.id) else {
             return
         }
-
-        seenInboundEventIDs.insert(envelope.id)
-        seenInboundEventOrder.append(envelope.id)
-        trimSeenEventIDsIfNeeded()
 
         guard let event = try? envelope.toEvent() else {
             return
@@ -379,14 +376,6 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
 
         continuation.yield(event)
     }
-
-    private func trimSeenEventIDsIfNeeded() {
-        while seenInboundEventOrder.count > maxRememberedEventIDs {
-            let removed = seenInboundEventOrder.removeFirst()
-            seenInboundEventIDs.remove(removed)
-        }
-    }
-
     private func handleSocketClosed() async {
         guard shouldReconnect else {
             return
@@ -421,6 +410,35 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
                 await self.scheduleReconnect()
             }
         }
+    }
+}
+
+private struct BoundedEventIDCache {
+    private let capacity: Int
+    private var ring: [String?]
+    private var lookup: Set<String> = []
+    private var nextIndex = 0
+    private(set) var count = 0
+
+    init(capacity: Int) {
+        self.capacity = max(0, capacity)
+        self.ring = Array(repeating: nil, count: max(0, capacity))
+    }
+
+    mutating func insert(_ id: String) -> Bool {
+        guard capacity > 0 else { return true }
+        guard !lookup.contains(id) else { return false }
+
+        if count == capacity, let evicted = ring[nextIndex] {
+            lookup.remove(evicted)
+        } else {
+            count += 1
+        }
+
+        ring[nextIndex] = id
+        nextIndex = (nextIndex + 1) % capacity
+        lookup.insert(id)
+        return true
     }
 }
 

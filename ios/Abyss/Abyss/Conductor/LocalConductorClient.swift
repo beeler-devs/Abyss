@@ -37,14 +37,11 @@ final class LocalConductorClient: ConductorClient, @unchecked Sendable {
     }
 
     func send(event: Event) async throws {
-        print("🔌 [LOCAL-1] LocalConductorClient.send() ENTER — kind=\(event.kind.displayName)")
+        AppLogger.conductor.debug("Local conductor send: \(event.kind.displayName, privacy: .public)")
         switch event.kind {
         case .userAudioTranscriptFinal(let final):
-            print("🔌 [LOCAL-2] calling conductor.handleTranscript('\(final.text)')")
             let events = await conductor.handleTranscript(final.text)
-            print("🔌 [LOCAL-3] handleTranscript returned \(events.count) events — yielding to inboundEvents stream")
-            for (i, outbound) in events.enumerated() {
-                print("🔌 [LOCAL-4] yielding event[\(i)]: \(outbound.kind.displayName)")
+            for outbound in events {
                 continuation.yield(Event(
                     id: outbound.id,
                     timestamp: outbound.timestamp,
@@ -52,10 +49,9 @@ final class LocalConductorClient: ConductorClient, @unchecked Sendable {
                     kind: outbound.kind
                 ))
             }
-            print("🔌 [LOCAL-5] all \(events.count) events yielded")
+            AppLogger.conductor.debug("Local conductor yielded \(events.count, privacy: .public) events")
         default:
             break
         }
-        print("🔌 [LOCAL-6] LocalConductorClient.send() returning")
     }
 }

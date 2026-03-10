@@ -15,9 +15,9 @@ final class ToolRouter {
     /// Handle a single tool call event. Returns the result event.
     @discardableResult
     func dispatch(_ toolCall: Event.ToolCall) async -> Event {
-        print("🔨 [ROUTER] dispatch '\(toolCall.name)' callId=\(toolCall.callId.prefix(8))")
+        AppLogger.tooling.debug("Dispatching tool \(toolCall.name, privacy: .public) callId=\(String(toolCall.callId.prefix(8)), privacy: .public)")
         guard let tool = registry.tool(named: toolCall.name) else {
-            print("🔨 [ROUTER] ERROR — unknown tool '\(toolCall.name)'")
+            AppLogger.tooling.error("Unknown tool: \(toolCall.name, privacy: .public)")
             let resultEvent = Event.toolError(
                 callId: toolCall.callId,
                 error: "Unknown tool: \(toolCall.name)"
@@ -28,12 +28,11 @@ final class ToolRouter {
 
         do {
             let resultJSON = try await tool.execute(toolCall.arguments)
-            print("🔨 [ROUTER] dispatch '\(toolCall.name)' DONE — ok")
             let resultEvent = Event.toolResult(callId: toolCall.callId, result: resultJSON)
             eventBus.emit(resultEvent)
             return resultEvent
         } catch {
-            print("🔨 [ROUTER] dispatch '\(toolCall.name)' THREW — \(error.localizedDescription)")
+            AppLogger.tooling.error("Tool \(toolCall.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
             let resultEvent = Event.toolError(
                 callId: toolCall.callId,
                 error: error.localizedDescription

@@ -1,6 +1,7 @@
 import Foundation
 
-/// UI-facing model for tracking Cursor Cloud Agent progress.
+/// Pure value model for Cursor agent progress.
+/// Mutations and side effects live in `ConversationAgentManager`, which keeps UI updates predictable on the main actor.
 struct AgentProgressCard: Identifiable, Equatable, Sendable {
     struct Step: Identifiable, Equatable, Sendable {
         enum State: Sendable {
@@ -58,83 +59,6 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
             updatedAt: Date(),
             errorMessage: nil
         )
-    }
-
-    mutating func applySpawnResult(_ result: AgentSpawnTool.Result) {
-        agentId = result.id
-        status = result.status
-        title = (result.name?.isEmpty == false) ? (result.name ?? title) : title
-        branchName = result.branchName
-        agentURL = result.url
-        prURL = result.prUrl
-        createdAt = result.createdAt
-        summary = summaryTextForStatus(currentSummary: summary)
-        errorMessage = nil
-        updatedAt = Date()
-    }
-
-    mutating func applyStatusResult(_ result: AgentStatusTool.Result) {
-        agentId = result.id
-        status = result.status
-
-        if let name = result.name, !name.isEmpty {
-            title = name
-        }
-
-        if let summary = result.summary, !summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            self.summary = summary
-        } else {
-            summary = summaryTextForStatus(currentSummary: summary)
-        }
-
-        branchName = result.branchName ?? branchName
-        agentURL = result.url ?? agentURL
-        prURL = result.prUrl ?? prURL
-        createdAt = result.createdAt ?? createdAt
-
-        if normalizedStatus == "FINISHED" {
-            errorMessage = nil
-        }
-
-        updatedAt = Date()
-    }
-
-    mutating func applyCancelled(agentID: String) {
-        agentId = agentID
-        status = "STOPPED"
-        summary = "Agent stopped by user."
-        errorMessage = nil
-        updatedAt = Date()
-    }
-
-    mutating func applyAgentStatusEvent(_ event: Event.AgentStatus) {
-        if let incomingAgentId = event.agentId, !incomingAgentId.isEmpty {
-            agentId = incomingAgentId
-        }
-
-        status = event.status
-        summary = event.summary ?? event.detail ?? summaryTextForStatus(currentSummary: summary)
-        runUrlUpdate(from: event)
-        updatedAt = Date()
-    }
-
-    mutating func applySpawnError(_ message: String) {
-        status = "FAILED"
-        summary = "Could not start Cursor Cloud Agent."
-        errorMessage = message
-        updatedAt = Date()
-    }
-
-    mutating func noteStatusRefreshError(_ message: String) {
-        summary = "Status refresh failed: \(message)"
-        updatedAt = Date()
-    }
-
-    mutating func appendConversationMessages(_ newMessages: [Event.AgentConversationMessage]) {
-        let existingIds = Set(conversationMessages.map(\.id))
-        let deduped = newMessages.filter { !existingIds.contains($0.id) }
-        conversationMessages.append(contentsOf: deduped)
-        updatedAt = Date()
     }
 
     var normalizedStatus: String {
@@ -216,7 +140,7 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
         }
     }
 
-    private func summaryTextForStatus(currentSummary: String) -> String {
+    func summaryTextForStatus(currentSummary: String) -> String {
         if !currentSummary.isEmpty,
            !currentSummary.lowercased().contains("submitting request") {
             return currentSummary
@@ -235,18 +159,6 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
             return "Agent was stopped before completion."
         default:
             return "Waiting for status updates..."
-        }
-    }
-
-    private mutating func runUrlUpdate(from event: Event.AgentStatus) {
-        if let runUrl = event.runUrl, !runUrl.isEmpty {
-            agentURL = runUrl
-        }
-        if let prUrl = event.prUrl, !prUrl.isEmpty {
-            prURL = prUrl
-        }
-        if let branchName = event.branchName, !branchName.isEmpty {
-            self.branchName = branchName
         }
     }
 

@@ -1,53 +1,78 @@
-import Foundation
 import AVFoundation
+import Foundation
 #if canImport(WhisperKit)
 import WhisperKit
 #endif
 
 /// WhisperKit-based on-device speech transcriber.
-/// Streams partial transcripts while recording, returns final on stop.
+/// `@unchecked Sendable` remains because `AVAudioEngine` and `WhisperKit` are not Sendable, but every mutable field
+/// shared with the audio tap or async transcription tasks is protected by `lock`, and late callbacks are ignored after stop/deinit.
 final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable {
     private let lock = NSLock()
 
     private var _isListening = false
-    var isListening: Bool {
-        lock.withLock { _isListening }
-    }
-
     private var partialContinuation: AsyncStream<String>.Continuation?
     private var _partials: AsyncStream<String>?
-    private var audioEngine: AVAudioEngine?
-    private var accumulatedText: String = ""
+    private var accumulatedText = ""
     private var _audioLevelHandler: ((Float) -> Void)?
+    private var audioEngine: AVAudioEngine?
+    private var isTornDown = false
 
     #if canImport(WhisperKit)
     private var whisperKit: WhisperKit?
     private var whisperKitInitTask: Task<WhisperKit?, Never>?
     private var audioBuffers: [Float] = []
-    private var inputSampleRate: Double = 16000
-    private let targetSampleRate: Double = 16000
+    private var inputSampleRate: Double = 16_000
+    private let targetSampleRate: Double = 16_000
     private var partialTranscriptionTask: Task<Void, Never>?
     private var partialTranscriptionInFlight = false
     private var lastPartialSampleCount = 0
     private let partialDebounceNanoseconds: UInt64 = 250_000_000
     #endif
 
+    var isListening: Bool {
+        lock.withLock { _isListening }
+    }
+
     var partials: AsyncStream<String> {
         lock.withLock {
             if let existing = _partials { return existing }
             let (stream, continuation) = AsyncStream<String>.makeStream()
-            self._partials = stream
-            self.partialContinuation = continuation
+            _partials = stream
+            partialContinuation = continuation
             return stream
         }
     }
 
     var onAudioLevel: ((Float) -> Void)? {
-        get { lock.withLock { _audioLevelHandler } }
-        set { lock.withLock { _audioLevelHandler = newValue } }
+        get {
+            lock.withLock { _audioLevelHandler as ((Float) -> Void)? }
+        }
+        set {
+            lock.withLock {
+                _audioLevelHandler = newValue
+            }
+        }
     }
 
     init() {}
+
+    deinit {
+        let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
+            _isListening = false
+            isTornDown = true
+            #if canImport(WhisperKit)
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+            whisperKitInitTask?.cancel()
+            whisperKitInitTask = nil
+            #endif
+            return partialContinuation
+        }
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        continuation?.finish()
+    }
 
     func preload() async {
         #if canImport(WhisperKit)
@@ -56,34 +81,28 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     }
 
     func start() async throws {
-        // Request microphone permission
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: .duckOthers)
         try session.setActive(true)
 
-        #if canImport(WhisperKit)
-        audioBuffers = []
-        partialTranscriptionTask?.cancel()
-        partialTranscriptionTask = nil
-        partialTranscriptionInFlight = false
-        lastPartialSampleCount = 0
-        #endif
-
-        // Recreate the partial stream
         let (stream, continuation) = AsyncStream<String>.makeStream()
         lock.withLock {
-            self._partials = stream
-            self.partialContinuation = continuation
-            self._isListening = true
-            self.accumulatedText = ""
+            _partials = stream
+            partialContinuation = continuation
+            _isListening = true
+            accumulatedText = ""
+            isTornDown = false
+            #if canImport(WhisperKit)
+            audioBuffers = []
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+            partialTranscriptionInFlight = false
+            lastPartialSampleCount = 0
+            #endif
         }
 
-        // Start the audio engine for capture
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
-
-        // Use inputFormat (not outputFormat) to get the actual hardware capture format.
-        // If the sample rate is invalid (e.g. 0 Hz before session activation), fall back to 48kHz mono.
         let hwFormat = inputNode.inputFormat(forBus: 0)
         let format: AVAudioFormat
         if hwFormat.sampleRate > 0 {
@@ -91,59 +110,151 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         } else {
             format = AVAudioFormat(
                 commonFormat: .pcmFormatFloat32,
-                sampleRate: 48000,
+                sampleRate: 48_000,
                 channels: 1,
                 interleaved: false
             ) ?? hwFormat
-            print("⚠️ Hardware format had 0 Hz sample rate — using 48kHz fallback")
+            AppLogger.audio.warning("Hardware format reported 0 Hz sample rate; falling back to 48 kHz")
         }
 
         #if canImport(WhisperKit)
-        inputSampleRate = format.sampleRate
-        print("🎤 Audio engine started. Sample rate: \(inputSampleRate) Hz")
-        // Emit immediate feedback so user sees the mic is working
-        partialContinuation?.yield("Listening…")
+        lock.withLock {
+            inputSampleRate = format.sampleRate
+        }
+        AppLogger.audio.debug("Audio engine started at \(format.sampleRate, privacy: .public) Hz")
+        continuation.yield("Listening…")
         #else
-        // Without WhisperKit, still show feedback
-        partialContinuation?.yield("Listening… (no transcription)")
+        continuation.yield("Listening… (no transcription)")
         #endif
 
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self else { return }
-            let channelData = buffer.floatChannelData?[0]
-            let frameLength = Int(buffer.frameLength)
+            guard let channelData = buffer.floatChannelData?[0] else { return }
 
-            if let channelData {
-                let samples = Array(UnsafeBufferPointer(start: channelData, count: frameLength))
-                let levelDB = self.computeAudioLevelDB(from: samples)
-                let audioLevelHandler = self.lock.withLock { self._audioLevelHandler }
-                audioLevelHandler?(levelDB)
-                #if canImport(WhisperKit)
-                self.lock.withLock {
-                    self.audioBuffers.append(contentsOf: samples)
-                }
-                self.scheduleLivePartialTranscription()
-                #else
-                // Without WhisperKit, emit buffer level as placeholder
-                let rms = samples.reduce(0) { $0 + $1 * $1 } / Float(frameLength)
-                if rms > 0.001 {
-                    self.partialContinuation?.yield("[audio level: \(String(format: "%.4f", rms))]")
-                }
-                #endif
+            let frameLength = Int(buffer.frameLength)
+            let samples = Array(UnsafeBufferPointer(start: channelData, count: frameLength))
+            let levelDB = self.computeAudioLevelDB(from: samples)
+
+            let snapshot = self.lock.withLock {
+                (
+                    isListening: self._isListening && !self.isTornDown,
+                    audioLevelHandler: self._audioLevelHandler,
+                    continuation: self.partialContinuation
+                )
             }
+            guard snapshot.isListening else { return }
+
+            snapshot.audioLevelHandler?(levelDB)
+
+            #if canImport(WhisperKit)
+            self.lock.withLock {
+                guard self._isListening && !self.isTornDown else { return }
+                self.audioBuffers.append(contentsOf: samples)
+            }
+            self.scheduleLivePartialTranscription()
+            #else
+            let rms = samples.reduce(0) { $0 + $1 * $1 } / Float(frameLength)
+            if rms > 0.001 {
+                snapshot.continuation?.yield("[audio level: \(String(format: "%.4f", rms))]")
+            }
+            #endif
         }
 
         engine.prepare()
         try engine.start()
-        self.audioEngine = engine
+        audioEngine = engine
 
         #if canImport(WhisperKit)
-        // Warm the model in parallel so first-turn speech capture is never blocked on load.
         Task { [weak self] in
-            guard let self else { return }
-            await self.ensureWhisperKitLoaded()
+            await self?.ensureWhisperKitLoaded()
         }
         #endif
+    }
+
+    func stop() async throws -> String {
+        AppLogger.audio.debug("Stopping transcription session")
+
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+
+        let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
+            _isListening = false
+            return partialContinuation
+        }
+
+        #if canImport(WhisperKit)
+        let hadTask = lock.withLock { partialTranscriptionTask != nil }
+        lock.withLock {
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+        }
+        if hadTask {
+            AppLogger.audio.debug("Cancelled pending partial transcription task before final pass")
+        }
+
+        var waitMs = 0
+        while lock.withLock({ partialTranscriptionInFlight }) && waitMs < 6_000 {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            waitMs += 100
+        }
+        if waitMs >= 6_000 {
+            AppLogger.audio.warning("Timed out waiting for in-flight partial transcription; using accumulated text")
+        }
+
+        let snapshot = lock.withLock {
+            (
+                samples: audioBuffers,
+                inputRate: inputSampleRate,
+                whisperLoaded: whisperKit != nil,
+                accumulatedText: accumulatedText
+            )
+        }
+
+        if snapshot.samples.isEmpty {
+            continuation?.finish()
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            return snapshot.accumulatedText.isEmpty ? "[No audio captured]" : snapshot.accumulatedText
+        }
+
+        var whisperLoaded = snapshot.whisperLoaded
+        if !whisperLoaded, snapshot.samples.count > 1600 {
+            await ensureWhisperKitLoaded()
+            whisperLoaded = lock.withLock { whisperKit != nil }
+        }
+
+        if let wk = lock.withLock({ whisperKit }), snapshot.samples.count > 1600 {
+            let forWhisper = resampleTo16k(snapshot.samples, sourceRate: snapshot.inputRate)
+            if forWhisper.count > 1600 {
+                AppLogger.audio.debug("Running final WhisperKit pass on \(forWhisper.count, privacy: .public) samples")
+                let results: [TranscriptionResult]? = await withTaskGroup(of: [TranscriptionResult]?.self) { group in
+                    group.addTask { try? await wk.transcribe(audioArray: forWhisper) }
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 8_000_000_000)
+                        return nil
+                    }
+                    let first = await group.next() ?? nil
+                    group.cancelAll()
+                    return first
+                }
+
+                if let text = results?.first?.text.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    lock.withLock {
+                        accumulatedText = text
+                    }
+                } else if results == nil {
+                    AppLogger.audio.warning("Final WhisperKit transcription timed out; falling back to accumulated partial")
+                }
+            }
+        } else if !whisperLoaded {
+            AppLogger.audio.notice("WhisperKit not ready during final transcription; using accumulated partial text")
+        }
+        #endif
+
+        let finalText = lock.withLock { accumulatedText }
+        continuation?.finish()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        return finalText
     }
 
     private func computeAudioLevelDB(from samples: [Float]) -> Float {
@@ -166,14 +277,13 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
 
         let loadTask = Task<WhisperKit?, Never> {
-            print("📱 Initializing WhisperKit with base.en model...")
+            AppLogger.audio.notice("Initializing WhisperKit model")
             do {
                 let kit = try await WhisperKit(model: "base.en")
-                print("✅ WhisperKit loaded successfully")
+                AppLogger.audio.notice("WhisperKit initialized successfully")
                 return kit
             } catch {
-                print("❌ WhisperKit initialization failed: \(error)")
-                print("⚠️ Continuing without transcription - audio will be captured but not transcribed")
+                AppLogger.audio.error("WhisperKit initialization failed: \(error.localizedDescription, privacy: .public)")
                 return nil
             }
         }
@@ -191,88 +301,88 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
     }
 
-    /// Resample to 16kHz for WhisperKit (iPhone often captures at 48kHz).
     private func resampleTo16k(_ samples: [Float], sourceRate: Double) -> [Float] {
         guard sourceRate != targetSampleRate, sourceRate > 0 else { return samples }
         let ratio = sourceRate / targetSampleRate
         let targetCount = Int(Double(samples.count) / ratio)
         guard targetCount > 0 else { return [] }
-        var out = [Float](repeating: 0, count: targetCount)
-        for i in 0..<targetCount {
-            let srcIndex = Double(i) * ratio
-            let idx = Int(srcIndex)
-            if idx + 1 < samples.count {
-                let t = Float(srcIndex - Double(idx))
-                out[i] = samples[idx] * (1 - t) + samples[idx + 1] * t
+
+        var output = [Float](repeating: 0, count: targetCount)
+        for index in 0..<targetCount {
+            let sourceIndex = Double(index) * ratio
+            let base = Int(sourceIndex)
+            if base + 1 < samples.count {
+                let t = Float(sourceIndex - Double(base))
+                output[index] = samples[base] * (1 - t) + samples[base + 1] * t
             } else {
-                out[i] = samples[min(idx, samples.count - 1)]
+                output[index] = samples[min(base, samples.count - 1)]
             }
         }
-        return out
+        return output
     }
 
     private func transcribePartial() async {
-        guard let wk = whisperKit else {
-            print("🔍 [PARTIAL] transcribePartial() — no WhisperKit, skipping")
-            return
-        }
-        let snapshot: (samples: [Float], sampleRate: Double, sampleCount: Int)? = lock.withLock {
-            guard _isListening, !partialTranscriptionInFlight else {
-                // Don't spam; this fires often and the guard is expected to fail sometimes
-                return nil
-            }
+        let snapshot = lock.withLock {
+            () -> (
+                whisper: WhisperKit?,
+                samples: [Float],
+                inputRate: Double,
+                sampleCount: Int,
+                continuation: AsyncStream<String>.Continuation?
+            )? in
+            guard _isListening, !isTornDown, !partialTranscriptionInFlight else { return nil }
             let sampleCount = audioBuffers.count
             let minNewSamples = max(Int(inputSampleRate * 0.2), 1600)
             guard sampleCount - lastPartialSampleCount >= minNewSamples else { return nil }
 
             partialTranscriptionInFlight = true
-            return (audioBuffers, inputSampleRate, sampleCount)
+            return (whisperKit, audioBuffers, inputSampleRate, sampleCount, partialContinuation)
         }
+
         guard let snapshot else { return }
-        print("🔍 [PARTIAL] transcribePartial() ENTER — bufferCount=\(snapshot.sampleCount) at \(snapshot.sampleRate)Hz")
+        guard let whisper = snapshot.whisper else {
+            lock.withLock {
+                partialTranscriptionInFlight = false
+                lastPartialSampleCount = snapshot.sampleCount
+            }
+            return
+        }
+
         defer {
             lock.withLock {
                 partialTranscriptionInFlight = false
                 lastPartialSampleCount = snapshot.sampleCount
             }
-            print("🔍 [PARTIAL] transcribePartial() DONE — inFlight cleared")
         }
 
-        let samples = snapshot.samples
-        // Allow early partials so transcript feels live while user is speaking.
-        let minSamplesAtInputRate = Int(snapshot.sampleRate * 0.35)
-        guard samples.count > minSamplesAtInputRate else {
-            print("🔍 [PARTIAL] skipping — too few samples (\(samples.count) < \(minSamplesAtInputRate))")
-            return
-        }
+        let minSamplesAtInputRate = Int(snapshot.inputRate * 0.35)
+        guard snapshot.samples.count > minSamplesAtInputRate else { return }
 
-        let forWhisper = resampleTo16k(samples, sourceRate: snapshot.sampleRate)
-        guard forWhisper.count > 3200 else {
-            print("🔍 [PARTIAL] skipping — resampled too small (\(forWhisper.count))")
-            return
-        }
+        let forWhisper = resampleTo16k(snapshot.samples, sourceRate: snapshot.inputRate)
+        guard forWhisper.count > 3200 else { return }
 
-        print("🔍 [PARTIAL] calling wk.transcribe — \(forWhisper.count) samples @16kHz")
         do {
-            let results = try await wk.transcribe(audioArray: forWhisper)
-            let rawText = results.first?.text ?? "nil"
-            print("🔍 [PARTIAL] wk.transcribe returned — text='\(rawText)'")
-            if let text = results.first?.text, !text.isEmpty {
-                let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                // Skip empty or meaningless outputs
-                if trimmed.count > 1 && trimmed != "Listening…" {
-                    lock.withLock { accumulatedText = trimmed }
-                    partialContinuation?.yield(trimmed)
+            let results = try await whisper.transcribe(audioArray: forWhisper)
+            if let text = results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines),
+               text.count > 1,
+               text != "Listening…" {
+                let shouldYield = lock.withLock { () -> Bool in
+                    guard _isListening, !isTornDown else { return false }
+                    accumulatedText = text
+                    return true
+                }
+                if shouldYield {
+                    snapshot.continuation?.yield(text)
                 }
             }
         } catch {
-            print("🔍 [PARTIAL] wk.transcribe THREW: \(error)")
+            AppLogger.audio.error("Partial transcription failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     private func scheduleLivePartialTranscription() {
         let shouldSchedule = lock.withLock {
-            guard partialTranscriptionTask == nil else { return false }
+            guard _isListening, !isTornDown, partialTranscriptionTask == nil else { return false }
             return true
         }
         guard shouldSchedule else { return }
@@ -292,115 +402,12 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
     }
     #endif
+}
 
-    func stop() async throws -> String {
-        let engineRunning = audioEngine != nil
-        let listeningNow = lock.withLock { _isListening }
-        print("🛑 [STOP-1] stop() ENTER — isListening=\(listeningNow), audioEngine=\(engineRunning)")
-
-        audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
-        print("🛑 [STOP-2] audio engine torn down (removeTap + stop)")
-
-        lock.withLock {
-            _isListening = false
-        }
-
-        #if canImport(WhisperKit)
-        let hadTask = lock.withLock { partialTranscriptionTask != nil }
-        lock.withLock {
-            partialTranscriptionTask?.cancel()
-            partialTranscriptionTask = nil
-        }
-        print("🛑 [STOP-2b] partial task cancelled (had task=\(hadTask))")
-
-        // Wait for any in-flight partial transcription to finish before running the final pass.
-        // WhisperKit is not safe to call concurrently — a concurrent call causes a hang/deadlock.
-        let inFlightAtStart = lock.withLock { partialTranscriptionInFlight }
-        print("🛑 [STOP-3] partial wait — partialTranscriptionInFlight=\(inFlightAtStart) at entry")
-        var waitMs = 0
-        while lock.withLock({ partialTranscriptionInFlight }) && waitMs < 6000 {
-            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-            waitMs += 100
-            if waitMs % 1000 == 0 {
-                print("🛑 [STOP-3-POLL] still waiting for partial… \(waitMs)ms elapsed")
-            }
-        }
-        let timedOutWaiting = waitMs >= 6000
-        print("🛑 [STOP-4] partial wait done — waited \(waitMs)ms, timedOut=\(timedOutWaiting)")
-        if timedOutWaiting {
-            print("⚠️ [STOP-4-WARN] timed out waiting for in-flight partial — proceeding with accumulated text")
-        }
-
-        // Final transcription pass on all accumulated audio (resampled to 16kHz)
-        let samples: [Float] = lock.withLock { audioBuffers }
-        var whisperLoaded = lock.withLock { whisperKit != nil }
-        print("🛑 [STOP-4b] snapshot — samples=\(samples.count) at \(inputSampleRate)Hz, whisperKitLoaded=\(whisperLoaded)")
-
-        // If we have no samples, the audio engine never captured anything
-        if samples.isEmpty {
-            print("⚠️ [STOP-4c] NO audio captured — returning early")
-            let finalText = lock.withLock { accumulatedText }
-            partialContinuation?.finish()
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            print("🛑 [STOP-7] stop() returning (no audio) — '\(finalText)'")
-            return finalText.isEmpty ? "[No audio captured]" : finalText
-        }
-
-        if !whisperLoaded, samples.count > 1600 {
-            print("🛑 [STOP-4d] WhisperKit not ready yet — waiting for model load before final pass")
-            await ensureWhisperKitLoaded()
-            whisperLoaded = lock.withLock { whisperKit != nil }
-            print("🛑 [STOP-4e] WhisperKit load wait done — whisperKitLoaded=\(whisperLoaded)")
-        }
-
-        if let wk = whisperKit, samples.count > 1600 {
-            let forWhisper = resampleTo16k(samples, sourceRate: inputSampleRate)
-            print("🛑 [STOP-5] starting final WhisperKit transcription — \(forWhisper.count) samples @16kHz (8s timeout)")
-            if forWhisper.count > 1600 {
-                // Race WhisperKit against an 8-second timeout so we never hang in .transcribing.
-                let results: [TranscriptionResult]? = await withTaskGroup(
-                    of: [TranscriptionResult]?.self
-                ) { group in
-                    group.addTask { try? await wk.transcribe(audioArray: forWhisper) }
-                    group.addTask {
-                        try? await Task.sleep(nanoseconds: 8_000_000_000)
-                        return nil
-                    }
-                    let first = await group.next() ?? nil
-                    group.cancelAll()
-                    return first
-                }
-
-                if let results {
-                    if let text = results.first?.text, !text.isEmpty {
-                        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        print("🛑 [STOP-6] final transcription DONE — '\(trimmed)'")
-                        lock.withLock { accumulatedText = trimmed }
-                    } else {
-                        print("🛑 [STOP-6] final transcription returned EMPTY result")
-                    }
-                } else {
-                    print("🛑 [STOP-6] final transcription TIMED OUT (8s) — using accumulated partial")
-                }
-            } else {
-                print("🛑 [STOP-5-SKIP] resampled count \(forWhisper.count) too small — skipping inference")
-            }
-        } else if whisperKit == nil {
-            print("🛑 [STOP-5-SKIP] WhisperKit not loaded — skipping final transcription")
-        } else {
-            print("🛑 [STOP-5-SKIP] samples.count \(samples.count) <= 1600 — skipping final transcription")
-        }
-        #endif
-
-        let finalText = lock.withLock { accumulatedText }
-        partialContinuation?.finish()
-
-        // Reset audio session
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-
-        print("🛑 [STOP-7] stop() returning '\(finalText)'")
-        return finalText
+private extension NSLock {
+    func withLock<T>(_ action: () -> T) -> T {
+        lock()
+        defer { unlock() }
+        return action()
     }
 }
