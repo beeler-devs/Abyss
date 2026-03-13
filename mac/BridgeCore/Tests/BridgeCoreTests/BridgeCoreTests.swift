@@ -106,6 +106,19 @@ func parseClaudeJSONSuccess() {
     #expect(parsed?.isError == false)
 }
 
+@Test("Claude JSON parser returns the last result event from stream-json output")
+func parseClaudeJSONLastResultWins() {
+    let parsed = parseClaudeCLIResult(
+        from: """
+        {"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}
+        {"type":"result","result":"first","session_id":"abc-123","is_error":false}
+        {"type":"result","result":"final","session_id":"abc-123","is_error":false}
+        """
+    )
+
+    #expect(parsed?.result == "final")
+}
+
 @Test("Claude JSON parser handles error output")
 func parseClaudeJSONError() {
     let parsed = parseClaudeCLIResult(
@@ -114,4 +127,24 @@ func parseClaudeJSONError() {
 
     #expect(parsed?.result == "Not logged in")
     #expect(parsed?.isError == true)
+}
+
+@Test("Claude stream state parses a final line without trailing newline")
+func claudeStreamStateFlushesFinalLine() {
+    var state = ClaudeCLIStreamState()
+    state.ingest(
+        chunk: "{\"type\":\"result\",\"result\":\"Applied fix\",\"session_id\":\"abc-123\",\"is_error\":false}",
+        isFinal: false
+    )
+
+    #expect(state.lastResult == nil)
+
+    state.finalize()
+    #expect(state.lastResult?.result == "Applied fix")
+}
+
+@Test("Claude tool list normalization trims whitespace")
+func normalizedClaudeTools() {
+    #expect(normalizedClaudeToolList(" Bash, Read ,Write  ") == "Bash,Read,Write")
+    #expect(normalizedClaudeToolList("   ") == nil)
 }

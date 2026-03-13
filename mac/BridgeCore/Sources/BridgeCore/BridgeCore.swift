@@ -24,6 +24,7 @@ public actor BridgeCore {
 
     private var callbacksInstalled = false
     private var hasRipgrep: Bool?
+    private var claudeStreamStates: [String: ClaudeCLIStreamState] = [:]
 
     private let envelopeEncoder: JSONEncoder
     private let envelopeDecoder: JSONDecoder
@@ -452,22 +453,26 @@ public actor BridgeCore {
 
             case "bridge.claude.run":
                 let args = try decodeArguments(BridgeClaudeRunArguments.self, json: payload.arguments)
-                let allowedTools = args.allowedTools ?? "Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit"
+                let allowedTools = normalizedClaudeToolList(args.allowedTools)
+                    ?? "Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit"
 
                 func shellEscape(_ str: String) -> String {
                     return "'" + str.replacingOccurrences(of: "'", with: "'\\''") + "'"
                 }
 
                 let maxTurns = max(1, min(args.maxTurns ?? 30, 100))
-                let command = "claude -p \(shellEscape(args.prompt)) --allowedTools \(shellEscape(allowedTools)) --output-format stream-json --max-turns \(maxTurns)"
+                let command = "claude -p \(shellEscape(args.prompt)) --allowedTools \(shellEscape(allowedTools)) --permission-mode acceptEdits --output-format stream-json --max-turns \(maxTurns)"
 
                 let start = try await startCommand(
                     command: command,
                     cwd: args.cwd,
                     env: nil,
-                    timeoutSec: args.timeoutSec ?? 540
+                    timeoutSec: args.timeoutSec ?? 660
                 )
+                claudeStreamStates[start.commandId] = ClaudeCLIStreamState()
+                await emitClaudeCommandBinding(commandId: start.commandId)
                 guard let completion = await commandManager.waitForCompletion(commandId: start.commandId) else {
+                    claudeStreamStates.removeValue(forKey: start.commandId)
                     throw BridgeCoreError.internalError("command_not_found_after_start")
                 }
 
@@ -476,7 +481,7 @@ public actor BridgeCore {
                 await emitStatus()
 
                 let claudeOutput = completion.stdoutTail.trimmingCharacters(in: .whitespacesAndNewlines)
-                let parsed = parseClaudeCLIResult(from: claudeOutput)
+                let parsed = consumeClaudeCLIResult(commandId: start.commandId, fallbackOutput: claudeOutput)
                 let fallbackError = completion.stderrTail.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if completion.exitCode != 0 || parsed?.isError == true {
@@ -530,6 +535,10 @@ public actor BridgeCore {
     }
 
     private func handleCommandOutput(_ output: CommandOutput) async {
+        if output.stream == "stdout" {
+            ingestClaudeCLIOutput(commandId: output.commandId, chunk: output.chunk, isFinal: output.isFinal)
+        }
+
         try? await sendEvent(
             type: "bridge.exec.output",
             sessionId: config.deviceId,
@@ -563,6 +572,40 @@ public actor BridgeCore {
 
         await refreshActiveCommandSnapshot()
         await emitStatus()
+    }
+
+    private func emitClaudeCommandBinding(commandId: String) async {
+        try? await sendEvent(
+            type: "bridge.exec.output",
+            sessionId: config.deviceId,
+            payload: BridgeExecOutputEventPayload(
+                deviceId: config.deviceId,
+                commandId: commandId,
+                stream: "stdout",
+                chunk: "",
+                isFinal: false
+            )
+        )
+    }
+
+    private func ingestClaudeCLIOutput(commandId: String, chunk: String, isFinal: Bool) {
+        guard var state = claudeStreamStates[commandId] else {
+            return
+        }
+
+        state.ingest(chunk: chunk, isFinal: isFinal)
+        claudeStreamStates[commandId] = state
+    }
+
+    private func consumeClaudeCLIResult(commandId: String, fallbackOutput: String) -> ClaudeCLIResult? {
+        if var state = claudeStreamStates.removeValue(forKey: commandId) {
+            state.finalize()
+            if let result = state.lastResult {
+                return result
+            }
+        }
+
+        return parseClaudeCLIResult(from: fallbackOutput)
     }
 
     private func refreshActiveCommandSnapshot() async {
@@ -1096,18 +1139,61 @@ struct ClaudeCLIResult: Decodable, Sendable {
     }
 }
 
+struct ClaudeCLIStreamState: Sendable {
+    var lineBuffer = ""
+    var lastResult: ClaudeCLIResult?
+
+    mutating func ingest(chunk: String, isFinal: Bool) {
+        let combined = lineBuffer + chunk
+        let lines = combined.split(separator: "\n", omittingEmptySubsequences: false)
+        lineBuffer = lines.last.map(String.init) ?? ""
+
+        if lines.count > 1 {
+            for line in lines.dropLast() {
+                handleLine(String(line))
+            }
+        }
+
+        if isFinal {
+            finalize()
+        }
+    }
+
+    mutating func finalize() {
+        if !lineBuffer.isEmpty {
+            handleLine(lineBuffer)
+            lineBuffer = ""
+        }
+    }
+
+    private mutating func handleLine(_ line: String) {
+        guard let event = parseClaudeCLIEvent(from: line), event.type == "result" else {
+            return
+        }
+        lastResult = event
+    }
+}
+
+func parseClaudeCLIEvent(from line: String) -> ClaudeCLIResult? {
+    let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty, let data = trimmed.data(using: .utf8) else {
+        return nil
+    }
+
+    return try? JSONDecoder().decode(ClaudeCLIResult.self, from: data)
+}
+
 /// Parses stream-json output from `claude --output-format stream-json`.
-/// Each line is a separate JSON object; we scan for the line with `"type":"result"`.
+/// Each line is a separate JSON object; we keep the last `"type":"result"` event.
 func parseClaudeCLIResult(from output: String) -> ClaudeCLIResult? {
     guard !output.isEmpty else { return nil }
-    let decoder = JSONDecoder()
+    var latestResult: ClaudeCLIResult?
     for line in output.split(separator: "\n", omittingEmptySubsequences: true) {
-        guard let data = String(line).data(using: .utf8),
-              let event = try? decoder.decode(ClaudeCLIResult.self, from: data),
+        guard let event = parseClaudeCLIEvent(from: String(line)),
               event.type == "result" else { continue }
-        return event
+        latestResult = event
     }
-    return nil
+    return latestResult
 }
 
 func firstNonEmptyString(_ candidates: [String?]) -> String? {
@@ -1118,4 +1204,18 @@ func firstNonEmptyString(_ candidates: [String?]) -> String? {
         return value
     }
     return nil
+}
+
+func normalizedClaudeToolList(_ raw: String?) -> String? {
+    guard let raw else { return nil }
+    let tools = raw
+        .split(separator: ",")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty }
+
+    guard !tools.isEmpty else {
+        return nil
+    }
+
+    return tools.joined(separator: ",")
 }

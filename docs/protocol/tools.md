@@ -222,8 +222,9 @@ Arguments:
   "deviceId": "string (optional)",
   "prompt": "string",
   "cwd": "string (optional, relative to workspace root)",
-  "timeoutSec": 120,
-  "allowedTools": "Bash,Read,Edit"
+  "timeoutSec": 660,
+  "allowedTools": "Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit",
+  "maxTurns": 30
 }
 ```
 
@@ -238,9 +239,10 @@ Result:
 
 Rules:
 - `prompt` is required
-- `timeoutSec` defaults to `120`, capped to `600`
+- `timeoutSec` defaults to `660`, capped to `660`
 - `timeoutSec` must be an integer number of seconds
-- `allowedTools` defaults to `Bash,Read,Edit`
+- `allowedTools` defaults to `Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit`
+- `maxTurns` defaults to `30`, capped to `100`
 - output is truncated by bridge policy
 - `cwd` must stay inside workspace root
 - requires Claude Code CLI installed and authenticated on the Mac

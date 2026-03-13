@@ -121,6 +121,81 @@ test("bridge.claude.run routes through bridge tool router", async () => {
   assert.ok(output.result?.includes("Fixed the failing test"));
 });
 
+test("bridge.claude.run rejects concurrent runs on the same device", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-claude-a", "CLAUD2", "Claude Mac");
+  state.registerBridge({
+    pairingCode: "CLAUD2",
+    deviceId: "device-claude-shared",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  state.createPairingRequest("session-claude-b", "CLAUD3", "Claude Mac B");
+  state.registerBridge({
+    pairingCode: "CLAUD3",
+    deviceId: "device-claude-shared",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  let resolveFirst: (() => void) | undefined;
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      if (String(event.payload.name) === "bridge.claude.run") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-shared", {
+            deviceId: "device-claude-shared",
+            commandId: "cmd-claude-shared",
+            stream: "stdout",
+            chunk: "",
+            isFinal: false,
+          }), "device-claude-shared");
+        });
+
+        void new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        }).then(() => {
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId: String(event.payload.callId),
+            result: JSON.stringify({ result: "done" }),
+            error: null,
+          }), "device-claude-shared");
+        });
+      }
+      return true;
+    },
+    emitToIOS: () => undefined,
+  });
+
+  const firstRun = router.execute({
+    callId: "call-claude-a",
+    sessionId: "session-claude-a",
+    toolName: "bridge.claude.run",
+    args: { prompt: "first task" },
+    timeoutMs: 500,
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const secondRun = await router.execute({
+    callId: "call-claude-b",
+    sessionId: "session-claude-b",
+    toolName: "bridge.claude.run",
+    args: { deviceId: "device-claude-shared", prompt: "second task" },
+    timeoutMs: 500,
+  });
+
+  assert.match(secondRun.error ?? "", /already active on this device/);
+
+  resolveFirst?.();
+  const firstResult = await firstRun;
+  assert.equal(firstResult.error, null);
+});
+
 
 test("bridge tool routing returns timeout without forcing offline status", async () => {
   const state = setupRouter();
@@ -550,4 +625,205 @@ test("bridge.claude.run verbose mode logs parsed tool_use progress", async () =>
     logs.entries.some((entry) => entry.message.includes("bridge.claude.run.progress")),
     `expected progress log, got: ${logs.entries.map((entry) => entry.message).join(" | ")}`,
   );
+});
+
+test("bridge.claude.run routes exec output to the initiating session after reassociation", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-claude-origin", "CLG333", "Claude Mac");
+  state.registerBridge({
+    pairingCode: "CLG333",
+    deviceId: "device-claude-route",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  const emitted: Array<{ sessionId: string; type: string; payload: Record<string, unknown> }> = [];
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      if (String(event.payload.name) === "bridge.claude.run") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-route", {
+            deviceId: "device-claude-route",
+            commandId: "cmd-claude-route",
+            stream: "stdout",
+            chunk: "",
+            isFinal: false,
+          }), "device-claude-route");
+
+          state.createPairingRequest("session-rebound", "CLG444", "Claude Mac");
+          state.registerBridge({
+            pairingCode: "CLG444",
+            deviceId: "device-claude-route",
+            deviceName: "Claude Mac",
+            workspaceRoot: "/workspace",
+            capabilities: { execRun: true, readFile: true, claudeRun: true },
+          });
+
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-route", {
+            deviceId: "device-claude-route",
+            commandId: "cmd-claude-route",
+            stream: "stdout",
+            chunk: "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"file_path\":\"test.txt\"}}]}}\n",
+            isFinal: false,
+          }), "device-claude-route");
+          router.handleBridgeEvent(makeEvent("bridge.exec.finished", "device-claude-route", {
+            deviceId: "device-claude-route",
+            commandId: "cmd-claude-route",
+            exitCode: 0,
+            stdoutTail: "",
+            stderrTail: "",
+          }), "device-claude-route");
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId: String(event.payload.callId),
+            result: JSON.stringify({ result: "done" }),
+            error: null,
+          }), "device-claude-route");
+        });
+      }
+      return true;
+    },
+    emitToIOS: (event) => {
+      emitted.push({ sessionId: event.sessionId, type: event.type, payload: event.payload });
+    },
+  });
+
+  const result = await router.execute({
+    callId: "call-claude-route",
+    sessionId: "session-claude-origin",
+    toolName: "bridge.claude.run",
+    args: { prompt: "write a file" },
+    timeoutMs: 500,
+  });
+
+  assert.equal(result.error, null);
+  const outputEvent = emitted.find((event) => (
+    event.type === "bridge.exec.output"
+    && event.payload.commandId === "cmd-claude-route"
+    && event.payload.chunk !== ""
+  ));
+  const finishedEvent = emitted.find((event) => (
+    event.type === "bridge.exec.finished"
+    && event.payload.commandId === "cmd-claude-route"
+  ));
+  assert.equal(outputEvent?.sessionId, "session-claude-origin");
+  assert.equal(finishedEvent?.sessionId, "session-claude-origin");
+});
+
+test("bridge.claude.run flushes a final partial stream-json line on finish", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-claude-flush", "CLG555", "Claude Mac");
+  state.registerBridge({
+    pairingCode: "CLG555",
+    deviceId: "device-claude-flush",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  const emitted: Array<{ type: string; payload: Record<string, unknown> }> = [];
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      if (String(event.payload.name) === "bridge.claude.run") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-flush", {
+            deviceId: "device-claude-flush",
+            commandId: "cmd-claude-flush",
+            stream: "stdout",
+            chunk: "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"npm test\"}}]}}",
+            isFinal: false,
+          }), "device-claude-flush");
+          router.handleBridgeEvent(makeEvent("bridge.exec.finished", "device-claude-flush", {
+            deviceId: "device-claude-flush",
+            commandId: "cmd-claude-flush",
+            exitCode: 0,
+            stdoutTail: "",
+            stderrTail: "",
+          }), "device-claude-flush");
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId: String(event.payload.callId),
+            result: JSON.stringify({ result: "done" }),
+            error: null,
+          }), "device-claude-flush");
+        });
+      }
+      return true;
+    },
+    emitToIOS: (event) => {
+      emitted.push({ type: event.type, payload: event.payload });
+    },
+  });
+
+  const result = await router.execute({
+    callId: "call-claude-flush",
+    sessionId: "session-claude-flush",
+    toolName: "bridge.claude.run",
+    args: { prompt: "run tests" },
+    timeoutMs: 500,
+  });
+
+  assert.equal(result.error, null);
+  assert.ok(emitted.some((event) => (
+    event.type === "tool.call"
+    && event.payload.name === "tts.speak"
+    && typeof event.payload.arguments === "string"
+    && event.payload.arguments.includes("Running terminal command: npm test")
+  )));
+});
+
+test("bridge.claude.run timeout triggers a best-effort cancel when commandId is known", async () => {
+  const state = new BridgeStateStore();
+  state.createPairingRequest("session-claude-timeout", "CLG666", "Claude Mac");
+  state.registerBridge({
+    pairingCode: "CLG666",
+    deviceId: "device-claude-timeout",
+    deviceName: "Claude Mac",
+    workspaceRoot: "/workspace",
+    capabilities: { execRun: true, readFile: true, claudeRun: true },
+  });
+
+  let sawCancel = false;
+  const router = new BridgeToolRouter({
+    state,
+    sendToBridge: (_deviceId, event) => {
+      const name = String(event.payload.name);
+      if (name === "bridge.claude.run") {
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("bridge.exec.output", "device-claude-timeout", {
+            deviceId: "device-claude-timeout",
+            commandId: "cmd-claude-timeout",
+            stream: "stdout",
+            chunk: "",
+            isFinal: false,
+          }), "device-claude-timeout");
+        });
+      }
+
+      if (name === "bridge.exec.cancel") {
+        sawCancel = true;
+        setImmediate(() => {
+          router.handleBridgeEvent(makeEvent("tool.result", "bridge-session", {
+            callId: String(event.payload.callId),
+            result: JSON.stringify({ cancelled: true }),
+            error: null,
+          }), "device-claude-timeout");
+        });
+      }
+      return true;
+    },
+    emitToIOS: () => undefined,
+  });
+
+  const result = await router.execute({
+    callId: "call-claude-timeout",
+    sessionId: "session-claude-timeout",
+    toolName: "bridge.claude.run",
+    args: { prompt: "slow task" },
+    timeoutMs: 30,
+  });
+
+  assert.match(result.error ?? "", /timed out/);
+  assert.equal(sawCancel, true);
 });

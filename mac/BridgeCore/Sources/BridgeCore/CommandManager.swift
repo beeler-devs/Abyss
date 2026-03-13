@@ -272,15 +272,13 @@ public actor CommandManager {
             return
         }
 
-        var remaining = data
-        while !remaining.isEmpty {
-            let prefix = remaining.prefix(chunkLimitBytes)
-            remaining.removeFirst(prefix.count)
-            let chunk = String(decoding: prefix, as: UTF8.self)
-            if !chunk.isEmpty {
-                await outputHandler(CommandOutput(commandId: commandId, stream: stream, chunk: chunk, isFinal: false))
-            }
-        }
+        await emitOutputChunks(
+            handler: outputHandler,
+            commandId: commandId,
+            stream: stream,
+            data: data,
+            isFinal: false
+        )
     }
 
     private func handleTimeout(commandId: String) async {
@@ -321,11 +319,29 @@ public actor CommandManager {
         let stdoutRemaining = runtime.stdoutPipe.fileHandleForReading.availableData
         if !stdoutRemaining.isEmpty {
             runtime.stdoutTail.append(stdoutRemaining)
+            if let outputHandler {
+                await emitOutputChunks(
+                    handler: outputHandler,
+                    commandId: commandId,
+                    stream: "stdout",
+                    data: stdoutRemaining,
+                    isFinal: true
+                )
+            }
         }
 
         let stderrRemaining = runtime.stderrPipe.fileHandleForReading.availableData
         if !stderrRemaining.isEmpty {
             runtime.stderrTail.append(stderrRemaining)
+            if let outputHandler {
+                await emitOutputChunks(
+                    handler: outputHandler,
+                    commandId: commandId,
+                    stream: "stderr",
+                    data: stderrRemaining,
+                    isFinal: true
+                )
+            }
         }
 
         let finalState: BridgeExecState
@@ -378,6 +394,29 @@ public actor CommandManager {
         for _ in 0..<overflow {
             let commandId = completionOrder.removeFirst()
             completedById.removeValue(forKey: commandId)
+        }
+    }
+
+    private func emitOutputChunks(
+        handler: OutputHandler,
+        commandId: String,
+        stream: String,
+        data: Data,
+        isFinal: Bool
+    ) async {
+        var remaining = data
+        while !remaining.isEmpty {
+            let prefix = remaining.prefix(chunkLimitBytes)
+            remaining.removeFirst(prefix.count)
+            let chunk = String(decoding: prefix, as: UTF8.self)
+            if !chunk.isEmpty {
+                await handler(CommandOutput(
+                    commandId: commandId,
+                    stream: stream,
+                    chunk: chunk,
+                    isFinal: isFinal && remaining.isEmpty
+                ))
+            }
         }
     }
 }
