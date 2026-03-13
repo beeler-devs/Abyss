@@ -8,15 +8,19 @@ export interface ProviderConfig {
   anthropicModel: string;
   anthropicMaxTokens: number;
   anthropicPartialDelayMs: number;
-  bedrockModelId: string;
+  bedrockTextModelId: string;
+  bedrockMaxTokens: number;
+  bedrockPartialDelayMs: number;
   awsRegion: string;
 }
 
 export function buildProvider(config: ProviderConfig): ModelProvider {
   if (config.modelProvider === "bedrock") {
     return new BedrockNovaProvider({
-      modelId: config.bedrockModelId,
+      modelId: config.bedrockTextModelId,
       region: config.awsRegion,
+      maxTokens: config.bedrockMaxTokens,
+      partialDelayMs: config.bedrockPartialDelayMs,
     });
   }
 

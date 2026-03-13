@@ -51,12 +51,48 @@ struct EventEnvelope: Codable, Sendable {
         case .userAudioTranscriptFinal(let value):
             type = "user.audio.transcript.final"
             payload = Self.withEnvelopeMetadata(base: ["text": .string(value.text)], sessionId: event.sessionId, timestamp: isoTimestamp)
+        case .userAudioStreamStart(let value):
+            type = "user.audio.stream.start"
+            payload = [
+                "encoding": .string(value.encoding),
+                "sampleRateHertz": .number(Double(value.sampleRateHertz)),
+                "channelCount": .number(Double(value.channelCount)),
+            ]
+        case .userAudioStreamChunk(let value):
+            type = "user.audio.stream.chunk"
+            payload = [
+                "audio": .string(value.audio),
+                "encoding": .string(value.encoding),
+                "sampleRateHertz": .number(Double(value.sampleRateHertz)),
+                "channelCount": .number(Double(value.channelCount)),
+            ]
+        case .userAudioStreamEnd(let value):
+            type = "user.audio.stream.end"
+            var streamEndPayload: [String: JSONValue] = [:]
+            if let reason = value.reason {
+                streamEndPayload["reason"] = .string(reason)
+            }
+            payload = streamEndPayload
         case .assistantSpeechPartial(let value):
             type = "assistant.speech.partial"
             payload = ["text": .string(value.text)]
         case .assistantSpeechFinal(let value):
             type = "assistant.speech.final"
             payload = ["text": .string(value.text)]
+        case .assistantAudioChunk(let value):
+            type = "assistant.audio.chunk"
+            payload = [
+                "audio": .string(value.audio),
+                "encoding": .string(value.encoding),
+                "sampleRateHertz": .number(Double(value.sampleRateHertz)),
+                "channelCount": .number(Double(value.channelCount)),
+            ]
+        case .assistantAudioEnd:
+            type = "assistant.audio.end"
+            payload = [:]
+        case .assistantAudioInterrupted(let value):
+            type = "assistant.audio.interrupted"
+            payload = ["reason": .string(value.reason)]
         case .assistantUIPatch(let value):
             type = "assistant.ui.patch"
             payload = ["patch": .string(value.patch)]
@@ -191,10 +227,38 @@ struct EventEnvelope: Codable, Sendable {
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":
             kind = .userAudioTranscriptFinal(Event.TranscriptFinal(text: try requireString("text")))
+        case "user.audio.stream.start":
+            kind = .userAudioStreamStart(Event.UserAudioStreamStart(
+                encoding: payload["encoding"]?.stringValue ?? "pcm_s16le",
+                sampleRateHertz: payload["sampleRateHertz"]?.intValue ?? 16_000,
+                channelCount: payload["channelCount"]?.intValue ?? 1
+            ))
+        case "user.audio.stream.chunk":
+            kind = .userAudioStreamChunk(Event.UserAudioStreamChunk(
+                audio: try requireString("audio"),
+                encoding: payload["encoding"]?.stringValue ?? "pcm_s16le",
+                sampleRateHertz: payload["sampleRateHertz"]?.intValue ?? 16_000,
+                channelCount: payload["channelCount"]?.intValue ?? 1
+            ))
+        case "user.audio.stream.end":
+            kind = .userAudioStreamEnd(Event.UserAudioStreamEnd(reason: payload["reason"]?.stringValue))
         case "assistant.speech.partial":
             kind = .assistantSpeechPartial(Event.SpeechPartial(text: try requireString("text")))
         case "assistant.speech.final":
             kind = .assistantSpeechFinal(Event.SpeechFinal(text: try requireString("text")))
+        case "assistant.audio.chunk":
+            kind = .assistantAudioChunk(Event.AssistantAudioChunk(
+                audio: try requireString("audio"),
+                encoding: payload["encoding"]?.stringValue ?? "pcm_s16le",
+                sampleRateHertz: payload["sampleRateHertz"]?.intValue ?? 16_000,
+                channelCount: payload["channelCount"]?.intValue ?? 1
+            ))
+        case "assistant.audio.end":
+            kind = .assistantAudioEnd(Event.AssistantAudioEnd())
+        case "assistant.audio.interrupted":
+            kind = .assistantAudioInterrupted(Event.AssistantAudioInterrupted(
+                reason: payload["reason"]?.stringValue ?? "unknown"
+            ))
         case "assistant.ui.patch":
             kind = .assistantUIPatch(Event.UIPatch(patch: try requireString("patch")))
         case "agent.status":

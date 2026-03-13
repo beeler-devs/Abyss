@@ -20,6 +20,7 @@ final class ConversationViewModel: ObservableObject {
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
+    @AppStorage("voiceMode") private var voiceModeRaw: String = VoiceMode.local.rawValue
 
     let eventBus = EventBus()
     let conversationStore = ConversationStore()
@@ -48,6 +49,10 @@ final class ConversationViewModel: ObservableObject {
 
     private var recordingMode: RecordingMode {
         RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
+    }
+
+    private var voiceMode: VoiceMode {
+        VoiceMode(rawValue: voiceModeRaw) ?? .local
     }
 
     init(sessionId: String = UUID().uuidString) {
@@ -320,6 +325,7 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func syncRecordingMode() {
+        audioPipeline.updateVoiceMode(voiceMode)
         audioPipeline.updateRecordingMode(recordingMode)
     }
 

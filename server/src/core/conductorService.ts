@@ -502,6 +502,37 @@ export class ConductorService {
     return this.sessions.getAgentIdForSpawnCall(spawnCallId);
   }
 
+  listAvailableTools(sessionId: string): ToolDefinition[] {
+    return this.availableTools(sessionId);
+  }
+
+  async executeDirectToolCall(
+    sessionId: string,
+    toolCall: ToolCallRequest,
+    emit: (event: EventEnvelope) => void,
+  ): Promise<{ result: string | null; error: string | null }> {
+    const session = this.sessions.getOrCreate(sessionId);
+    const callId = crypto.randomUUID();
+
+    if (this.shouldExecuteServerTool(toolCall.name)) {
+      return this.executeServerTool(session, callId, toolCall.name, toolCall.input, emit);
+    }
+
+    const envelope = makeEvent("tool.call", sessionId, {
+      callId,
+      name: toolCall.name,
+      arguments: JSON.stringify(toolCall.input),
+    });
+    session.pendingToolCalls.set(callId, {
+      callId,
+      toolName: toolCall.name,
+      emittedAt: envelope.timestamp,
+      toolArguments: toolCall.input,
+    });
+    emit(envelope);
+    return waitForToolResult(session, callId, 30_000);
+  }
+
   async handleCursorWebhook(
     payload: Record<string, unknown>,
     emit: (event: EventEnvelope) => void,
@@ -1638,4 +1669,3 @@ function summarizeArgsForLog(args: Record<string, unknown>, maxLen = 80): string
   }
   return summarizeValueForLog(`keys=[${keys.join(",")}]`, maxLen) ?? "keys=[]";
 }
-

@@ -170,7 +170,7 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
 }
 
 @MainActor
-private final class StreamingPCMPlayer {
+final class StreamingPCMPlayer {
     static let shared = StreamingPCMPlayer()
     nonisolated static let networkChunkBytes = 8_192
 

@@ -21,8 +21,14 @@ struct Event: Identifiable, Codable, Sendable {
         case sessionStart(SessionStart)
         case userAudioTranscriptPartial(TranscriptPartial)
         case userAudioTranscriptFinal(TranscriptFinal)
+        case userAudioStreamStart(UserAudioStreamStart)
+        case userAudioStreamChunk(UserAudioStreamChunk)
+        case userAudioStreamEnd(UserAudioStreamEnd)
         case assistantSpeechPartial(SpeechPartial)
         case assistantSpeechFinal(SpeechFinal)
+        case assistantAudioChunk(AssistantAudioChunk)
+        case assistantAudioEnd(AssistantAudioEnd)
+        case assistantAudioInterrupted(AssistantAudioInterrupted)
         case assistantUIPatch(UIPatch)
         case agentStatus(AgentStatus)
         case audioOutputInterrupted(AudioOutputInterrupted)
@@ -54,12 +60,42 @@ struct Event: Identifiable, Codable, Sendable {
         let text: String
     }
 
+    struct UserAudioStreamStart: Codable, Sendable {
+        let encoding: String
+        let sampleRateHertz: Int
+        let channelCount: Int
+    }
+
+    struct UserAudioStreamChunk: Codable, Sendable {
+        let audio: String
+        let encoding: String
+        let sampleRateHertz: Int
+        let channelCount: Int
+    }
+
+    struct UserAudioStreamEnd: Codable, Sendable {
+        let reason: String?
+    }
+
     struct SpeechPartial: Codable, Sendable {
         let text: String
     }
 
     struct SpeechFinal: Codable, Sendable {
         let text: String
+    }
+
+    struct AssistantAudioChunk: Codable, Sendable {
+        let audio: String
+        let encoding: String
+        let sampleRateHertz: Int
+        let channelCount: Int
+    }
+
+    struct AssistantAudioEnd: Codable, Sendable {}
+
+    struct AssistantAudioInterrupted: Codable, Sendable {
+        let reason: String
     }
 
     struct UIPatch: Codable, Sendable {
@@ -187,12 +223,67 @@ extension Event {
         Event(sessionId: sessionId, kind: .userAudioTranscriptFinal(TranscriptFinal(text: text)))
     }
 
+    static func userAudioStreamStart(
+        encoding: String = "pcm_s16le",
+        sampleRateHertz: Int = 16_000,
+        channelCount: Int = 1,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .userAudioStreamStart(UserAudioStreamStart(
+            encoding: encoding,
+            sampleRateHertz: sampleRateHertz,
+            channelCount: channelCount
+        )))
+    }
+
+    static func userAudioStreamChunk(
+        audio: String,
+        encoding: String = "pcm_s16le",
+        sampleRateHertz: Int = 16_000,
+        channelCount: Int = 1,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .userAudioStreamChunk(UserAudioStreamChunk(
+            audio: audio,
+            encoding: encoding,
+            sampleRateHertz: sampleRateHertz,
+            channelCount: channelCount
+        )))
+    }
+
+    static func userAudioStreamEnd(reason: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .userAudioStreamEnd(UserAudioStreamEnd(reason: reason)))
+    }
+
     static func speechPartial(_ text: String, sessionId: String? = nil) -> Event {
         Event(sessionId: sessionId, kind: .assistantSpeechPartial(SpeechPartial(text: text)))
     }
 
     static func speechFinal(_ text: String, sessionId: String? = nil) -> Event {
         Event(sessionId: sessionId, kind: .assistantSpeechFinal(SpeechFinal(text: text)))
+    }
+
+    static func assistantAudioChunk(
+        audio: String,
+        encoding: String = "pcm_s16le",
+        sampleRateHertz: Int = 16_000,
+        channelCount: Int = 1,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioChunk(AssistantAudioChunk(
+            audio: audio,
+            encoding: encoding,
+            sampleRateHertz: sampleRateHertz,
+            channelCount: channelCount
+        )))
+    }
+
+    static func assistantAudioEnd(sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioEnd(AssistantAudioEnd()))
+    }
+
+    static func assistantAudioInterrupted(_ reason: String = "unknown", sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioInterrupted(AssistantAudioInterrupted(reason: reason)))
     }
 
     static func uiPatch(_ patch: String, sessionId: String? = nil) -> Event {
@@ -279,8 +370,14 @@ extension Event.Kind {
         case .sessionStart: return "session.start"
         case .userAudioTranscriptPartial: return "user.audio.transcript.partial"
         case .userAudioTranscriptFinal: return "user.audio.transcript.final"
+        case .userAudioStreamStart: return "user.audio.stream.start"
+        case .userAudioStreamChunk: return "user.audio.stream.chunk"
+        case .userAudioStreamEnd: return "user.audio.stream.end"
         case .assistantSpeechPartial: return "assistant.speech.partial"
         case .assistantSpeechFinal: return "assistant.speech.final"
+        case .assistantAudioChunk: return "assistant.audio.chunk"
+        case .assistantAudioEnd: return "assistant.audio.end"
+        case .assistantAudioInterrupted: return "assistant.audio.interrupted"
         case .assistantUIPatch: return "assistant.ui.patch"
         case .agentStatus: return "agent.status"
         case .audioOutputInterrupted: return "audio.output.interrupted"
