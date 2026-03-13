@@ -4,6 +4,7 @@ import { isTerminalAgentStatus, normalizeMode, normalizeStatus, parseCursorAgent
 import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
+import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
 const LEGACY_CLIENT_TOOLS = [
     {
         name: "agent.spawn",
@@ -399,24 +400,6 @@ function waitForToolResult(session, callId, timeoutMs) {
         });
     });
 }
-function asRecord(value) {
-    if (!value || typeof value !== "object" || Array.isArray(value)) {
-        return undefined;
-    }
-    return value;
-}
-function stringFromRecord(record, ...keys) {
-    for (const key of keys) {
-        const value = record[key];
-        if (typeof value === "string") {
-            const trimmed = value.trim();
-            if (trimmed.length) {
-                return trimmed;
-            }
-        }
-    }
-    return undefined;
-}
 export class ConductorService {
     provider;
     sessions;
@@ -427,14 +410,16 @@ export class ConductorService {
     conversationPollers = new Map();
     static CONVERSATION_POLL_INTERVAL_MS = 3_000;
     bridgeToolAvailability;
+    verboseToolRoutingLogs;
     constructor(provider, config, dependencies = {}) {
         this.provider = provider;
-        this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute);
+        this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute, config.traceMaxEntries ?? 120);
         this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
         this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
         this.now = dependencies.now ?? (() => new Date());
         this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
         this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
+        this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
     }
     createRateLimiter() {
         return this.sessions.createRateLimiter();
@@ -447,6 +432,29 @@ export class ConductorService {
     }
     getAgentIdForSpawnCall(spawnCallId) {
         return this.sessions.getAgentIdForSpawnCall(spawnCallId);
+    }
+    listAvailableTools(sessionId) {
+        return this.availableTools(sessionId);
+    }
+    async executeDirectToolCall(sessionId, toolCall, emit) {
+        const session = this.sessions.getOrCreate(sessionId);
+        const callId = crypto.randomUUID();
+        if (this.shouldExecuteServerTool(toolCall.name)) {
+            return this.executeServerTool(session, callId, toolCall.name, toolCall.input, emit);
+        }
+        const envelope = makeEvent("tool.call", sessionId, {
+            callId,
+            name: toolCall.name,
+            arguments: JSON.stringify(toolCall.input),
+        });
+        session.pendingToolCalls.set(callId, {
+            callId,
+            toolName: toolCall.name,
+            emittedAt: envelope.timestamp,
+            toolArguments: toolCall.input,
+        });
+        emit(envelope);
+        return waitForToolResult(session, callId, 30_000);
     }
     async handleCursorWebhook(payload, emit) {
         const parsed = parseCursorWebhookPayload(payload);
@@ -620,7 +628,6 @@ export class ConductorService {
         session.transcriptCount += 1;
         session.recentTranscriptTrace = [];
         const tracePush = (value) => {
-            session.recentTranscriptTrace.push(value);
             this.sessions.recordTrace(session, value);
         };
         const emitToolCall = (toolName, args) => {
@@ -692,7 +699,25 @@ export class ConductorService {
                     const callId = crypto.randomUUID();
                     if (this.shouldExecuteServerTool(toolCall.name)) {
                         tracePush(`tool.server:${toolCall.name}`);
+                        const dispatchPreview = this.verboseToolRoutingLogs
+                            ? ` args=${summarizeArgsForLog(toolCall.input)}`
+                            : "";
+                        logger.info(`tool.server.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}${dispatchPreview}`, {
+                            sessionId: session.sessionId,
+                            eventId: sourceEventId,
+                            callId,
+                        });
+                        const startedAtMs = Date.now();
                         const execution = await this.executeServerTool(session, callId, toolCall.name, toolCall.input, emit);
+                        const outcome = execution.error ? "error" : "ok";
+                        const errorPreview = execution.error && this.verboseToolRoutingLogs
+                            ? ` error=${summarizeValueForLog(execution.error)}`
+                            : "";
+                        logger.info(`tool.server.result tool=${toolCall.name} outcome=${outcome} durationMs=${Date.now() - startedAtMs}${errorPreview}`, {
+                            sessionId: session.sessionId,
+                            eventId: sourceEventId,
+                            callId,
+                        });
                         this.sessions.appendTurn(session, {
                             role: "tool",
                             content: execution.error ? `Error: ${execution.error}` : execution.result ?? "{}",
@@ -1222,15 +1247,19 @@ export class ConductorService {
             return;
         }
         const poll = async () => {
-            const run = this.sessions.getCursorRun(agentId);
-            if (!run || isTerminalAgentStatus(run.status)) {
-                this.stopConversationPolling(agentId);
+            try {
                 await this.pollConversation(agentId, sessionId, emit);
-                return;
             }
-            await this.pollConversation(agentId, sessionId, emit);
+            finally {
+                // Check terminal status *after* the final poll so we capture any
+                // remaining conversation messages before stopping.
+                const run = this.sessions.getCursorRun(agentId);
+                if (!run || isTerminalAgentStatus(run.status)) {
+                    this.stopConversationPolling(agentId);
+                }
+            }
         };
-        const timer = setInterval(poll, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
+        const timer = setInterval(() => { poll().catch(() => { }); }, ConductorService.CONVERSATION_POLL_INTERVAL_MS);
         timer.unref?.();
         this.conversationPollers.set(agentId, timer);
         poll().catch(() => { });
@@ -1292,4 +1321,21 @@ function sortJSONValue(value) {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, nested]) => [key, sortJSONValue(nested)]);
     return Object.fromEntries(entries);
+}
+function summarizeArgsForLog(args, maxLen = 80) {
+    const preferredKeys = ["prompt", "command", "repoUrl", "repository", "path", "query", "pattern"];
+    for (const key of preferredKeys) {
+        if (!(key in args)) {
+            continue;
+        }
+        const summary = summarizeValueForLog(args[key], maxLen);
+        if (summary) {
+            return `${key}=${summary}`;
+        }
+    }
+    const keys = Object.keys(args).sort();
+    if (keys.length === 0) {
+        return "keys=[]";
+    }
+    return summarizeValueForLog(`keys=[${keys.join(",")}]`, maxLen) ?? "keys=[]";
 }

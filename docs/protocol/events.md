@@ -118,3 +118,57 @@ Bridge tools still use standard formal tool events:
 For backward compatibility:
 
 - `bridge.exec.run` remains available and is implemented using Bridge v1 command lifecycle on the server side.
+
+## Realtime voice events
+
+These events are used only when the backend is running with `VOICE_PROVIDER=nova-sonic`.
+
+### `user.audio.stream.start` (iOS -> server)
+
+```json
+{
+  "encoding": "pcm_s16le",
+  "sampleRateHertz": 16000,
+  "channelCount": 1
+}
+```
+
+### `user.audio.stream.chunk` (iOS -> server)
+
+```json
+{
+  "audio": "BASE64_PCM_CHUNK",
+  "encoding": "pcm_s16le",
+  "sampleRateHertz": 16000,
+  "channelCount": 1
+}
+```
+
+### `user.audio.stream.end` (iOS -> server)
+
+```json
+{ "reason": "user_stopped" }
+```
+
+### `assistant.audio.chunk` (server -> iOS)
+
+```json
+{
+  "audio": "BASE64_PCM_CHUNK",
+  "encoding": "pcm_s16le",
+  "sampleRateHertz": 16000,
+  "channelCount": 1
+}
+```
+
+### `assistant.audio.end` (server -> iOS)
+
+```json
+{}
+```
+
+### `assistant.audio.interrupted` (server -> iOS)
+
+```json
+{ "reason": "user_interrupt" }
+```

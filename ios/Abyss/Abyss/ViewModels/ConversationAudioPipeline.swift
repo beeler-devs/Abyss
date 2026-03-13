@@ -1,4 +1,5 @@
 import Combine
+import AVFoundation
 import Foundation
 
 /// Owns the microphone, transcription, playback interruption, and conversation audio state machine.
@@ -28,10 +29,13 @@ final class ConversationAudioPipeline: ObservableObject {
     )
 
     private var recordingMode: RecordingMode = .vadAuto
+    private var voiceMode: VoiceMode = Config.voiceMode
     private var isChatActive = false
     private var isMuted = false
     private var isStoppingRecording = false
     private var isStartingRecording = false
+    private let remoteVoiceCapture = RemoteAudioCapture()
+    private var remotePlaybackPrepared = false
 
     init(
         transcriber: SpeechTranscriber,
@@ -65,6 +69,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func preloadTranscriber() {
+        guard voiceMode == .local else { return }
         let transcriber = self.transcriber
         Task {
             await transcriber.preload()
@@ -77,6 +82,12 @@ final class ConversationAudioPipeline: ObservableObject {
         if mode == .pushToTalk {
             voiceActivityDetector.stopMonitoring()
         }
+    }
+
+    func updateVoiceMode(_ mode: VoiceMode) {
+        guard voiceMode != mode else { return }
+        voiceMode = mode
+        Task { await refreshLiveConversationState() }
     }
 
     func setChatActive(_ isActive: Bool) {
@@ -105,6 +116,10 @@ final class ConversationAudioPipeline: ObservableObject {
     func micPressed() {
         guard recordingMode == .pushToTalk else { return }
         guard isChatActive else { return }
+        if voiceMode == .novaSonic {
+            Task { await startRemoteVoiceCapture() }
+            return
+        }
         guard !transcriber.isListening, !isStartingRecording else { return }
         Task {
             if appState == .speaking {
@@ -116,6 +131,10 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func micReleased() {
         guard recordingMode == .pushToTalk else { return }
+        if voiceMode == .novaSonic {
+            Task { await stopRemoteVoiceCapture() }
+            return
+        }
         guard !isStoppingRecording else { return }
         guard transcriber.isListening || isStartingRecording else { return }
         Task { await stopListeningAndProcess() }
@@ -144,7 +163,7 @@ final class ConversationAudioPipeline: ObservableObject {
             await refreshLiveConversationState()
         case .thinking, .speaking, .error:
             voiceActivityDetector.stopMonitoring()
-            if transcriber.isListening && !isStoppingRecording {
+            if voiceMode == .local, transcriber.isListening && !isStoppingRecording {
                 await stopListeningSilently()
             }
         case .listening, .transcribing:
@@ -153,6 +172,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handlePartialTranscript(_ text: String) {
+        guard voiceMode == .local else { return }
         guard !isPlaceholderTranscript(text) else { return }
         partialTranscript = text
         eventBus.emit(Event.transcriptPartial(text, sessionId: sessionId))
@@ -195,6 +215,11 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func refreshLiveConversationState() async {
+        if voiceMode == .novaSonic {
+            await refreshRemoteVoiceConversationState()
+            return
+        }
+
         if canRunLiveConversation {
             guard appState != .speaking, appState != .thinking else { return }
             await startListening()
@@ -215,6 +240,14 @@ final class ConversationAudioPipeline: ObservableObject {
     private func handleMuteActivated() async {
         voiceActivityDetector.stopMonitoring()
 
+        if voiceMode == .novaSonic {
+            await stopRemoteVoiceCapture()
+            if appState == .listening || appState == .transcribing || appState == .idle {
+                setState(.idle)
+            }
+            return
+        }
+
         if transcriber.isListening && !isStoppingRecording {
             await stopListeningAndProcess()
             return
@@ -226,6 +259,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func startListening() async {
+        guard voiceMode == .local else { return }
         guard recordingMode == .vadAuto else { return }
         guard canRunLiveConversation else { return }
         guard !isStoppingRecording else { return }
@@ -273,6 +307,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func startListeningPTT() async {
+        guard voiceMode == .local else { return }
         guard !isStoppingRecording else { return }
         guard !isStartingRecording else { return }
         isStartingRecording = true
@@ -308,6 +343,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func stopListeningSilently() async {
+        guard voiceMode == .local else { return }
         guard transcriber.isListening else { return }
 
         isStoppingRecording = true
@@ -326,6 +362,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func stopListeningAndProcess() async {
+        guard voiceMode == .local else { return }
         guard transcriber.isListening else { return }
 
         AppLogger.conversation.debug("Stopping recording; state=\(self.appState.rawValue, privacy: .public)")
@@ -405,14 +442,18 @@ final class ConversationAudioPipeline: ObservableObject {
     private func bargeIn(reason: String) async {
         voiceActivityDetector.stopMonitoring()
 
-        let stopEvent = Event.toolCall(
-            name: TTSStopTool.name,
-            arguments: encode(TTSStopTool.Arguments()),
-            sessionId: sessionId
-        )
-        eventBus.emit(stopEvent)
-        if case .toolCall(let toolCall) = stopEvent.kind {
-            await toolRouter.dispatch(toolCall)
+        if voiceMode == .local {
+            let stopEvent = Event.toolCall(
+                name: TTSStopTool.name,
+                arguments: encode(TTSStopTool.Arguments()),
+                sessionId: sessionId
+            )
+            eventBus.emit(stopEvent)
+            if case .toolCall(let toolCall) = stopEvent.kind {
+                await toolRouter.dispatch(toolCall)
+            }
+        } else {
+            await stopRemoteAssistantAudio()
         }
 
         let interruptedEvent = Event.audioOutputInterrupted(reason, sessionId: sessionId)
@@ -427,6 +468,90 @@ final class ConversationAudioPipeline: ObservableObject {
     private func setState(_ state: AppState) {
         appStateStore.current = state
         appState = state
+    }
+
+    func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
+        guard voiceMode == .novaSonic else { return }
+        guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
+        do {
+            if !remotePlaybackPrepared {
+                try await MainActor.run {
+                    try StreamingPCMPlayer.shared.prepareForPlayback(sampleRate: Double(chunk.sampleRateHertz))
+                }
+                remotePlaybackPrepared = true
+            }
+            try await MainActor.run {
+                try StreamingPCMPlayer.shared.append(data)
+            }
+        } catch {
+            await handleError(error.localizedDescription)
+        }
+    }
+
+    func handleAssistantAudioEnd() async {
+        guard voiceMode == .novaSonic, remotePlaybackPrepared else { return }
+        await MainActor.run {
+            StreamingPCMPlayer.shared.finishReceivingAudio()
+        }
+        remotePlaybackPrepared = false
+    }
+
+    func handleAssistantAudioInterrupted() async {
+        guard voiceMode == .novaSonic else { return }
+        await stopRemoteAssistantAudio()
+    }
+
+    private func refreshRemoteVoiceConversationState() async {
+        if canRunLiveConversation {
+            if recordingMode == .vadAuto {
+                await startRemoteVoiceCapture()
+            } else if appState != .speaking && appState != .thinking {
+                setState(.idle)
+            }
+            return
+        }
+
+        await stopRemoteVoiceCapture()
+        if appState != .speaking && appState != .thinking {
+            setState(.idle)
+        }
+    }
+
+    private func startRemoteVoiceCapture() async {
+        guard voiceMode == .novaSonic else { return }
+        guard !remoteVoiceCapture.isStreaming else { return }
+        do {
+            partialTranscript = ""
+            setState(.listening)
+            let startEvent = Event.userAudioStreamStart(sessionId: sessionId)
+            eventBus.emit(startEvent)
+            await sendConductorEvent(startEvent, true)
+            try await remoteVoiceCapture.start(onChunk: { [weak self] base64Chunk in
+                guard let self else { return }
+                Task { @MainActor in
+                    let chunkEvent = Event.userAudioStreamChunk(audio: base64Chunk, sessionId: self.sessionId)
+                    self.eventBus.emit(chunkEvent)
+                    await self.sendConductorEvent(chunkEvent, false)
+                }
+            })
+        } catch {
+            await handleError(error.localizedDescription)
+        }
+    }
+
+    private func stopRemoteVoiceCapture() async {
+        guard remoteVoiceCapture.isStreaming else { return }
+        await remoteVoiceCapture.stop()
+        let endEvent = Event.userAudioStreamEnd(sessionId: sessionId)
+        eventBus.emit(endEvent)
+        await sendConductorEvent(endEvent, false)
+    }
+
+    private func stopRemoteAssistantAudio() async {
+        remotePlaybackPrepared = false
+        await MainActor.run {
+            StreamingPCMPlayer.shared.stop()
+        }
     }
 
     private func encode<T: Encodable>(_ value: T) -> String {
@@ -448,5 +573,100 @@ final class ConversationAudioPipeline: ObservableObject {
             || normalized.hasPrefix("listening")
             || normalized.hasPrefix("[audio level")
             || normalized == "[no audio captured]"
+    }
+}
+
+@MainActor
+private final class RemoteAudioCapture {
+    private let targetSampleRate: Double = 16_000
+    private let emissionChunkBytes = 3_200
+
+    private var engine: AVAudioEngine?
+    private var onChunk: ((String) -> Void)?
+    private var pendingPCM = Data()
+    private(set) var isStreaming = false
+
+    func start(onChunk: @escaping (String) -> Void) async throws {
+        guard !isStreaming else { return }
+        self.onChunk = onChunk
+
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+        try session.setActive(true)
+
+        let engine = AVAudioEngine()
+        let inputNode = engine.inputNode
+        let format = inputNode.inputFormat(forBus: 0)
+
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
+            guard let self else { return }
+            guard let channelData = buffer.floatChannelData?[0] else { return }
+
+            let frameLength = Int(buffer.frameLength)
+            let samples = Array(UnsafeBufferPointer(start: channelData, count: frameLength))
+            let resampled = self.resampleTo16k(samples: samples, sourceRate: format.sampleRate)
+            guard !resampled.isEmpty else { return }
+
+            var chunk = Data(capacity: resampled.count * 2)
+            for sample in resampled {
+                let clamped = max(-1.0, min(1.0, sample))
+                var intSample = Int16(clamped * Float(Int16.max))
+                withUnsafeBytes(of: &intSample) { chunk.append(contentsOf: $0) }
+            }
+
+            Task { @MainActor in
+                self.pendingPCM.append(chunk)
+                self.flushIfNeeded()
+            }
+        }
+
+        engine.prepare()
+        try engine.start()
+        self.engine = engine
+        self.isStreaming = true
+    }
+
+    func stop() async {
+        guard isStreaming else { return }
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
+        flushRemaining()
+        pendingPCM.removeAll(keepingCapacity: false)
+        isStreaming = false
+        onChunk = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func flushIfNeeded() {
+        guard pendingPCM.count >= emissionChunkBytes else { return }
+        let chunk = pendingPCM.prefix(emissionChunkBytes)
+        pendingPCM.removeFirst(emissionChunkBytes)
+        onChunk?(Data(chunk).base64EncodedString())
+    }
+
+    private func flushRemaining() {
+        guard !pendingPCM.isEmpty else { return }
+        onChunk?(pendingPCM.base64EncodedString())
+    }
+
+    private func resampleTo16k(samples: [Float], sourceRate: Double) -> [Float] {
+        guard sourceRate > 0, sourceRate != targetSampleRate else { return samples }
+        let ratio = sourceRate / targetSampleRate
+        let targetCount = Int(Double(samples.count) / ratio)
+        guard targetCount > 0 else { return [] }
+
+        var output = [Float](repeating: 0, count: targetCount)
+        for index in 0..<targetCount {
+            let sourceIndex = Double(index) * ratio
+            let base = Int(sourceIndex)
+            if base + 1 < samples.count {
+                let t = Float(sourceIndex - Double(base))
+                output[index] = samples[base] * (1 - t) + samples[base + 1] * t
+            } else {
+                output[index] = samples[min(base, samples.count - 1)]
+            }
+        }
+        return output
     }
 }

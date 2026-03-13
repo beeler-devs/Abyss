@@ -107,9 +107,11 @@ struct EventRow: View {
             switch event.kind {
             case .sessionStart:
                 Image(systemName: "play.circle.fill").foregroundStyle(.green)
-            case .userAudioTranscriptPartial, .userAudioTranscriptFinal:
+            case .userAudioTranscriptPartial, .userAudioTranscriptFinal, .userAudioStreamStart,
+                    .userAudioStreamChunk, .userAudioStreamEnd:
                 Image(systemName: "waveform").foregroundStyle(.blue)
-            case .assistantSpeechPartial, .assistantSpeechFinal:
+            case .assistantSpeechPartial, .assistantSpeechFinal, .assistantAudioChunk,
+                    .assistantAudioEnd, .assistantAudioInterrupted:
                 Image(systemName: "text.bubble").foregroundStyle(.purple)
             case .assistantUIPatch:
                 Image(systemName: "rectangle.on.rectangle").foregroundStyle(.orange)
@@ -150,10 +152,22 @@ struct EventRow: View {
             return "transcript.partial: \"\(p.text.prefix(40))\""
         case .userAudioTranscriptFinal(let f):
             return "transcript.final: \"\(f.text.prefix(40))\""
+        case .userAudioStreamStart(let start):
+            return "audio.stream.start: \(start.sampleRateHertz) Hz"
+        case .userAudioStreamChunk(let chunk):
+            return "audio.stream.chunk: \(chunk.audio.prefix(24))"
+        case .userAudioStreamEnd(let end):
+            return "audio.stream.end: \(end.reason ?? "complete")"
         case .assistantSpeechPartial(let p):
             return "speech.partial: \"\(p.text.prefix(40))\""
         case .assistantSpeechFinal(let f):
             return "speech.final: \"\(f.text.prefix(40))\""
+        case .assistantAudioChunk(let chunk):
+            return "assistant.audio.chunk: \(chunk.audio.prefix(24))"
+        case .assistantAudioEnd:
+            return "assistant.audio.end"
+        case .assistantAudioInterrupted(let interrupted):
+            return "assistant.audio.interrupted: \(interrupted.reason)"
         case .assistantUIPatch(let p):
             return "ui.patch: \(p.patch.prefix(30))"
         case .agentStatus(let status):

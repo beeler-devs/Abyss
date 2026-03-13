@@ -12,9 +12,12 @@ import { EventEnvelope } from "./core/types.js";
 import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
 import { buildProvider } from "./providers/index.js";
+import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
+import { VoiceProvider } from "./voice/types.js";
 
 const PORT = parseInteger(process.env.PORT, 8080);
-const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "anthropic").toLowerCase() === "bedrock" ? "bedrock" : "anthropic";
+const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "bedrock").toLowerCase() === "anthropic" ? "anthropic" : "bedrock";
+const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "local").toLowerCase();
 const MAX_EVENT_BYTES = parseInteger(process.env.MAX_EVENT_BYTES, 65_536);
 const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
@@ -34,9 +37,18 @@ const provider = buildProvider({
   anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5",
   anthropicMaxTokens: parseInteger(process.env.ANTHROPIC_MAX_TOKENS, 512),
   anthropicPartialDelayMs: parseInteger(process.env.ANTHROPIC_PARTIAL_DELAY_MS, 60),
-  bedrockModelId: process.env.BEDROCK_MODEL_ID ?? "amazon.nova-lite-v1:0",
+  bedrockTextModelId: process.env.BEDROCK_TEXT_MODEL_ID ?? "us.amazon.nova-2-lite-v1:0",
+  bedrockMaxTokens: parseInteger(process.env.BEDROCK_MAX_TOKENS, 512),
+  bedrockPartialDelayMs: parseInteger(process.env.BEDROCK_PARTIAL_DELAY_MS, 60),
   awsRegion: process.env.AWS_REGION ?? "us-east-1",
 });
+const voiceProvider: VoiceProvider | null = VOICE_PROVIDER === "nova-sonic"
+  ? new BedrockNovaSonicVoiceProvider({
+    modelId: process.env.BEDROCK_SONIC_MODEL_ID ?? "us.amazon.nova-2-sonic-v1:0",
+    region: process.env.AWS_REGION ?? "us-east-1",
+    voiceId: process.env.BEDROCK_SONIC_VOICE_ID ?? "tiffany",
+  })
+  : null;
 
 type ConnectionKind = "unknown" | "ios" | "bridge";
 
@@ -100,6 +112,16 @@ const httpServer = http.createServer(async (req, res) => {
   }
   if (req.method === "POST" && req.url === "/cursor/webhook") {
     await handleCursorWebhook(req, res);
+    return;
+  }
+  if (req.method === "GET" && req.url === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      ok: true,
+      provider: provider.name,
+      voiceProvider: VOICE_PROVIDER,
+      region: process.env.AWS_REGION ?? "us-east-1",
+    }));
     return;
   }
   res.writeHead(404, { "Content-Type": "application/json" });
@@ -198,11 +220,41 @@ wss.on("connection", (socket, request) => {
     }
 
     if (event.type === "audio.output.interrupted") {
+      if (voiceProvider) {
+        await voiceProvider.interrupt(event.sessionId);
+      }
       const cancelled = await bridgeRouter.cancelActiveCommand(event.sessionId);
       logger.info("audio interrupt bridge cancel attempted", {
         sessionId: event.sessionId,
         cancelled,
       });
+    }
+
+    if (voiceProvider && event.type === "user.audio.stream.start") {
+      await voiceProvider.startStream(event.sessionId, {
+        emit: (outbound) => emitToSession(outbound),
+        listTools: (sessionId) => conductor.listAvailableTools(sessionId),
+        executeTool: async (sessionId, toolCall, emit) => conductor.executeDirectToolCall(sessionId, toolCall, emit),
+      });
+      return;
+    }
+
+    if (voiceProvider && event.type === "user.audio.stream.chunk") {
+      const chunk = typeof event.payload.audio === "string" ? event.payload.audio : "";
+      if (!chunk) {
+        safeSend(socket, makeEvent("error", event.sessionId, {
+          code: "invalid_audio_chunk",
+          message: "user.audio.stream.chunk must include payload.audio",
+        }));
+        return;
+      }
+      await voiceProvider.appendAudioChunk(event.sessionId, chunk);
+      return;
+    }
+
+    if (voiceProvider && event.type === "user.audio.stream.end") {
+      await voiceProvider.endStream(event.sessionId);
+      return;
     }
 
     await conductor.handleEvent(event, (outbound) => {
@@ -221,6 +273,9 @@ wss.on("connection", (socket, request) => {
     if (context?.kind === "ios" && context.sessionId) {
       if (iosSocketsBySession.get(context.sessionId) === socket) {
         iosSocketsBySession.delete(context.sessionId);
+      }
+      if (voiceProvider) {
+        void voiceProvider.closeSession(context.sessionId);
       }
     }
 

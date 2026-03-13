@@ -3,7 +3,7 @@
 WebSocket conductor service for the Abyss iOS app.
 
 - Accepts event envelopes over `ws://.../ws`
-- Uses `MODEL_PROVIDER=anthropic` by default (Claude via Anthropic API)
+- Uses `MODEL_PROVIDER=bedrock` by default (Amazon Nova on Bedrock)
 - Emits ordered tool-driven events (`tool.call`, `assistant.speech.partial/final`)
 - Accepts `tool.result` from iOS and logs call outcomes
 - Keeps per-session history + pending tool calls in memory
@@ -23,8 +23,10 @@ cp .env.example .env
 
 Edit `.env` and set at minimum:
 
-- `ANTHROPIC_API_KEY`
-- Optional: `ANTHROPIC_MODEL`, `ANTHROPIC_MAX_TOKENS`, `PORT`
+- AWS credentials via the standard SDK chain:
+  - `AWS_PROFILE`, or
+  - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / optional `AWS_SESSION_TOKEN`
+- Optional: `BEDROCK_TEXT_MODEL_ID`, `BEDROCK_MAX_TOKENS`, `PORT`
 - Optional Stage 2.5 Cursor integration:
   - `CURSOR_API_KEY`
   - `CURSOR_WEBHOOK_URL`
@@ -41,6 +43,7 @@ Server listens on:
 - `ws://localhost:8080/ws` (or your configured `PORT`)
 - `POST /github/exchange`
 - `POST /cursor/webhook`
+- `GET /healthz`
 
 ## Run tests
 
@@ -71,13 +74,22 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 ## Environment variables
 
 - `PORT` (default `8080`)
-- `MODEL_PROVIDER` (`anthropic` or `bedrock`, default `anthropic`)
+- `MODEL_PROVIDER` (`bedrock` or `anthropic`, default `bedrock`)
+- `VOICE_PROVIDER` (`local` or `nova-sonic`, default `local`)
 - `MAX_EVENT_BYTES` (default `65536`)
 - `MAX_TURNS` (default `20`)
 - `SESSION_RATE_LIMIT_PER_MIN` (default `30`)
 - `TRANSCRIPT_TRACE_MAX_ENTRIES` (default `120`)
 - `VERBOSE_TOOL_ROUTING_LOGS` (default `false`)
-- `ANTHROPIC_API_KEY` (required for `anthropic`)
+- `BEDROCK_TEXT_MODEL_ID` (default `us.amazon.nova-2-lite-v1:0`)
+- `BEDROCK_MAX_TOKENS` (default `512`)
+- `BEDROCK_PARTIAL_DELAY_MS` (default `60`)
+- `BEDROCK_SONIC_MODEL_ID` (default `us.amazon.nova-2-sonic-v1:0`)
+- `BEDROCK_SONIC_VOICE_ID` (default `tiffany`)
+- `AWS_REGION` (default `us-east-1`)
+- `AWS_PROFILE` (optional)
+- `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` (optional)
+- `ANTHROPIC_API_KEY` (required only for `MODEL_PROVIDER=anthropic`)
 - `ANTHROPIC_MODEL` (default `claude-haiku-4-5`)
 - `ANTHROPIC_MAX_TOKENS` (default `512`)
 - `ANTHROPIC_PARTIAL_DELAY_MS` (default `60`)
@@ -87,8 +99,6 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 - `CURSOR_WEBHOOK_URL` (public Cursor webhook endpoint URL)
 - `CURSOR_WEBHOOK_SECRET` (HMAC verification secret for `/cursor/webhook`)
 - `CURSOR_WEBHOOK_MAX_BYTES` (default `512000`)
-- `BEDROCK_MODEL_ID` (for scaffold)
-- `AWS_REGION` (for scaffold)
 
 ## Routing observability checks
 
@@ -102,7 +112,10 @@ When debugging server tool routing/fallback behavior, grep server logs for:
 
 ## Switching providers
 
-- Anthropic (active): `MODEL_PROVIDER=anthropic`
-- Bedrock scaffold: `MODEL_PROVIDER=bedrock`
+- Bedrock / Nova (default): `MODEL_PROVIDER=bedrock`
+- Anthropic compatibility fallback: `MODEL_PROVIDER=anthropic`
 
-Bedrock is intentionally scaffolded for easy cutover later with minimal code changes.
+Voice mode is separate from text provider selection:
+
+- Local iOS audio path (default): `VOICE_PROVIDER=local`
+- Experimental Nova Sonic server path: `VOICE_PROVIDER=nova-sonic`

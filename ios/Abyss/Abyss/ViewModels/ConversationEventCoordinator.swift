@@ -86,6 +86,18 @@ final class ConversationEventCoordinator: ObservableObject {
             assistantPartialSpeech = ""
             eventBus.emit(event)
 
+        case .assistantAudioChunk(let chunk):
+            eventBus.emit(event)
+            await audioPipeline.handleAssistantAudioChunk(chunk)
+
+        case .assistantAudioEnd:
+            eventBus.emit(event)
+            await audioPipeline.handleAssistantAudioEnd()
+
+        case .assistantAudioInterrupted:
+            eventBus.emit(event)
+            await audioPipeline.handleAssistantAudioInterrupted()
+
         case .toolCall(let toolCall):
             eventBus.emit(event)
             if toolCall.name.hasPrefix("bridge.") {
@@ -139,7 +151,8 @@ final class ConversationEventCoordinator: ObservableObject {
             eventBus.emit(event)
 
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult, .error,
-                .userAudioTranscriptPartial, .userAudioTranscriptFinal, .audioOutputInterrupted,
+                .userAudioTranscriptPartial, .userAudioTranscriptFinal, .userAudioStreamStart,
+                .userAudioStreamChunk, .userAudioStreamEnd, .audioOutputInterrupted,
                 .agentCompleted, .bridgePairRequest:
             eventBus.emit(event)
         }

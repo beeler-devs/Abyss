@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
     @AppStorage("elevenLabsModelId") private var modelId = "eleven_turbo_v2_5"
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
+    @AppStorage("voiceMode") private var voiceModeRaw = VoiceMode.local.rawValue
 
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -68,13 +69,24 @@ struct SettingsView: View {
                 }
 
                 Section("Recording") {
+                    Picker("Voice Backend", selection: $voiceModeRaw) {
+                        ForEach(VoiceMode.allCases, id: \.rawValue) { mode in
+                            Text(mode.displayName).tag(mode.rawValue)
+                        }
+                    }
+                    .pickerStyle(.menu)
+
                     Picker("Input Mode", selection: $recordingModeRaw) {
                         Text("Hands-free (VAD)").tag(RecordingMode.vadAuto.rawValue)
                         Text("Push to Talk").tag(RecordingMode.pushToTalk.rawValue)
                     }
                     .pickerStyle(.segmented)
 
-                    if recordingModeRaw == RecordingMode.vadAuto.rawValue {
+                    if voiceModeRaw == VoiceMode.novaSonic.rawValue {
+                        Text("Nova Sonic streams microphone audio to the backend. Keep BACKEND_WS_URL pointed at a server with VOICE_PROVIDER=nova-sonic.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if recordingModeRaw == RecordingMode.vadAuto.rawValue {
                         Text("Microphone is always open. Speech is detected automatically.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {

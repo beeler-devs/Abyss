@@ -29,6 +29,10 @@ echo
 echo "Abyss Bridge v0 local dev"
 echo "========================="
 echo "Server websocket: ws://localhost:8080/ws"
+echo "Health check:      http://localhost:8080/healthz"
+echo
+echo "Before starting, make sure AWS credentials are available"
+echo "for Bedrock (AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)."
 echo
 echo "Launch Mac bridge (GUI):"
 echo "  cd $ROOT_DIR/mac/AbyssBridge && swift run"
