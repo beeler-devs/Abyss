@@ -115,6 +115,20 @@ export class BridgeToolRouter {
       return { result: null, error: resolved.error ?? "bridge_routing_failed" };
     }
 
+    if (
+      request.toolName !== "bridge.claude.run"
+      && request.toolName !== "bridge.exec.cancel"
+      && this.activeClaudeRunsByDeviceId.has(resolved.device.deviceId)
+    ) {
+      const error = "bridge device is busy running Claude Code. Wait for that task to finish before starting another bridge command.";
+      this.emitToIOS(makeEvent("tool.result", request.sessionId, {
+        callId: request.callId,
+        result: null,
+        error,
+      }));
+      return { result: null, error };
+    }
+
     // Keep iOS timeline visibility for every bridge tool call.
     this.emitToIOS(makeEvent("tool.call", request.sessionId, {
       callId: request.callId,
@@ -228,21 +242,23 @@ export class BridgeToolRouter {
       }
     }
 
-    const claudeCommandId = this.activeClaudeCommandIdByDeviceId.get(deviceId);
-    if (claudeCommandId) {
-      this.activeClaudeCommandIdByDeviceId.delete(deviceId);
-      this.activeClaudeRunByCommandId.delete(claudeCommandId);
-      this.claudeLineBuffers.delete(claudeCommandId);
-      this.lastClaudeProgressAt.delete(claudeCommandId);
-      this.claudeExitCodeByCommandId.delete(claudeCommandId);
-    }
-    this.activeClaudeRunsByDeviceId.delete(deviceId);
+    this.cleanupClaudeRun(deviceId);
   }
 
   private async executeClaudeRun(
     request: BridgeToolRouteRequest,
     deviceId: string,
   ): Promise<{ result: string | null; error: string | null }> {
+    if (this.activeClaudeRunsByDeviceId.has(deviceId)) {
+      const error = "bridge.claude.run already active on this device. Wait for it to finish before starting another Claude Code task.";
+      this.emitToIOS(makeEvent("tool.result", request.sessionId, {
+        callId: request.callId,
+        result: null,
+        error,
+      }));
+      return { result: null, error };
+    }
+
     const startedAtMs = Date.now();
     this.activeClaudeRunsByDeviceId.set(deviceId, {
       sessionId: request.sessionId,
@@ -289,6 +305,7 @@ export class BridgeToolRouter {
       });
 
       if (result.error === "bridge_tool_timeout") {
+        await this.cancelTimedOutClaudeRun(deviceId, request.sessionId);
         finishError = "bridge.claude.run timed out. Do not retry bridge.claude.run. Tell the user Claude Code took too long and the task did not complete.";
         return {
           result: null,
@@ -319,14 +336,7 @@ export class BridgeToolRouter {
         },
       );
 
-      this.activeClaudeRunsByDeviceId.delete(deviceId);
-      if (commandId) {
-        this.activeClaudeCommandIdByDeviceId.delete(deviceId);
-        this.activeClaudeRunByCommandId.delete(commandId);
-        this.claudeLineBuffers.delete(commandId);
-        this.lastClaudeProgressAt.delete(commandId);
-        this.claudeExitCodeByCommandId.delete(commandId);
-      }
+      this.cleanupClaudeRun(deviceId, commandId);
     }
   }
 
@@ -602,21 +612,17 @@ export class BridgeToolRouter {
       return false;
     }
 
-    const activeClaude = this.activeClaudeRunsByDeviceId.get(payloadDeviceId);
-    if (activeClaude && activeClaude.sessionId === device.sessionId && stream === "stdout") {
-      if (!this.activeClaudeCommandIdByDeviceId.has(payloadDeviceId)) {
-        this.activeClaudeCommandIdByDeviceId.set(payloadDeviceId, commandId);
-        this.activeClaudeRunByCommandId.set(commandId, activeClaude);
-        logger.info(`bridge.claude.run.command_bound commandId=${commandId}`, {
-          sessionId: activeClaude.sessionId,
-          deviceId: payloadDeviceId,
-          callId: activeClaude.callId,
-        });
+    if (stream === "stdout") {
+      this.bindClaudeCommand(payloadDeviceId, commandId);
+      const activeClaudeCommandId = this.activeClaudeCommandIdByDeviceId.get(payloadDeviceId);
+      const activeClaude = this.activeClaudeRunByCommandId.get(commandId);
+      if (activeClaude && activeClaudeCommandId === commandId) {
+        this.handleClaudeOutputChunk(activeClaude.sessionId, commandId, chunk, isFinal);
       }
-      this.handleClaudeOutputChunk(device.sessionId, commandId, chunk);
     }
 
-    this.emitToIOS(makeEvent("bridge.exec.output", device.sessionId, {
+    const targetSessionId = this.resolveExecEventSessionId(payloadDeviceId, commandId, device.sessionId);
+    this.emitToIOS(makeEvent("bridge.exec.output", targetSessionId, {
       deviceId: payloadDeviceId,
       commandId,
       stream,
@@ -625,7 +631,7 @@ export class BridgeToolRouter {
     }, event.id, event.timestamp));
 
     const narration = this.narrationByCommandId.get(commandId);
-    if (narration && narration.sessionId === device.sessionId) {
+    if (narration && narration.sessionId === targetSessionId) {
       const now = Date.now();
       const normalizedChunk = normalizeSnippet(chunk);
       const shouldNarrate = normalizedChunk.length > 0
@@ -654,70 +660,22 @@ export class BridgeToolRouter {
     return true;
   }
 
-  private handleClaudeOutputChunk(sessionId: string, commandId: string, chunk: string): void {
+  private handleClaudeOutputChunk(
+    sessionId: string,
+    commandId: string,
+    chunk: string,
+    isFinal = false,
+  ): void {
     const buffer = (this.claudeLineBuffers.get(commandId) ?? "") + chunk;
     const lines = buffer.split("\n");
     this.claudeLineBuffers.set(commandId, lines.pop() ?? "");
 
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        const event = JSON.parse(trimmed);
-        if (event.type !== "assistant") {
-          continue;
-        }
+      this.handleClaudeOutputLine(sessionId, commandId, line);
+    }
 
-        const contents = Array.isArray(event.message?.content) ? event.message.content : [];
-        for (const rawBlock of contents) {
-          if (!rawBlock || typeof rawBlock !== "object") {
-            continue;
-          }
-          const block = rawBlock as { type?: unknown; name?: unknown; input?: unknown };
-          if (block.type !== "tool_use") {
-            continue;
-          }
-
-          const label = buildClaudeProgressLabel(
-            typeof block.name === "string" ? block.name : "",
-            asRecord(block.input),
-          );
-          if (!label) {
-            continue;
-          }
-
-          const now = Date.now();
-          const last = this.lastClaudeProgressAt.get(commandId) ?? 0;
-          if (now - last < 3_000) {
-            continue;
-          }
-          this.lastClaudeProgressAt.set(commandId, now);
-
-          this.emitAssistantSpeechToolCall(sessionId, label);
-          if (this.verboseToolRoutingLogs) {
-            const runMeta = this.activeClaudeRunByCommandId.get(commandId);
-            logger.info(
-              `bridge.claude.run.progress commandId=${commandId} label=${summarizeValueForLog(label) ?? "unknown"}`,
-              {
-                sessionId,
-                callId: runMeta?.callId,
-              },
-            );
-          }
-        }
-      } catch {
-        // Ignore parse errors for malformed lines from partial/mixed output streams.
-        if (this.verboseToolRoutingLogs) {
-          const runMeta = this.activeClaudeRunByCommandId.get(commandId);
-          logger.info(
-            `bridge.claude.run.progress_parse_error commandId=${commandId} line=${summarizeValueForLog(trimmed) ?? "<empty>"}`,
-            {
-              sessionId,
-              callId: runMeta?.callId,
-            },
-          );
-        }
-      }
+    if (isFinal) {
+      this.flushClaudeOutputBuffer(sessionId, commandId);
     }
   }
 
@@ -732,7 +690,15 @@ export class BridgeToolRouter {
       return false;
     }
 
-    this.emitToIOS(makeEvent("bridge.exec.finished", device.sessionId, {
+    const activeClaude = this.bindClaudeCommand(payload.deviceId, payload.commandId);
+    const targetSessionId = activeClaude?.sessionId
+      ?? this.resolveExecEventSessionId(payload.deviceId, payload.commandId, device.sessionId);
+
+    if (activeClaude) {
+      this.flushClaudeOutputBuffer(activeClaude.sessionId, payload.commandId);
+    }
+
+    this.emitToIOS(makeEvent("bridge.exec.finished", targetSessionId, {
       deviceId: payload.deviceId,
       commandId: payload.commandId,
       exitCode: payload.exitCode,
@@ -774,17 +740,17 @@ export class BridgeToolRouter {
 
     const waiters = this.pendingRunsByCommandId.get(payload.commandId) ?? [];
     if (waiters.length === 0) {
-      const active = this.activeCommandBySession.get(device.sessionId);
+      const active = this.activeCommandBySession.get(targetSessionId);
       if (active?.commandId === payload.commandId) {
-        this.activeCommandBySession.delete(device.sessionId);
+        this.activeCommandBySession.delete(targetSessionId);
       }
       return true;
     }
 
     this.pendingRunsByCommandId.delete(payload.commandId);
-    const active = this.activeCommandBySession.get(device.sessionId);
+    const active = this.activeCommandBySession.get(targetSessionId);
     if (active?.commandId === payload.commandId) {
-      this.activeCommandBySession.delete(device.sessionId);
+      this.activeCommandBySession.delete(targetSessionId);
     }
     const resultText = JSON.stringify({
       exitCode: payload.exitCode,
@@ -798,6 +764,152 @@ export class BridgeToolRouter {
     }
 
     return true;
+  }
+
+  private bindClaudeCommand(deviceId: string, commandId: string): ActiveClaudeRunMeta | undefined {
+    const activeClaude = this.activeClaudeRunsByDeviceId.get(deviceId);
+    if (!activeClaude) {
+      return undefined;
+    }
+
+    const boundCommandId = this.activeClaudeCommandIdByDeviceId.get(deviceId);
+    if (boundCommandId && boundCommandId !== commandId) {
+      return this.activeClaudeRunByCommandId.get(boundCommandId);
+    }
+
+    if (!boundCommandId) {
+      this.activeClaudeCommandIdByDeviceId.set(deviceId, commandId);
+      logger.info(`bridge.claude.run.command_bound commandId=${commandId}`, {
+        sessionId: activeClaude.sessionId,
+        deviceId,
+        callId: activeClaude.callId,
+      });
+    }
+
+    this.activeClaudeRunByCommandId.set(commandId, activeClaude);
+    return activeClaude;
+  }
+
+  private resolveExecEventSessionId(
+    deviceId: string,
+    commandId: string,
+    fallbackSessionId: string,
+  ): string {
+    const activeClaude = this.activeClaudeRunByCommandId.get(commandId);
+    if (activeClaude) {
+      return activeClaude.sessionId;
+    }
+
+    const boundCommandId = this.activeClaudeCommandIdByDeviceId.get(deviceId);
+    if (boundCommandId === commandId) {
+      return this.activeClaudeRunsByDeviceId.get(deviceId)?.sessionId ?? fallbackSessionId;
+    }
+
+    return fallbackSessionId;
+  }
+
+  private flushClaudeOutputBuffer(sessionId: string, commandId: string): void {
+    const buffer = this.claudeLineBuffers.get(commandId) ?? "";
+    this.claudeLineBuffers.delete(commandId);
+    if (buffer.trim()) {
+      this.handleClaudeOutputLine(sessionId, commandId, buffer);
+    }
+  }
+
+  private handleClaudeOutputLine(sessionId: string, commandId: string, line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    try {
+      const event = JSON.parse(trimmed);
+      if (event.type !== "assistant") {
+        return;
+      }
+
+      const contents = Array.isArray(event.message?.content) ? event.message.content : [];
+      for (const rawBlock of contents) {
+        if (!rawBlock || typeof rawBlock !== "object") {
+          continue;
+        }
+        const block = rawBlock as { type?: unknown; name?: unknown; input?: unknown };
+        if (block.type !== "tool_use") {
+          continue;
+        }
+
+        const label = buildClaudeProgressLabel(
+          typeof block.name === "string" ? block.name : "",
+          asRecord(block.input),
+        );
+        if (!label) {
+          continue;
+        }
+
+        const now = Date.now();
+        const last = this.lastClaudeProgressAt.get(commandId) ?? 0;
+        if (now - last < 3_000) {
+          continue;
+        }
+        this.lastClaudeProgressAt.set(commandId, now);
+
+        this.emitAssistantProgress(sessionId, label, true);
+        this.emitAssistantSpeechToolCall(sessionId, label);
+        if (this.verboseToolRoutingLogs) {
+          const runMeta = this.activeClaudeRunByCommandId.get(commandId);
+          logger.info(
+            `bridge.claude.run.progress commandId=${commandId} label=${summarizeValueForLog(label) ?? "unknown"}`,
+            {
+              sessionId,
+              callId: runMeta?.callId,
+            },
+          );
+        }
+      }
+    } catch {
+      if (this.verboseToolRoutingLogs) {
+        const runMeta = this.activeClaudeRunByCommandId.get(commandId);
+        logger.info(
+          `bridge.claude.run.progress_parse_error commandId=${commandId} line=${summarizeValueForLog(trimmed) ?? "<empty>"}`,
+          {
+            sessionId,
+            callId: runMeta?.callId,
+          },
+        );
+      }
+    }
+  }
+
+  private cleanupClaudeRun(deviceId: string, commandId?: string): void {
+    const resolvedCommandId = commandId ?? this.activeClaudeCommandIdByDeviceId.get(deviceId);
+    this.activeClaudeRunsByDeviceId.delete(deviceId);
+    this.activeClaudeCommandIdByDeviceId.delete(deviceId);
+    if (!resolvedCommandId) {
+      return;
+    }
+    this.activeClaudeRunByCommandId.delete(resolvedCommandId);
+    this.claudeLineBuffers.delete(resolvedCommandId);
+    this.lastClaudeProgressAt.delete(resolvedCommandId);
+    this.claudeExitCodeByCommandId.delete(resolvedCommandId);
+  }
+
+  private async cancelTimedOutClaudeRun(deviceId: string, sessionId: string): Promise<void> {
+    const commandId = this.activeClaudeCommandIdByDeviceId.get(deviceId);
+    if (!commandId) {
+      return;
+    }
+
+    const callId = `bridge-claude-timeout-cancel-${crypto.randomUUID()}`;
+    await this.invokeBridgeTool({
+      callId,
+      resultCallId: callId,
+      sessionId,
+      deviceId,
+      toolName: "bridge.exec.cancel",
+      args: { commandId },
+      timeoutMs: 5_000,
+      emitResultToIOS: false,
+    });
   }
 
   private markOfflineAndEmitStatus(deviceId: string, sessionId: string): void {

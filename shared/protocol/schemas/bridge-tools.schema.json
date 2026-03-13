@@ -316,8 +316,9 @@
         "deviceId": { "type": "string" },
         "prompt": { "type": "string", "minLength": 1 },
         "cwd": { "type": "string" },
-        "timeoutSec": { "type": "integer", "minimum": 1, "maximum": 600 },
-        "allowedTools": { "type": "string" }
+        "timeoutSec": { "type": "integer", "minimum": 1, "maximum": 660 },
+        "allowedTools": { "type": "string" },
+        "maxTurns": { "type": "integer", "minimum": 1, "maximum": 100 }
       },
       "additionalProperties": false
     },
