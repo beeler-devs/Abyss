@@ -216,6 +216,10 @@ final class ConversationViewModel: ObservableObject {
         repositorySelectionManager.cancelSelection()
     }
 
+    func toggleEmailCardExpanded(cardID: UUID) {
+        emailManager.toggleExpanded(cardId: cardID)
+    }
+
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
@@ -281,6 +285,8 @@ final class ConversationViewModel: ObservableObject {
             }
         )
 
+        emailManager = ConversationEmailManager(eventBus: eventBus)
+
         eventCoordinator = ConversationEventCoordinator(
             eventBus: eventBus,
             toolRouter: toolRouter,
@@ -308,6 +314,7 @@ final class ConversationViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] event in
                 self?.eventCoordinator.handleEventStream(event)
+                self?.emailManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -328,6 +335,9 @@ final class ConversationViewModel: ObservableObject {
 
         agentManager.$cards
             .assign(to: &$agentProgressCards)
+
+        emailManager.$emailCards
+            .assign(to: &$emailCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)

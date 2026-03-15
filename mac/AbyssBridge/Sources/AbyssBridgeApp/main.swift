@@ -549,16 +549,8 @@ struct BridgeStatusView: View {
                 }
 
                 Section("Configuration") {
-                    LabeledContent("Server") {
-                        TextField("ws://localhost:8080/ws", text: $model.serverURLText)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 300)
-                    }
-                    LabeledContent("Device Name") {
-                        TextField("My Mac", text: $model.deviceName)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 300)
-                    }
+                    TextField("Server", text: $model.serverURLText)
+                    TextField("Device Name", text: $model.deviceName)
                 }
             }
             .formStyle(.grouped)
