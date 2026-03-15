@@ -367,8 +367,6 @@ private struct ChatContentView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            Divider()
-
             // Bottom controls
             HStack(alignment: .center, spacing: UIConstants.actionBarSpacing) {
                 MicButton(
@@ -397,10 +395,7 @@ private struct ChatContentView: View {
                             .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
                             .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                             .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
-                            .background(
-                                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                                    .fill(AppTheme.pillBackground(for: colorScheme))
-                            )
+                            .glassButtonBackground(cornerRadius: UIConstants.actionBarControlHeight / 2, colorScheme: colorScheme)
                     }
                     .buttonStyle(.plain)
                 } else {

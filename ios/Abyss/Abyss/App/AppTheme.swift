@@ -211,3 +211,31 @@ enum AppTheme {
             : Color.black.opacity(0.06)
     }
 }
+
+// MARK: - Glass / Pill Background Helpers
+
+extension View {
+    /// Liquid glass on iOS 26+; standard pill background on earlier OS versions.
+    @ViewBuilder
+    func glassButtonBackground(cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
+        if #available(iOS 26, *) {
+            self.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            self
+                .background(RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(AppTheme.pillBackground(for: colorScheme)))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1))
+        }
+    }
+
+    /// Glass background that turns solid red while recording (PTT active state).
+    @ViewBuilder
+    func pttButtonBackground(isRecording: Bool, cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
+        if isRecording {
+            self.background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color.red))
+        } else {
+            self.glassButtonBackground(cornerRadius: cornerRadius, colorScheme: colorScheme)
+        }
+    }
+}
