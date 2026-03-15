@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Abyss is a voice-first AI conductor architecture. An iOS client streams speech to a Node.js WebSocket server, which orchestrates LLM tool calls, and optionally routes privileged operations (filesystem, shell commands) to a paired macOS bridge.
+Abyss is a voice-first AI personal assistant architecture. An iOS client streams speech to a Node.js WebSocket server, which orchestrates LLM tool calls, and optionally routes privileged operations (filesystem, shell commands) to a paired macOS bridge. It serves as both a coding assistant (via Cursor Cloud Agents and macOS bridge) and a personal assistant (email, scheduling, and more).
 
 **Components:**
 - `server/` — Node.js/TypeScript WebSocket conductor (primary development target)
@@ -61,6 +61,7 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 3. LLM responds with tool calls → conductor emits `tool.call` events
 4. Tools execute locally (iOS handles `audio.*`, `ui.*`) or are routed to the bridge (`bridge.exec.run`, `bridge.fs.*`)
 5. Tool results are sent back as `tool.result` events → conductor resumes LLM
+6. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
 ### Key Server Files
 - `server/src/server.ts` — HTTP/WS server setup; maintains `iosSocketsBySession` and `bridgeSocketsByDeviceId` maps
@@ -105,6 +106,8 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 **Repository Selection:** `RepositorySelectionManager` presents an interactive modal for user to pick a repo during tool execution. Uses `CheckedContinuation` to suspend tool execution until selection. UI: `RepositorySelectionCardView`.
 
+**Email Draft Confirmation:** When the LLM calls `gmail.send` or `gmail.reply`, the server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS. `EmailDraftManager` (using `CheckedContinuation` suspension like `RepositorySelectionManager`) presents an `EmailDraftCardView` with Send/Cancel buttons. The tool execution suspends until the user acts, then returns the confirmation to the server which completes the actual send.
+
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
 **Tool System:** `ToolProtocol` with `AnyTool` type erasure → `ToolRegistry` for registration → `ToolRouter` for event dispatch. Categories: Audio (`STTStart/Stop`, `TTSSpeak/Stop`), Conversation (`ConvoAppendMessage`, `ConvoSetState`), Agent (6 tools above).
@@ -120,6 +123,18 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 #### Markdown Rendering
 Assistant messages rendered via `MarkdownTextView` → parses into `.text` (inline formatting) and `.codeBlock(language, code)` (terminal-style with copy button). User messages use plain `Text`.
+
+## Agent Workflow Guidelines
+
+### Committing Changes
+- **Always commit when done** — at the end of any task, commit all changes with a descriptive message.
+- **Commit incrementally on large tasks** — if working on a multi-step or large feature, commit logical checkpoints along the way (e.g., after each major component is complete), not just at the end.
+- Use clear commit messages that describe what changed and why.
+
+### Keeping CLAUDE.md Up to Date
+- After implementing any significant feature, architectural change, or new pattern, update this file to reflect it.
+- This includes: new components, new tools, new iOS feature systems, new server routes, new environment variables, changed file responsibilities, or updated patterns.
+- Keep entries concise — follow the style of existing sections.
 
 ## Environment Configuration
 

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 
+import { CanvasClient } from "../integrations/canvasClient.js";
 import { CursorClient } from "../integrations/cursorClient.js";
 import { GmailClient } from "../integrations/gmailClient.js";
 import {
@@ -35,6 +36,7 @@ export interface ConductorServiceConfig {
 export interface ConductorServiceDependencies {
   cursorClient?: CursorClient;
   gmailClient?: GmailClient;
+  canvasClient?: CanvasClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
@@ -510,6 +512,72 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
   },
 ];
 
+const SERVER_CANVAS_TOOLS: ToolDefinition[] = [
+  {
+    name: "canvas.courses",
+    description:
+      "List the user's active Canvas LMS courses. Returns course names, IDs, and enrollment info.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "canvas.assignments",
+    description:
+      "List assignments for a Canvas course, ordered by due date. Returns assignment names, due dates, points, and submission status.",
+    input_schema: {
+      type: "object",
+      properties: {
+        courseId: { type: "string", description: "The Canvas course ID." },
+      },
+      required: ["courseId"],
+    },
+  },
+  {
+    name: "canvas.todo",
+    description:
+      "Get the user's Canvas TODO items across all courses. Returns upcoming assignments and grading tasks.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "canvas.upcoming",
+    description:
+      "Get upcoming calendar events from Canvas. Returns event titles, dates, and course associations.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "canvas.grades",
+    description:
+      "Get the user's grades/enrollment for a specific Canvas course. Returns current score, grade, and enrollment details.",
+    input_schema: {
+      type: "object",
+      properties: {
+        courseId: { type: "string", description: "The Canvas course ID." },
+      },
+      required: ["courseId"],
+    },
+  },
+  {
+    name: "canvas.announcements",
+    description:
+      "Get announcements for a Canvas course. Returns announcement titles, messages, and post dates.",
+    input_schema: {
+      type: "object",
+      properties: {
+        courseId: { type: "string", description: "The Canvas course ID." },
+      },
+      required: ["courseId"],
+    },
+  },
+];
+
 const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 
 function waitForToolResult(
@@ -537,6 +605,7 @@ export class ConductorService {
   private readonly sessions: SessionStore;
   private readonly cursorClient: CursorClient;
   private readonly gmailClient?: GmailClient;
+  private readonly canvasClient?: CanvasClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
@@ -554,6 +623,7 @@ export class ConductorService {
     );
     this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
     this.gmailClient = dependencies.gmailClient;
+    this.canvasClient = dependencies.canvasClient;
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -827,6 +897,24 @@ export class ConductorService {
           name: "gmail.authenticate",
           description:
             "Prompt the user to connect their Gmail account. Call this when the user wants to use email features but hasn't connected Gmail yet. This opens the Google sign-in screen on their device.",
+          input_schema: {
+            type: "object",
+            properties: {},
+          },
+        });
+      }
+    }
+
+    // Canvas tools: available when token is present, otherwise offer authenticate
+    {
+      const session = this.sessions.getOrCreate(sessionId);
+      if (session.canvasAccessToken) {
+        tools.push(...SERVER_CANVAS_TOOLS);
+      } else {
+        tools.push({
+          name: "canvas.authenticate",
+          description:
+            "Prompt the user to connect their Canvas LMS account. Call this when the user wants to check courses, assignments, or grades but hasn't connected Canvas yet. Directs the user to Settings → Connections → Canvas.",
           input_schema: {
             type: "object",
             properties: {},
@@ -1493,6 +1581,40 @@ export class ConductorService {
             return { result: null, error: "gmail_send_requires_to_subject_body" };
           }
           const cc = stringFromRecord(args, "cc");
+
+          // Emit draft to iOS for user confirmation
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "gmail.send.confirm",
+            arguments: JSON.stringify({ to, cc: cc ?? undefined, subject, body }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "gmail.send.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { to, cc, subject, body },
+          });
+          emit(confirmEnvelope);
+
+          // Wait for user confirmation (120s timeout — user needs time to read)
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
+          }
+
+          let confirmed = false;
+          try {
+            const parsed = JSON.parse(confirmResult);
+            confirmed = parsed.confirmed === true;
+          } catch {
+            return { result: null, error: "gmail_send_invalid_confirmation" };
+          }
+
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
+          }
+
           const sendResult = await this.gmailClient.send(session, { to, cc, subject, body });
           return { result: stableJSONStringify(sendResult), error: null };
         }
@@ -1508,6 +1630,39 @@ export class ConductorService {
           }
           const to = stringFromRecord(args, "to");
           const cc = stringFromRecord(args, "cc");
+
+          // Emit draft to iOS for user confirmation
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "gmail.reply.confirm",
+            arguments: JSON.stringify({ messageId, body, to: to ?? undefined, cc: cc ?? undefined }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "gmail.reply.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { messageId, body, to, cc },
+          });
+          emit(confirmEnvelope);
+
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
+          }
+
+          let confirmed = false;
+          try {
+            const parsed = JSON.parse(confirmResult);
+            confirmed = parsed.confirmed === true;
+          } catch {
+            return { result: null, error: "gmail_reply_invalid_confirmation" };
+          }
+
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };
+          }
+
           const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
           return { result: stableJSONStringify(replyResult), error: null };
         }

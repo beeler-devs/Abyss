@@ -386,6 +386,71 @@ const SERVER_BRIDGE_TOOLS = [
         },
     },
 ];
+const SERVER_GMAIL_TOOLS = [
+    {
+        name: "gmail.inbox",
+        description: "List recent emails from the user's Gmail inbox. Returns sender, subject, date, and snippet for each message.",
+        input_schema: {
+            type: "object",
+            properties: {
+                maxResults: { type: "number", description: "Number of emails to return (default 10, max 20)." },
+                pageToken: { type: "string", description: "Pagination token from a previous result." },
+            },
+        },
+    },
+    {
+        name: "gmail.search",
+        description: "Search the user's Gmail using Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01'). Returns matching messages with sender, subject, date, and snippet.",
+        input_schema: {
+            type: "object",
+            properties: {
+                query: { type: "string", description: "Gmail search query string." },
+                maxResults: { type: "number", description: "Number of results to return (default 10, max 20)." },
+                pageToken: { type: "string", description: "Pagination token from a previous result." },
+            },
+            required: ["query"],
+        },
+    },
+    {
+        name: "gmail.read",
+        description: "Read the full content of a specific email by its message ID. Returns sender, recipients, subject, date, and body text.",
+        input_schema: {
+            type: "object",
+            properties: {
+                messageId: { type: "string", description: "The Gmail message ID to read." },
+            },
+            required: ["messageId"],
+        },
+    },
+    {
+        name: "gmail.send",
+        description: "Send a new email on behalf of the user. The app will show the draft in a confirmation card before actually sending. Just call this tool with the composed email content.",
+        input_schema: {
+            type: "object",
+            properties: {
+                to: { type: "string", description: "Recipient email address." },
+                cc: { type: "string", description: "CC email address (optional)." },
+                subject: { type: "string", description: "Email subject line." },
+                body: { type: "string", description: "Email body text." },
+            },
+            required: ["to", "subject", "body"],
+        },
+    },
+    {
+        name: "gmail.reply",
+        description: "Reply to an existing email by message ID. The app will show the draft reply in a confirmation card before actually sending. Just call this tool with the composed reply.",
+        input_schema: {
+            type: "object",
+            properties: {
+                messageId: { type: "string", description: "The Gmail message ID to reply to." },
+                body: { type: "string", description: "Reply body text." },
+                to: { type: "string", description: "Override recipient (optional, defaults to original sender)." },
+                cc: { type: "string", description: "CC email address (optional)." },
+            },
+            required: ["messageId", "body"],
+        },
+    },
+];
 const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 function waitForToolResult(session, callId, timeoutMs) {
     return new Promise((resolve) => {
@@ -404,6 +469,7 @@ export class ConductorService {
     provider;
     sessions;
     cursorClient;
+    gmailClient;
     webhookPendingTtlMs;
     now;
     bridgeToolExecutor;
@@ -415,6 +481,7 @@ export class ConductorService {
         this.provider = provider;
         this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute, config.traceMaxEntries ?? 120);
         this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
+        this.gmailClient = dependencies.gmailClient;
         this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
         this.now = dependencies.now ?? (() => new Date());
         this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -454,6 +521,7 @@ export class ConductorService {
             toolArguments: toolCall.input,
         });
         emit(envelope);
+        logger.info(`tool.client.call tool=${toolCall.name}`, { sessionId, callId });
         return waitForToolResult(session, callId, 30_000);
     }
     async handleCursorWebhook(payload, emit) {
@@ -499,6 +567,15 @@ export class ConductorService {
             case "session.start": {
                 if (typeof event.payload.githubToken === "string" && event.payload.githubToken) {
                     session.githubToken = event.payload.githubToken;
+                }
+                if (typeof event.payload.gmailAccessToken === "string" && event.payload.gmailAccessToken) {
+                    session.gmailAccessToken = event.payload.gmailAccessToken;
+                }
+                if (typeof event.payload.gmailRefreshToken === "string" && event.payload.gmailRefreshToken) {
+                    session.gmailRefreshToken = event.payload.gmailRefreshToken;
+                }
+                if (typeof event.payload.gmailTokenExpiresAt === "number") {
+                    session.gmailTokenExpiresAt = event.payload.gmailTokenExpiresAt;
                 }
                 emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
                 logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
@@ -612,11 +689,30 @@ export class ConductorService {
                 : SERVER_BRIDGE_TOOLS;
             tools.push(...bridgeTools);
         }
+        if (this.gmailClient?.isConfigured()) {
+            const session = this.sessions.getOrCreate(sessionId);
+            if (session.gmailAccessToken) {
+                tools.push(...SERVER_GMAIL_TOOLS);
+            }
+            else {
+                tools.push({
+                    name: "gmail.authenticate",
+                    description: "Prompt the user to connect their Gmail account. Call this when the user wants to use email features but hasn't connected Gmail yet. This opens the Google sign-in screen on their device.",
+                    input_schema: {
+                        type: "object",
+                        properties: {},
+                    },
+                });
+            }
+        }
         return tools;
     }
     shouldExecuteServerTool(toolName) {
         if (toolName.startsWith("bridge.")) {
             return Boolean(this.bridgeToolExecutor);
+        }
+        if (toolName.startsWith("gmail.") && toolName !== "gmail.authenticate") {
+            return true;
         }
         if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
             return true;
@@ -645,6 +741,10 @@ export class ConductorService {
             });
             emit(envelope);
             tracePush(`tool.call:${toolName}`);
+            logger.info(`tool.client.call tool=${toolName}`, {
+                sessionId: session.sessionId,
+                callId,
+            });
         };
         this.sessions.appendTurn(session, {
             role: "user",
@@ -739,7 +839,17 @@ export class ConductorService {
                     });
                     emit(envelope);
                     tracePush(`tool.call:${toolCall.name}`);
+                    logger.info(`tool.client.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}`, {
+                        sessionId: session.sessionId,
+                        eventId: sourceEventId,
+                        callId,
+                    });
                     const { result, error } = await waitForToolResult(session, callId, 30_000);
+                    logger.info(`tool.client.result tool=${toolCall.name} outcome=${error ? "error" : "ok"}`, {
+                        sessionId: session.sessionId,
+                        eventId: sourceEventId,
+                        callId,
+                    });
                     this.sessions.appendTurn(session, {
                         role: "tool",
                         content: result ?? `Error: ${error ?? "unknown"}`,
@@ -761,6 +871,10 @@ export class ConductorService {
             responseText = responseText.trim();
             emit(makeEvent("assistant.speech.final", session.sessionId, { text: responseText }));
             tracePush("assistant.speech.final");
+            logger.info(`assistant.speech.final: "${responseText.length > 160 ? responseText.slice(0, 160) + "…" : responseText}"`, {
+                sessionId: session.sessionId,
+                eventId: sourceEventId,
+            });
             this.sessions.appendTurn(session, {
                 role: "assistant",
                 content: responseText,
@@ -1091,6 +1205,126 @@ export class ConductorService {
                         args,
                         timeoutMs: claudeTimeoutMs,
                     }, emit);
+                }
+                case "gmail.inbox": {
+                    if (!this.gmailClient) {
+                        return { result: null, error: "gmail_not_configured" };
+                    }
+                    const maxResults = Math.min(typeof args.maxResults === "number" ? args.maxResults : 10, 20);
+                    const pageToken = typeof args.pageToken === "string" ? args.pageToken : undefined;
+                    const listResult = await this.gmailClient.list(session, { maxResults, pageToken });
+                    return { result: stableJSONStringify(listResult), error: null };
+                }
+                case "gmail.search": {
+                    if (!this.gmailClient) {
+                        return { result: null, error: "gmail_not_configured" };
+                    }
+                    const query = stringFromRecord(args, "query");
+                    if (!query) {
+                        return { result: null, error: "gmail_missing_query" };
+                    }
+                    const maxResults = Math.min(typeof args.maxResults === "number" ? args.maxResults : 10, 20);
+                    const pageToken = typeof args.pageToken === "string" ? args.pageToken : undefined;
+                    const searchResult = await this.gmailClient.search(session, query, { maxResults, pageToken });
+                    return { result: stableJSONStringify(searchResult), error: null };
+                }
+                case "gmail.read": {
+                    if (!this.gmailClient) {
+                        return { result: null, error: "gmail_not_configured" };
+                    }
+                    const messageId = stringFromRecord(args, "messageId");
+                    if (!messageId) {
+                        return { result: null, error: "gmail_missing_message_id" };
+                    }
+                    const message = await this.gmailClient.read(session, messageId);
+                    return { result: stableJSONStringify(message), error: null };
+                }
+                case "gmail.send": {
+                    if (!this.gmailClient) {
+                        return { result: null, error: "gmail_not_configured" };
+                    }
+                    const to = stringFromRecord(args, "to");
+                    const subject = stringFromRecord(args, "subject");
+                    const body = stringFromRecord(args, "body");
+                    if (!to || !subject || !body) {
+                        return { result: null, error: "gmail_send_requires_to_subject_body" };
+                    }
+                    const cc = stringFromRecord(args, "cc");
+                    // Emit draft to iOS for user confirmation
+                    const confirmCallId = crypto.randomUUID();
+                    const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+                        callId: confirmCallId,
+                        name: "gmail.send.confirm",
+                        arguments: JSON.stringify({ to, cc: cc ?? undefined, subject, body }),
+                    });
+                    session.pendingToolCalls.set(confirmCallId, {
+                        callId: confirmCallId,
+                        toolName: "gmail.send.confirm",
+                        emittedAt: confirmEnvelope.timestamp,
+                        toolArguments: { to, cc, subject, body },
+                    });
+                    emit(confirmEnvelope);
+                    // Wait for user confirmation (120s timeout — user needs time to read)
+                    const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+                    if (confirmError || !confirmResult) {
+                        return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
+                    }
+                    let confirmed = false;
+                    try {
+                        const parsed = JSON.parse(confirmResult);
+                        confirmed = parsed.confirmed === true;
+                    }
+                    catch {
+                        return { result: null, error: "gmail_send_invalid_confirmation" };
+                    }
+                    if (!confirmed) {
+                        return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
+                    }
+                    const sendResult = await this.gmailClient.send(session, { to, cc, subject, body });
+                    return { result: stableJSONStringify(sendResult), error: null };
+                }
+                case "gmail.reply": {
+                    if (!this.gmailClient) {
+                        return { result: null, error: "gmail_not_configured" };
+                    }
+                    const messageId = stringFromRecord(args, "messageId");
+                    const body = stringFromRecord(args, "body");
+                    if (!messageId || !body) {
+                        return { result: null, error: "gmail_reply_requires_messageId_and_body" };
+                    }
+                    const to = stringFromRecord(args, "to");
+                    const cc = stringFromRecord(args, "cc");
+                    // Emit draft to iOS for user confirmation
+                    const confirmCallId = crypto.randomUUID();
+                    const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+                        callId: confirmCallId,
+                        name: "gmail.reply.confirm",
+                        arguments: JSON.stringify({ messageId, body, to: to ?? undefined, cc: cc ?? undefined }),
+                    });
+                    session.pendingToolCalls.set(confirmCallId, {
+                        callId: confirmCallId,
+                        toolName: "gmail.reply.confirm",
+                        emittedAt: confirmEnvelope.timestamp,
+                        toolArguments: { messageId, body, to, cc },
+                    });
+                    emit(confirmEnvelope);
+                    const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+                    if (confirmError || !confirmResult) {
+                        return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
+                    }
+                    let confirmed = false;
+                    try {
+                        const parsed = JSON.parse(confirmResult);
+                        confirmed = parsed.confirmed === true;
+                    }
+                    catch {
+                        return { result: null, error: "gmail_reply_invalid_confirmation" };
+                    }
+                    if (!confirmed) {
+                        return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };
+                    }
+                    const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
+                    return { result: stableJSONStringify(replyResult), error: null };
                 }
                 default:
                     return { result: null, error: `unsupported_server_tool:${toolName}` };

@@ -4,6 +4,7 @@ struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
     @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
     @EnvironmentObject private var gmailAuthManager: GmailAuthManager
+    @EnvironmentObject private var canvasManager: CanvasManager
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = false
     @State private var showEventTimeline = false
@@ -33,9 +34,13 @@ struct ContentView: View {
                             isTypingMode: $isTypingMode,
                             typedMessage: $typedMessage
                         )
-                        .onAppear { vm.setGmailAuthManager(gmailAuthManager) }
+                        .onAppear {
+                            vm.setGmailAuthManager(gmailAuthManager)
+                            vm.setCanvasManager(canvasManager)
+                        }
                         .onChange(of: chatList.selectedChatId) { _, _ in
                             viewModel?.setGmailAuthManager(gmailAuthManager)
+                            viewModel?.setCanvasManager(canvasManager)
                         }
                     } else {
                         emptyState
@@ -357,7 +362,12 @@ private struct ChatContentView: View {
                     }
                 },
                 onToggleAgentConversation: { viewModel.toggleConversationExpanded(cardID: $0) },
-                onToggleAgentExpanded: { viewModel.toggleAgentCardExpanded(cardID: $0) }
+                onToggleAgentExpanded: { viewModel.toggleAgentCardExpanded(cardID: $0) },
+                emailCards: viewModel.emailCards,
+                onToggleEmailExpanded: { viewModel.toggleEmailCardExpanded(cardID: $0) },
+                emailDraftCards: viewModel.emailDraftCards,
+                onSendDraft: { viewModel.confirmEmailDraft(callId: $0) },
+                onCancelDraft: { viewModel.cancelEmailDraft(callId: $0) }
             )
 
             // Repository selection card (takes priority)

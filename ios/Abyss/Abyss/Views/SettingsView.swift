@@ -6,6 +6,7 @@ struct SettingsView: View {
     let bridgePairingMessage: String?
     let onPairComputer: ((String, String?) -> Void)?
     @EnvironmentObject private var gmailAuthManager: GmailAuthManager
+    @EnvironmentObject private var canvasManager: CanvasManager
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("recordingMode") private var recordingModeRaw = RecordingMode.vadAuto.rawValue
@@ -21,6 +22,7 @@ struct SettingsView: View {
     @State private var showCursorAPIKeyModal = false
     @State private var cursorAPIKeyInput = ""
     @State private var showPairComputerSheet = false
+    @State private var showCanvasTokenModal = false
 
     var body: some View {
         NavigationStack {
@@ -113,13 +115,18 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Gmail") {
+                Section("Connections") {
+                    // Gmail
                     if gmailAuthManager.isAuthenticated {
                         HStack {
-                            Label("Connected", systemImage: "checkmark.circle.fill")
+                            Label("Gmail", systemImage: "envelope")
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                            Text("Connected")
                                 .font(.caption)
                                 .foregroundStyle(.green)
-                            Spacer()
                             Button("Sign out") {
                                 gmailAuthManager.signOut()
                             }
@@ -131,10 +138,13 @@ struct SettingsView: View {
                             Task { await gmailAuthManager.authenticate() }
                         } label: {
                             HStack {
-                                Label("Connect Gmail", systemImage: "envelope")
+                                Label("Gmail", systemImage: "envelope")
+                                Spacer()
                                 if gmailAuthManager.isAuthenticating {
-                                    Spacer()
                                     ProgressView().scaleEffect(0.8)
+                                } else {
+                                    Text("Connect")
+                                        .font(.caption)
                                 }
                             }
                         }
@@ -147,9 +157,60 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                     }
 
-                    Text("Allows Abyss to read, search, and send emails on your behalf.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Canvas
+                    if canvasManager.isConnected {
+                        HStack {
+                            Label("Canvas", systemImage: "graduationcap")
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                            Text("Connected")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                            Button("Sign out") {
+                                canvasManager.disconnect()
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        }
+                    } else {
+                        Button {
+                            showCanvasTokenModal = true
+                        } label: {
+                            HStack {
+                                Label("Canvas", systemImage: "graduationcap")
+                                Spacer()
+                                Text("Connect")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+
+                    // Coming soon integrations
+                    HStack {
+                        Label("Notion", systemImage: "doc.text")
+                        Spacer()
+                        Text("Coming soon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Apple Health", systemImage: "heart.fill")
+                        Spacer()
+                        Text("Coming soon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Obsidian", systemImage: "cube")
+                        Spacer()
+                        Text("Coming soon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Bridge") {
@@ -217,6 +278,17 @@ struct SettingsView: View {
                     showPairComputerSheet = false
                 }
             }
+            .sheet(isPresented: $showCanvasTokenModal) {
+                CanvasTokenModalView(
+                    onSave: { token, baseURL in
+                        canvasManager.connect(token: token, baseURL: baseURL)
+                        showCanvasTokenModal = false
+                    },
+                    onCancel: {
+                        showCanvasTokenModal = false
+                    }
+                )
+            }
         }
     }
 
@@ -276,6 +348,47 @@ private struct PairComputerSheet: View {
                         )
                     }
                     .disabled(pairingCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Canvas Token Modal
+private struct CanvasTokenModalView: View {
+    @State private var baseURL: String = CanvasManager.defaultBaseURL
+    @State private var accessToken: String = ""
+    let onSave: (String, String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Canvas Base URL") {
+                    TextField("https://canvas.cmu.edu", text: $baseURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(.system(.body, design: .monospaced))
+                }
+                Section("Personal Access Token") {
+                    SecureField("Token", text: $accessToken)
+                        .font(.system(.body, design: .monospaced))
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+            }
+            .navigationTitle("Connect Canvas")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        onSave(accessToken, baseURL)
+                    }
+                    .disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }

@@ -17,6 +17,11 @@ struct TranscriptView: View {
     var onDismissAgent: (UUID) -> Void = { _ in }
     var onToggleAgentConversation: (UUID) -> Void = { _ in }
     var onToggleAgentExpanded: (UUID) -> Void = { _ in }
+    var emailCards: [EmailCard] = []
+    var onToggleEmailExpanded: (UUID) -> Void = { _ in }
+    var emailDraftCards: [EmailDraftCard] = []
+    var onSendDraft: (String) -> Void = { _ in }
+    var onCancelDraft: (String) -> Void = { _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -35,6 +40,23 @@ struct TranscriptView: View {
                                 onDismiss: { onDismissAgent(card.id) },
                                 onToggleConversation: { onToggleAgentConversation(card.id) },
                                 onToggleExpanded: { onToggleAgentExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
+                        case .emailCard(let card):
+                            EmailCardView(
+                                card: card,
+                                onToggleExpanded: { onToggleEmailExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
+                        case .emailDraftCard(let card):
+                            EmailDraftCardView(
+                                card: card,
+                                onSend: { onSendDraft(card.callId) },
+                                onCancel: { onCancelDraft(card.callId) }
                             )
                             .padding(.horizontal, 12)
                             .id(item.id)
@@ -59,7 +81,7 @@ struct TranscriptView: View {
                     }
 
                     // Empty state
-                    if messages.isEmpty && agentProgressCards.isEmpty && assistantPartialSpeech.isEmpty {
+                    if messages.isEmpty && agentProgressCards.isEmpty && emailCards.isEmpty && emailDraftCards.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -108,7 +130,18 @@ struct TranscriptView: View {
 
     private var transcriptItems: [TranscriptItem] {
         let messageIDs = Set(messages.map(\.id))
-        let anchoredCards = Dictionary(grouping: agentProgressCards.compactMap { card -> (UUID, AgentProgressCard)? in
+
+        let anchoredAgentCards = Dictionary(grouping: agentProgressCards.compactMap { card -> (UUID, AgentProgressCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredEmailCards = Dictionary(grouping: emailCards.compactMap { card -> (UUID, EmailCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredDraftCards = Dictionary(grouping: emailDraftCards.compactMap { card -> (UUID, EmailDraftCard)? in
             guard let anchor = card.anchorMessageID else { return nil }
             return (anchor, card)
         }, by: \.0)
@@ -116,15 +149,31 @@ struct TranscriptView: View {
         var items: [TranscriptItem] = []
         for message in messages {
             items.append(.message(message))
-            if let cardsForMessage = anchoredCards[message.id] {
-                for entry in cardsForMessage {
+            if let agentCards = anchoredAgentCards[message.id] {
+                for entry in agentCards {
                     items.append(.agentCard(entry.1))
+                }
+            }
+            if let emailCardsForMsg = anchoredEmailCards[message.id] {
+                for entry in emailCardsForMsg {
+                    items.append(.emailCard(entry.1))
+                }
+            }
+            if let draftCardsForMsg = anchoredDraftCards[message.id] {
+                for entry in draftCardsForMsg {
+                    items.append(.emailDraftCard(entry.1))
                 }
             }
         }
 
         for card in agentProgressCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
             items.append(.agentCard(card))
+        }
+        for card in emailCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.emailCard(card))
+        }
+        for card in emailDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.emailDraftCard(card))
         }
 
         return items
@@ -134,6 +183,8 @@ struct TranscriptView: View {
 private enum TranscriptItem: Identifiable {
     case message(ConversationMessage)
     case agentCard(AgentProgressCard)
+    case emailCard(EmailCard)
+    case emailDraftCard(EmailDraftCard)
 
     var id: String {
         switch self {
@@ -141,6 +192,10 @@ private enum TranscriptItem: Identifiable {
             return "message-\(message.id.uuidString)"
         case .agentCard(let card):
             return Self.agentCardID(card.id)
+        case .emailCard(let card):
+            return "email-\(card.id.uuidString)"
+        case .emailDraftCard(let card):
+            return "draft-\(card.id.uuidString)"
         }
     }
 

@@ -53,6 +53,8 @@ struct Event: Identifiable, Codable, Sendable {
         let gmailAccessToken: String?
         let gmailRefreshToken: String?
         let gmailTokenExpiresAt: Double?
+        let canvasAccessToken: String?
+        let canvasBaseURL: String?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -219,14 +221,18 @@ extension Event {
         githubToken: String? = nil,
         gmailAccessToken: String? = nil,
         gmailRefreshToken: String? = nil,
-        gmailTokenExpiresAt: Double? = nil
+        gmailTokenExpiresAt: Double? = nil,
+        canvasAccessToken: String? = nil,
+        canvasBaseURL: String? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
             sessionId: sessionId,
             githubToken: githubToken,
             gmailAccessToken: gmailAccessToken,
             gmailRefreshToken: gmailRefreshToken,
-            gmailTokenExpiresAt: gmailTokenExpiresAt
+            gmailTokenExpiresAt: gmailTokenExpiresAt,
+            canvasAccessToken: canvasAccessToken,
+            canvasBaseURL: canvasBaseURL
         )))
     }
 

@@ -23,8 +23,10 @@ export class BedrockNovaProvider {
     name = "bedrock";
     config;
     client;
+    bearerToken;
     constructor(config, client) {
         this.config = config;
+        this.bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
         this.client = client ?? new BedrockRuntimeClient({ region: config.region });
     }
     async generateResponse(conversation, tools) {
@@ -42,7 +44,7 @@ export class BedrockNovaProvider {
     buildSystemPrompt() {
         return [{
                 text: [
-                    "You are the Abyss voice-first coding assistant.",
+                    "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
                     "Keep spoken responses concise, practical, and voice-friendly.",
                     "Do not ask for speech-to-text tools. The user triggers listening manually.",
                     "Avoid markdown tables and avoid long formatting.",
@@ -53,6 +55,11 @@ export class BedrockNovaProvider {
                     "When using legacy agent.spawn for repo work, if you do not know the exact owner/repo string, call repositories.list first.",
                     "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
                     "Never guess or hallucinate a repository name. Only use repos returned by repositories.list.",
+                    "If gmail.inbox, gmail.search, gmail.read, gmail.send, or gmail.reply tools are available, use them when the user asks about email. These tools are available because the user has already connected their Gmail account.",
+                    "For gmail.search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
+                    "When the user asks to write, compose, draft, or send an email, draft the content yourself and call gmail.send immediately with the to, subject, and body fields. Do NOT ask the user for text confirmation — the app will show a draft card where they can review and tap Send. Just write the email and call the tool.",
+                    "Similarly for gmail.reply — draft the reply body and call gmail.reply immediately. The app handles confirmation via a card.",
+                    "If gmail tools are NOT available but gmail.authenticate IS available, call gmail.authenticate when the user asks about email — this opens the sign-in screen on their device.",
                 ].join(" "),
             }];
     }
@@ -126,7 +133,7 @@ export class BedrockNovaProvider {
                     content: resolved.map((toolCall) => ({
                         toolUse: {
                             toolUseId: toolCall.id,
-                            name: toolCall.name,
+                            name: toolCall.name.replace(/\./g, "_"),
                             input: toolCall.input,
                         },
                     })),
@@ -173,17 +180,10 @@ export class BedrockNovaProvider {
     async fetchResponse(conversation, tools) {
         const messages = this.buildMessages(conversation);
         const { toolConfig, toolNameToOriginal } = this.buildTools(tools);
-        const response = await this.client.send(new ConverseCommand({
-            modelId: this.config.modelId,
-            system: this.buildSystemPrompt(),
-            messages,
-            inferenceConfig: {
-                maxTokens: toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens,
-                temperature: 0.3,
-            },
-            ...(toolConfig ? { toolConfig } : {}),
-        }));
-        const contentBlocks = response.output?.message?.content ?? [];
+        const maxTokens = toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens;
+        const contentBlocks = this.bearerToken
+            ? await this.fetchWithBearer(messages, toolConfig, maxTokens)
+            : await this.fetchWithSdk(messages, toolConfig, maxTokens);
         const textParts = [];
         const toolCalls = [];
         for (const block of contentBlocks) {
@@ -205,5 +205,53 @@ export class BedrockNovaProvider {
             fullText: textParts.join("").trim(),
             toolCalls,
         };
+    }
+    async fetchWithSdk(messages, toolConfig, maxTokens) {
+        const response = await this.client.send(new ConverseCommand({
+            modelId: this.config.modelId,
+            system: this.buildSystemPrompt(),
+            messages,
+            inferenceConfig: { maxTokens, temperature: 0.3 },
+            ...(toolConfig ? { toolConfig } : {}),
+        }));
+        return (response.output?.message?.content ?? []);
+    }
+    async fetchWithBearer(messages, toolConfig, maxTokens) {
+        const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(this.config.modelId)}/converse`;
+        const body = {
+            system: this.buildSystemPrompt().map((b) => ({ text: b.text })),
+            messages: messages.map((m) => ({
+                role: m.role,
+                content: m.content?.map((c) => {
+                    if ("text" in c && c.text)
+                        return { text: c.text };
+                    if ("toolUse" in c && c.toolUse)
+                        return { toolUse: c.toolUse };
+                    if ("toolResult" in c && c.toolResult)
+                        return { toolResult: c.toolResult };
+                    return c;
+                }),
+            })),
+            inferenceConfig: { maxTokens, temperature: 0.3 },
+        };
+        if (toolConfig) {
+            body.toolConfig = toolConfig;
+        }
+        const res = await fetch(url, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${this.bearerToken}`,
+            },
+            body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+            const errorText = await res.text();
+            throw new Error(`Bedrock API error ${res.status}: ${errorText}`);
+        }
+        const json = (await res.json());
+        const output = json.output;
+        const message = output?.message;
+        return (message?.content ?? []);
     }
 }

@@ -66,6 +66,8 @@ export interface SessionState {
   gmailAccessToken?: string;
   gmailRefreshToken?: string;
   gmailTokenExpiresAt?: number;
+  canvasAccessToken?: string;
+  canvasBaseURL?: string;
   history: ConversationTurn[];
   pendingToolCalls: Map<string, PendingToolCall>;
   toolResultResolvers: Map<
