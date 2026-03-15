@@ -393,6 +393,8 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
                     snapshot.continuation?.yield(mergedText)
                 }
             }
+        } catch is CancellationError {
+            AppLogger.audio.debug("Partial transcription cancelled before completion")
         } catch {
             AppLogger.audio.error("Partial transcription failed: \(error.localizedDescription, privacy: .public)")
         }

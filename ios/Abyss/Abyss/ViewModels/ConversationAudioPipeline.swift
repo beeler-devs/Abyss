@@ -112,7 +112,9 @@ final class ConversationAudioPipeline: ObservableObject {
         guard recordingMode == .pushToTalk else { return }
         guard isChatActive else { return }
         guard !transcriber.isListening, !isStartingRecording else { return }
+        isStartingRecording = true
         Task {
+            defer { isStartingRecording = false }
             if appState == .speaking {
                 await bargeIn(reason: "ptt_barge_in")
             }
@@ -254,9 +256,6 @@ final class ConversationAudioPipeline: ObservableObject {
     private func startListeningPTT() async {
         guard recordingMode == .pushToTalk else { return }
         guard !isStoppingRecording else { return }
-        guard !isStartingRecording else { return }
-        isStartingRecording = true
-        defer { isStartingRecording = false }
 
         partialTranscript = ""
         setState(.listening)
