@@ -7,6 +7,7 @@ struct AgentProgressCardView: View {
     let onCancel: () -> Void
     let onDismiss: () -> Void
     let onToggleConversation: () -> Void
+    @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -210,12 +211,12 @@ struct AgentProgressCardView: View {
             }
 
             if let prURL = card.prURL, let url = URL(string: prURL) {
-                Link("Open PR", destination: url)
+                Button("Open PR") { browserCoordinator.urlToOpen = url }
                     .font(.caption)
             }
 
             if let agentURL = card.agentURL, let url = URL(string: agentURL) {
-                Link("Open Agent Run", destination: url)
+                Button("Open Agent Run") { browserCoordinator.urlToOpen = url }
                     .font(.caption)
             }
         }

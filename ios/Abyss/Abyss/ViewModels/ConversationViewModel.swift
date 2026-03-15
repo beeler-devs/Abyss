@@ -16,6 +16,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
+    @Published var isPTTHeld: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
@@ -163,11 +164,13 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func micPressed() {
+        isPTTHeld = true
         syncRecordingMode()
         audioPipeline.micPressed()
     }
 
     func micReleased() {
+        isPTTHeld = false
         syncRecordingMode()
         audioPipeline.micReleased()
     }

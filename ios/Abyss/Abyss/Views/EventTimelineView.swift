@@ -57,6 +57,7 @@ struct EventTimelineView: View {
 
 struct EventRow: View {
     let event: Event
+    @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
 
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -85,11 +86,11 @@ struct EventRow: View {
                 if case .agentStatus(let status) = event.kind {
                     HStack(spacing: 8) {
                         if let runUrl = status.runUrl, let url = URL(string: runUrl) {
-                            Link("Open Agent Run", destination: url)
+                            Button("Open Agent Run") { browserCoordinator.urlToOpen = url }
                                 .font(.caption2)
                         }
                         if let prUrl = status.prUrl, let url = URL(string: prUrl) {
-                            Link("Open PR", destination: url)
+                            Button("Open PR") { browserCoordinator.urlToOpen = url }
                                 .font(.caption2)
                         }
                     }

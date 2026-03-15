@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
+    @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = false
     @State private var showEventTimeline = false
@@ -94,6 +95,9 @@ struct ContentView: View {
             )
             .frame(width: 280)
             .offset(x: showSidebar ? 0 : -280)
+        }
+        .sheet(item: $browserCoordinator.urlToOpen) { url in
+            InAppBrowserView(url: url)
         }
         .onAppear {
             if chatList.chats.isEmpty {
@@ -297,12 +301,9 @@ private struct ChatContentView: View {
         RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
     }
 
-    /// In PTT mode, the button should stay red during both .listening and .transcribing,
-    /// because handlePartialTranscript flips to .transcribing when partials arrive while
-    /// the user is still holding. Recording doesn't stop until release.
     private func isPTTRecording(viewModel: ConversationViewModel, recordingMode: RecordingMode) -> Bool {
         if recordingMode == .pushToTalk {
-            return viewModel.appState == .listening || viewModel.appState == .transcribing
+            return viewModel.isPTTHeld
         }
         return viewModel.appState == .listening
     }
