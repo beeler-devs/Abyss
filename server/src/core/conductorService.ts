@@ -15,9 +15,11 @@ import {
 import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
+import { summarizeIfNeeded, SummarizationConfig, DEFAULT_SUMMARIZATION_CONFIG } from "./contextSummarizer.js";
 import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
 import {
   BridgeToolExecutor,
+  ConversationTurn,
   CursorAgentMode,
   CursorAgentRunRecord,
   EventEnvelope,
@@ -44,6 +46,7 @@ export interface ConductorServiceDependencies {
   bridgeToolExecutor?: BridgeToolExecutor;
   bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   verboseToolRoutingLogs?: boolean;
+  summarizationConfig?: SummarizationConfig;
 }
 
 export interface CursorWebhookHandleResult {
@@ -694,6 +697,7 @@ export class ConductorService {
   private static readonly CONVERSATION_POLL_INTERVAL_MS = 3_000;
   private readonly bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   private readonly verboseToolRoutingLogs: boolean;
+  private readonly summarizationConfig: SummarizationConfig;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
@@ -711,6 +715,7 @@ export class ConductorService {
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
     this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
     this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
+    this.summarizationConfig = dependencies.summarizationConfig ?? DEFAULT_SUMMARIZATION_CONFIG;
   }
 
   createRateLimiter() {
@@ -852,6 +857,7 @@ export class ConductorService {
         }
 
         await this.runConductorLoop(session, text, emit, event.id);
+        this.trySummarizeHistory(session);
         return;
       }
 
@@ -952,6 +958,7 @@ export class ConductorService {
         await this.runConductorLoop(session, contextText, emit, event.id, {
           suppressUserMessage: true,
         });
+        this.trySummarizeHistory(session);
         return;
       }
 
@@ -1046,6 +1053,54 @@ export class ConductorService {
       && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
   }
 
+  /**
+   * Build the conversation array for the LLM, prepending the history summary
+   * as context if one exists.
+   */
+  private buildConversation(session: SessionState): ConversationTurn[] {
+    if (!session.historySummary) {
+      return session.history;
+    }
+
+    return [
+      {
+        role: "user" as const,
+        content: `[Context from earlier in this conversation]\n${session.historySummary}\n[End of context — conversation continues below]`,
+      },
+      {
+        role: "assistant" as const,
+        content: "Understood, I have the context from our earlier conversation.",
+      },
+      ...session.history,
+    ];
+  }
+
+  /**
+   * Fire-and-forget: summarize history if it exceeds the threshold.
+   * Runs after the conductor loop completes so it doesn't add latency.
+   */
+  private trySummarizeHistory(session: SessionState): void {
+    if (session.history.length <= this.summarizationConfig.summarizeAfter) {
+      return;
+    }
+
+    // Run asynchronously — don't block the current response
+    summarizeIfNeeded(
+      session.history,
+      session.historySummary,
+      this.provider,
+      this.summarizationConfig,
+    ).then(({ summarized, newSummary, newHistory }) => {
+      if (summarized && newSummary && newHistory) {
+        session.historySummary = newSummary;
+        session.history = newHistory;
+        logger.info(`History summarized for session ${session.sessionId}: summary=${newSummary.length} chars, history=${newHistory.length} turns`);
+      }
+    }).catch((error) => {
+      logger.warn(`History summarization error for session ${session.sessionId}: ${error}`);
+    });
+  }
+
   private async runConductorLoop(
     session: SessionState,
     transcript: string,
@@ -1114,7 +1169,7 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(session.history, this.availableTools(session.sessionId));
+          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId));
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {

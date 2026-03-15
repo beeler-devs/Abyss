@@ -69,6 +69,7 @@ export interface SessionState {
   canvasAccessToken?: string;
   canvasBaseURL?: string;
   history: ConversationTurn[];
+  historySummary?: string;
   pendingToolCalls: Map<string, PendingToolCall>;
   toolResultResolvers: Map<
     string,

@@ -22,6 +22,8 @@ const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
 const TRANSCRIPT_TRACE_MAX_ENTRIES = parseInteger(process.env.TRANSCRIPT_TRACE_MAX_ENTRIES, 120);
 const VERBOSE_TOOL_ROUTING_LOGS = parseBoolean(process.env.VERBOSE_TOOL_ROUTING_LOGS, false);
+const SUMMARIZE_AFTER_TURNS = parseInteger(process.env.SUMMARIZE_AFTER_TURNS, 30);
+const SUMMARIZE_RECENT_KEEP = parseInteger(process.env.SUMMARIZE_RECENT_KEEP, 10);
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? "";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
@@ -96,6 +98,10 @@ const conductor = new ConductorService(provider, {
         return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
     },
     verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
+    summarizationConfig: {
+        summarizeAfter: SUMMARIZE_AFTER_TURNS,
+        recentToKeep: SUMMARIZE_RECENT_KEEP,
+    },
 });
 // HTTP server handles /github/exchange for OAuth token exchange and upgrade to WebSocket.
 const httpServer = http.createServer(async (req, res) => {

@@ -4,6 +4,7 @@ import { isTerminalAgentStatus, normalizeMode, normalizeStatus, parseCursorAgent
 import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { SessionStore } from "./sessionStore.js";
+import { summarizeIfNeeded, DEFAULT_SUMMARIZATION_CONFIG } from "./contextSummarizer.js";
 import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
 const LEGACY_CLIENT_TOOLS = [
     {
@@ -610,6 +611,7 @@ export class ConductorService {
     static CONVERSATION_POLL_INTERVAL_MS = 3_000;
     bridgeToolAvailability;
     verboseToolRoutingLogs;
+    summarizationConfig;
     constructor(provider, config, dependencies = {}) {
         this.provider = provider;
         this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute, config.traceMaxEntries ?? 120);
@@ -622,6 +624,7 @@ export class ConductorService {
         this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
         this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
         this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
+        this.summarizationConfig = dependencies.summarizationConfig ?? DEFAULT_SUMMARIZATION_CONFIG;
     }
     createRateLimiter() {
         return this.sessions.createRateLimiter();
@@ -732,6 +735,7 @@ export class ConductorService {
                     return;
                 }
                 await this.runConductorLoop(session, text, emit, event.id);
+                this.trySummarizeHistory(session);
                 return;
             }
             case "tool.result": {
@@ -809,6 +813,7 @@ export class ConductorService {
                 await this.runConductorLoop(session, contextText, emit, event.id, {
                     suppressUserMessage: true,
                 });
+                this.trySummarizeHistory(session);
                 return;
             }
             default:
@@ -890,6 +895,45 @@ export class ConductorService {
         return this.cursorClient.isConfigured()
             && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
     }
+    /**
+     * Build the conversation array for the LLM, prepending the history summary
+     * as context if one exists.
+     */
+    buildConversation(session) {
+        if (!session.historySummary) {
+            return session.history;
+        }
+        return [
+            {
+                role: "user",
+                content: `[Context from earlier in this conversation]\n${session.historySummary}\n[End of context — conversation continues below]`,
+            },
+            {
+                role: "assistant",
+                content: "Understood, I have the context from our earlier conversation.",
+            },
+            ...session.history,
+        ];
+    }
+    /**
+     * Fire-and-forget: summarize history if it exceeds the threshold.
+     * Runs after the conductor loop completes so it doesn't add latency.
+     */
+    trySummarizeHistory(session) {
+        if (session.history.length <= this.summarizationConfig.summarizeAfter) {
+            return;
+        }
+        // Run asynchronously — don't block the current response
+        summarizeIfNeeded(session.history, session.historySummary, this.provider, this.summarizationConfig).then(({ summarized, newSummary, newHistory }) => {
+            if (summarized && newSummary && newHistory) {
+                session.historySummary = newSummary;
+                session.history = newHistory;
+                logger.info(`History summarized for session ${session.sessionId}: summary=${newSummary.length} chars, history=${newHistory.length} turns`);
+            }
+        }).catch((error) => {
+            logger.warn(`History summarization error for session ${session.sessionId}: ${error}`);
+        });
+    }
     async runConductorLoop(session, transcript, emit, sourceEventId, options = {}) {
         session.transcriptCount += 1;
         session.recentTranscriptTrace = [];
@@ -944,7 +988,7 @@ export class ConductorService {
             }
             else {
                 try {
-                    modelResponse = await this.provider.generateResponse(session.history, this.availableTools(session.sessionId));
+                    modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId));
                 }
                 catch (error) {
                     const message = error instanceof Error ? error.message : "Unknown model provider error";

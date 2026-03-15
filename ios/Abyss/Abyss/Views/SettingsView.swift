@@ -22,7 +22,14 @@ struct SettingsView: View {
     @State private var showCursorAPIKeyModal = false
     @State private var cursorAPIKeyInput = ""
     @State private var showPairComputerSheet = false
-    @State private var showCanvasTokenModal = false
+    enum CanvasConnectStep: Identifiable {
+        case instructions
+        case pastePAT
+        var id: String { String(describing: self) }
+    }
+    @State private var canvasConnectStep: CanvasConnectStep? = nil
+    @State private var canvasBrowserURL: URL? = nil
+    @State private var shouldOpenCanvasBrowser = false
 
     var body: some View {
         NavigationStack {
@@ -176,7 +183,7 @@ struct SettingsView: View {
                         }
                     } else {
                         Button {
-                            showCanvasTokenModal = true
+                            canvasConnectStep = .instructions
                         } label: {
                             HStack {
                                 Label("Canvas", systemImage: "graduationcap")
@@ -278,17 +285,42 @@ struct SettingsView: View {
                     showPairComputerSheet = false
                 }
             }
-            .sheet(isPresented: $showCanvasTokenModal) {
-                CanvasTokenModalView(
-                    onSave: { token, baseURL in
-                        canvasManager.connect(token: token, baseURL: baseURL)
-                        showCanvasTokenModal = false
-                    },
-                    onCancel: {
-                        showCanvasTokenModal = false
-                    }
-                )
+            .sheet(item: $canvasConnectStep, onDismiss: handleCanvasSheetDismiss) { step in
+                switch step {
+                case .instructions:
+                    CanvasInstructionsView(
+                        onOpenCanvas: {
+                            shouldOpenCanvasBrowser = true
+                            canvasConnectStep = nil
+                        },
+                        onCancel: {
+                            canvasConnectStep = nil
+                        }
+                    )
+                case .pastePAT:
+                    CanvasTokenPasteView(
+                        onSave: { token in
+                            canvasManager.connect(token: token, baseURL: CanvasManager.defaultBaseURL)
+                            canvasConnectStep = nil
+                        },
+                        onCancel: {
+                            canvasConnectStep = nil
+                        }
+                    )
+                }
             }
+            .sheet(item: $canvasBrowserURL, onDismiss: {
+                canvasConnectStep = .pastePAT
+            }) { url in
+                InAppBrowserView(url: url)
+            }
+        }
+    }
+
+    private func handleCanvasSheetDismiss() {
+        if shouldOpenCanvasBrowser {
+            shouldOpenCanvasBrowser = false
+            canvasBrowserURL = URL(string: "https://canvas.cmu.edu/profile/settings")!
         }
     }
 
@@ -354,44 +386,97 @@ private struct PairComputerSheet: View {
     }
 }
 
-// MARK: - Canvas Token Modal
-private struct CanvasTokenModalView: View {
-    @State private var baseURL: String = CanvasManager.defaultBaseURL
-    @State private var accessToken: String = ""
-    let onSave: (String, String) -> Void
+// MARK: - Canvas Connect Flow
+
+extension URL: @retroactive Identifiable {
+    public var id: String { absoluteString }
+}
+
+private struct CanvasInstructionsView: View {
+    let onOpenCanvas: () -> Void
     let onCancel: () -> Void
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Canvas Base URL") {
-                    TextField("https://canvas.cmu.edu", text: $baseURL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .font(.system(.body, design: .monospaced))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("To connect your Canvas account, you'll need a Personal Access Token. Here's how:")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        instructionRow(number: 1, text: "Tap **Open Canvas** below \u{2014} this will open your Canvas profile settings.")
+                        instructionRow(number: 2, text: "Scroll to **Approved Integrations** and tap **+ New Access Token**.")
+                        instructionRow(number: 3, text: "Enter a purpose (e.g. \u{201C}Abyss\u{201D}) and tap **Generate Token**.")
+                        instructionRow(number: 4, text: "**Copy the token** \u{2014} you won\u{2019}t be able to see it again.")
+                        instructionRow(number: 5, text: "Come back here and paste it in.")
+                    }
                 }
-                Section("Personal Access Token") {
-                    SecureField("Token", text: $accessToken)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
+                .padding()
+            }
+            .navigationTitle("Connect Canvas LMS")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
                 }
             }
-            .navigationTitle("Connect Canvas")
+            .safeAreaInset(edge: .bottom) {
+                Button(action: onOpenCanvas) {
+                    Label("Open Canvas", systemImage: "safari")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding()
+            }
+        }
+    }
+
+    private func instructionRow(number: Int, text: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(.blue))
+            Text(text)
+                .font(.subheadline)
+        }
+    }
+}
+
+private struct CanvasTokenPasteView: View {
+    @State private var token: String = ""
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Paste your Canvas access token")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                SecureField("Access Token", text: $token)
+                    .font(.system(.body, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding()
+            .navigationTitle("Canvas Token")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { onCancel() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        onSave(accessToken, baseURL)
-                    }
-                    .disabled(accessToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("Save") { onSave(token) }
+                        .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
+        .presentationDetents([.height(200)])
     }
 }
 

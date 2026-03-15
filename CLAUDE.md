@@ -152,8 +152,8 @@ Assistant messages rendered via `MarkdownTextView` → parses into `.text` (inli
 - Use clear commit messages that describe what changed and why.
 
 ### Keeping CLAUDE.md Up to Date
-- After implementing any significant feature, architectural change, or new pattern, update this file to reflect it.
-- This includes: new components, new tools, new iOS feature systems, new server routes, new environment variables, changed file responsibilities, or updated patterns.
+- **Always update this file at the end of every task** — not just for new features. This includes: gotchas encountered, commands discovered, patterns followed, environment quirks, and configuration learnings.
+- This covers: new components, new tools, new iOS feature systems, new server routes, new environment variables, changed file responsibilities, or updated patterns.
 - Keep entries concise — follow the style of existing sections.
 
 ## Environment Configuration
