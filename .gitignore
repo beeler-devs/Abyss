@@ -31,6 +31,7 @@ Pods/
 
 # Claude Code worktrees
 .claude/worktrees/
+.worktrees/
 
 # macOS
 .DS_Store
