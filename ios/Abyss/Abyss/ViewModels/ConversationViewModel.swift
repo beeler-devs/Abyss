@@ -18,7 +18,6 @@ final class ConversationViewModel: ObservableObject {
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
-    @Published var isPTTHeld: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     private weak var gmailAuthManager: GmailAuthManager?
