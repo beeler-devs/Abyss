@@ -4,108 +4,54 @@ import XCTest
 @MainActor
 final class ConversationAudioPipelineNovaTests: XCTestCase {
 
-    func testNovaVADAutoStartSendsRecordingMode() async {
+    func testVADAutoStartsRemoteStreamWhenChatActivates() async {
         let harness = makeHarness()
 
-        harness.pipeline.updateVoiceMode(.novaSonic)
         harness.pipeline.updateRecordingMode(.vadAuto)
         harness.pipeline.setChatActive(true)
 
         await waitForCondition {
-            harness.sentEvents.events.contains(where: {
-                if case .userAudioStreamStart(let start) = $0.kind {
-                    return start.recordingMode == "vad_auto"
-                }
-                return false
-            })
+            harness.remoteVoiceCapture.isStreaming && self.streamStartCount(in: harness.sentEvents.events) == 1
         }
 
         XCTAssertTrue(harness.remoteVoiceCapture.isStreaming)
+        XCTAssertEqual(harness.pipeline.appState, .listening)
     }
 
-    func testNovaPushToTalkStopPadsTrailingSilenceBeforeEnd() async {
+    func testSpeakingStopsRemoteStreamAndSendsStreamEnd() async {
         let harness = makeHarness()
 
-        harness.pipeline.updateVoiceMode(.novaSonic)
-        harness.pipeline.updateRecordingMode(.pushToTalk)
+        harness.pipeline.updateRecordingMode(.vadAuto)
         harness.pipeline.setChatActive(true)
-
-        harness.pipeline.micPressed()
         await waitForCondition { harness.remoteVoiceCapture.isStreaming }
-        harness.pipeline.micReleased()
 
-        await waitForCondition(timeoutNanoseconds: 3_000_000_000) {
-            harness.sentEvents.events.contains(where: {
-                if case .userAudioStreamEnd = $0.kind { return true }
-                return false
-            })
+        await harness.pipeline.applyRemoteState(.speaking)
+
+        await waitForCondition {
+            !harness.remoteVoiceCapture.isStreaming && self.streamEndCount(in: harness.sentEvents.events) == 1
         }
 
-        let startEvents = harness.sentEvents.events.compactMap { event -> Event.UserAudioStreamStart? in
-            if case .userAudioStreamStart(let start) = event.kind { return start }
-            return nil
-        }
-        XCTAssertEqual(startEvents.map(\.recordingMode), ["push_to_talk"])
-
-        let sentKinds = harness.sentEvents.events.map(\.kind)
-        guard let endIndex = sentKinds.firstIndex(where: {
-            if case .userAudioStreamEnd = $0 { return true }
-            return false
-        }) else {
-            XCTFail("Expected user.audio.stream.end event")
-            return
-        }
-
-        let silenceChunks = harness.sentEvents.events[..<endIndex].compactMap { event -> Event.UserAudioStreamChunk? in
-            if case .userAudioStreamChunk(let chunk) = event.kind { return chunk }
-            return nil
-        }
-        XCTAssertEqual(silenceChunks.count, 18)
-        XCTAssertEqual(Set(silenceChunks.map(\.audio)).count, 1)
-        XCTAssertFalse(harness.remoteVoiceCapture.isStreaming)
+        XCTAssertEqual(harness.pipeline.appState, .speaking)
     }
 
-    func testNovaPushToTalkQueuesNextStartUntilPreviousStopFinishes() async {
+    func testListeningRestartsRemoteStreamAfterSpeakingStopsIt() async {
         let harness = makeHarness()
 
-        harness.pipeline.updateVoiceMode(.novaSonic)
-        harness.pipeline.updateRecordingMode(.pushToTalk)
+        harness.pipeline.updateRecordingMode(.vadAuto)
         harness.pipeline.setChatActive(true)
-        harness.remoteVoiceCapture.stopDelayNanoseconds = 200_000_000
-
-        harness.pipeline.micPressed()
         await waitForCondition { harness.remoteVoiceCapture.isStreaming }
 
-        harness.pipeline.micReleased()
-        try? await Task.sleep(nanoseconds: 50_000_000)
-        harness.pipeline.micPressed()
+        await harness.pipeline.applyRemoteState(.speaking)
+        await waitForCondition { !harness.remoteVoiceCapture.isStreaming }
 
-        await waitForCondition(timeoutNanoseconds: 4_000_000_000) {
-            harness.sentEvents.events.filter {
-                if case .userAudioStreamStart = $0.kind { return true }
-                return false
-            }.count == 2
+        await harness.pipeline.applyRemoteState(.listening)
+
+        await waitForCondition {
+            harness.remoteVoiceCapture.isStreaming && self.streamStartCount(in: harness.sentEvents.events) == 2
         }
 
-        let kinds = harness.sentEvents.events.map(\.kind)
-        guard let firstEndIndex = kinds.firstIndex(where: {
-            if case .userAudioStreamEnd = $0 { return true }
-            return false
-        }) else {
-            XCTFail("Expected first user.audio.stream.end event")
-            return
-        }
-
-        guard let secondStartIndex = kinds.lastIndex(where: {
-            if case .userAudioStreamStart = $0 { return true }
-            return false
-        }) else {
-            XCTFail("Expected second user.audio.stream.start event")
-            return
-        }
-
-        XCTAssertGreaterThan(secondStartIndex, firstEndIndex)
         XCTAssertTrue(harness.remoteVoiceCapture.isStreaming)
+        XCTAssertEqual(harness.pipeline.appState, .listening)
     }
 
     private func makeHarness() -> PipelineHarness {
@@ -137,6 +83,22 @@ final class ConversationAudioPipelineNovaTests: XCTestCase {
         )
     }
 
+    private func streamStartCount(in events: [Event]) -> Int {
+        events.reduce(into: 0) { count, event in
+            if case .userAudioStreamStart = event.kind {
+                count += 1
+            }
+        }
+    }
+
+    private func streamEndCount(in events: [Event]) -> Int {
+        events.reduce(into: 0) { count, event in
+            if case .userAudioStreamEnd = event.kind {
+                count += 1
+            }
+        }
+    }
+
     private func waitForCondition(
         timeoutNanoseconds: UInt64 = 1_000_000_000,
         pollNanoseconds: UInt64 = 20_000_000,
@@ -160,20 +122,13 @@ private struct PipelineHarness {
 @MainActor
 private final class MockRemoteVoiceCapture: RemoteVoiceCapturing {
     private(set) var isStreaming = false
-    private var onChunk: ((String) -> Void)?
-    var stopDelayNanoseconds: UInt64 = 0
 
     func start(onChunk: @escaping (String) -> Void) async throws {
         isStreaming = true
-        self.onChunk = onChunk
     }
 
     func stop() async {
-        if stopDelayNanoseconds > 0 {
-            try? await Task.sleep(nanoseconds: stopDelayNanoseconds)
-        }
         isStreaming = false
-        onChunk = nil
     }
 }
 

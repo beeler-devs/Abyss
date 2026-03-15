@@ -34,7 +34,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private var isStoppingRecording = false
     private var isStartingRecording = false
     private var pendingPTTRelease = false
-    private let remoteVoiceCapture = RemoteAudioCapture()
+    private let remoteVoiceCapture: RemoteVoiceCapturing
     private var remotePlaybackPrepared = false
 
     init(
@@ -45,6 +45,7 @@ final class ConversationAudioPipeline: ObservableObject {
         toolRouter: ToolRouter,
         appStateStore: AppStateStore,
         sessionId: String,
+        remoteVoiceCapture: RemoteVoiceCapturing? = nil,
         sendConductorEvent: @escaping @MainActor @Sendable (Event, Bool) async -> Void,
         handleError: @escaping @MainActor @Sendable (String) async -> Void
     ) {
@@ -55,6 +56,7 @@ final class ConversationAudioPipeline: ObservableObject {
         self.toolRouter = toolRouter
         self.appStateStore = appStateStore
         self.sessionId = sessionId
+        self.remoteVoiceCapture = remoteVoiceCapture ?? RemoteAudioCapture()
         self.sendConductorEvent = sendConductorEvent
         self.handleError = handleError
 
@@ -196,11 +198,13 @@ final class ConversationAudioPipeline: ObservableObject {
             await refreshLiveConversationState()
         case .thinking, .speaking, .error:
             voiceActivityDetector.stopMonitoring()
-            if recordingMode == .pushToTalk, transcriber.isListening && !isStoppingRecording {
+            if recordingMode == .vadAuto {
+                await stopRemoteVoiceCapture()
+            } else if transcriber.isListening && !isStoppingRecording {
                 await stopListeningSilently()
             }
         case .listening, .transcribing:
-            break
+            await refreshLiveConversationState()
         }
     }
 
@@ -217,6 +221,14 @@ final class ConversationAudioPipeline: ObservableObject {
 
     private var canRunLiveConversation: Bool {
         isChatActive && !isMuted
+    }
+
+    private var shouldStreamRemoteVoiceCapture: Bool {
+        canRunLiveConversation
+            && recordingMode == .vadAuto
+            && appState != .thinking
+            && appState != .speaking
+            && appState != .error
     }
 
     private func configureVoicePipeline() {
@@ -492,6 +504,9 @@ final class ConversationAudioPipeline: ObservableObject {
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
         guard recordingMode == .vadAuto else { return }
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
+        if remoteVoiceCapture.isStreaming {
+            await stopRemoteVoiceCapture()
+        }
         do {
             if !remotePlaybackPrepared {
                 try await MainActor.run {
@@ -521,23 +536,19 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func refreshRemoteVoiceConversationState() async {
-        if canRunLiveConversation {
-            if recordingMode == .vadAuto {
-                await startRemoteVoiceCapture()
-            } else if appState != .speaking && appState != .thinking {
-                setState(.idle)
-            }
+        if shouldStreamRemoteVoiceCapture {
+            await startRemoteVoiceCapture()
             return
         }
 
         await stopRemoteVoiceCapture()
-        if appState != .speaking && appState != .thinking {
+        if !canRunLiveConversation && appState != .speaking && appState != .thinking {
             setState(.idle)
         }
     }
 
     private func startRemoteVoiceCapture() async {
-        guard recordingMode == .vadAuto else { return }
+        guard shouldStreamRemoteVoiceCapture else { return }
         guard !remoteVoiceCapture.isStreaming else { return }
         do {
             partialTranscript = ""
@@ -608,7 +619,14 @@ final class ConversationAudioPipeline: ObservableObject {
 }
 
 @MainActor
-private final class RemoteAudioCapture {
+protocol RemoteVoiceCapturing: AnyObject {
+    var isStreaming: Bool { get }
+    func start(onChunk: @escaping (String) -> Void) async throws
+    func stop() async
+}
+
+@MainActor
+private final class RemoteAudioCapture: RemoteVoiceCapturing {
     private let targetSampleRate: Double = 16_000
     private let emissionChunkBytes = 3_200
 
@@ -622,7 +640,7 @@ private final class RemoteAudioCapture {
         self.onChunk = onChunk
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.duckOthers, .defaultToSpeaker])
         try session.setActive(true)
 
         let engine = AVAudioEngine()
