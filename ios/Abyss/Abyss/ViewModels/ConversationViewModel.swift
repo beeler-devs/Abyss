@@ -13,6 +13,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
+    @Published var emailCards: [EmailCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
@@ -43,6 +44,7 @@ final class ConversationViewModel: ObservableObject {
     private var audioPipeline: ConversationAudioPipeline!
     private var eventCoordinator: ConversationEventCoordinator!
     private var agentManager: ConversationAgentManager!
+    private var emailManager: ConversationEmailManager!
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -404,7 +406,16 @@ final class ConversationViewModel: ObservableObject {
     private func connectConductorClient(_ client: ConductorClient) async throws {
         activeConductorClient = client
         let githubToken = GitHubAuthManager.loadToken()
-        try await client.connect(sessionId: sessionId, githubToken: githubToken)
+        let gmailAccessToken = GmailAuthManager.loadAccessToken()
+        let gmailRefreshToken = GmailAuthManager.loadRefreshToken()
+        let gmailTokenExpiresAt = GmailAuthManager.loadExpiresAt()
+        try await client.connect(
+            sessionId: sessionId,
+            githubToken: githubToken,
+            gmailAccessToken: gmailAccessToken,
+            gmailRefreshToken: gmailRefreshToken,
+            gmailTokenExpiresAt: gmailTokenExpiresAt
+        )
 
         inboundEventsTask?.cancel()
         inboundEventsTask = Task { [weak self] in

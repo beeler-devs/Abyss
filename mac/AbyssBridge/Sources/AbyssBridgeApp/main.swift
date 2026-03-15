@@ -565,17 +565,18 @@ struct BridgeStatusView: View {
             .scrollContentBackground(.hidden)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(connectionDotColor)
-                            .frame(width: 8, height: 8)
-                        Text(model.connectionStateLabel.capitalized)
-                            .font(.subheadline)
-                            .fontWeight(.medium)
+                    Button(action: {}) {
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(connectionDotColor)
+                                .frame(width: 8, height: 8)
+                            Text(model.connectionStateLabel.capitalized)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                    .glassEffect(in: Capsule())
+                    .buttonStyle(.glass)
+                    .allowsHitTesting(false)
                 }
 
                 ToolbarItem(placement: .primaryAction) {
