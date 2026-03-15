@@ -71,6 +71,8 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 - `server/src/bridge/state.ts` — Device pairing and online/offline tracking
 - `server/src/bridge/toolRouter.ts` — Routes bridge tools to connected macOS devices
 - `server/src/providers/` — Pluggable LLM backends; factory in `index.ts`
+- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents)
+- `server/src/voice/` — Voice providers; `bedrockNovaSonicVoiceProvider.ts` for Nova Sonic streaming
 
 ### Model Providers
 Selected via `MODEL_PROVIDER` env var:
@@ -83,7 +85,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 ### iOS UI Architecture
 
 #### Key iOS Files
-- `ios/.../App/AbyssApp.swift` — App entry point; injects `@EnvironmentObject`s (`GitHubAuthManager`, `InAppBrowserCoordinator`)
+- `ios/.../App/AbyssApp.swift` — App entry point; injects `@EnvironmentObject`s (`GitHubAuthManager`, `GmailAuthManager`, `CanvasManager`, `InAppBrowserCoordinator`)
 - `ios/.../App/AppTheme.swift` — Centralized theme colors; all colors are `colorScheme`-aware
 - `ios/.../App/Config.swift` — Centralized config; reads from Secrets.plist → Info.plist → env vars
 - `ios/.../App/AppLogger.swift` — OSLog categories: `audio`, `conductor`, `conversation`, `tooling`
@@ -94,7 +96,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 - `ios/.../Models/Event.swift` — `Event` struct with 26 event kinds + `EventBus` (append-only log with Combine publisher)
 - `ios/.../Views/ContentView.swift` — Root view with sidebar, chat content, sheet presentations
 - `ios/.../Views/InAppBrowserView.swift` — WKWebView in-app browser + `InAppBrowserCoordinator`
-- `ios/.../Views/SettingsView.swift` — Appearance, voice backend, recording mode, Cursor API key, bridge pairing
+- `ios/.../Views/SettingsView.swift` — Appearance, recording mode, Cursor API key, Connections (Gmail/Canvas/coming-soon integrations), bridge pairing
 
 #### iOS Feature Systems
 
@@ -108,9 +110,11 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 **Email Draft Confirmation:** When the LLM calls `gmail.send` or `gmail.reply`, the server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS. `EmailDraftManager` (using `CheckedContinuation` suspension like `RepositorySelectionManager`) presents an `EmailDraftCardView` with Send/Cancel buttons. The tool execution suspends until the user acts, then returns the confirmation to the server which completes the actual send.
 
+**Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`.
+
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
-**Tool System:** `ToolProtocol` with `AnyTool` type erasure → `ToolRegistry` for registration → `ToolRouter` for event dispatch. Categories: Audio (`STTStart/Stop`, `TTSSpeak/Stop`), Conversation (`ConvoAppendMessage`, `ConvoSetState`), Agent (6 tools above).
+**Tool System:** `ToolProtocol` with `AnyTool` type erasure → `ToolRegistry` for registration → `ToolRouter` for event dispatch. Categories: Audio (`STTStart/Stop`, `TTSSpeak/Stop`), Conversation (`ConvoAppendMessage`, `ConvoSetState`), Agent (6 tools above), Gmail (`GmailAuthenticateTool`, `GmailSendConfirmTool`, `GmailReplyConfirmTool`), Canvas (`CanvasAuthenticateTool`).
 
 **Conductor Clients:** `WebSocketConductorClient` (primary) — URLSession-based with auto-reconnect, exponential backoff, ping/pong keep-alive, AsyncStream inbound events. `LocalConductorClient` / `LocalConductorStub` for offline/testing.
 
@@ -118,8 +122,17 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 - Shared state uses `@StateObject` in `AbyssApp` + `@EnvironmentObject` in child views
 - Theming via `AppTheme` static methods that take `colorScheme` parameter
 - `@AppStorage` for persisted preferences: `appAppearance`, `recordingMode`, `voiceMode`, `cursorAPIKey`, `cursorAgentModel`, `elevenLabsVoiceId`
-- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `RepositorySelectionManager`, `InAppBrowserCoordinator`
+- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `RepositorySelectionManager`, `EmailDraftManager`, `InAppBrowserCoordinator`
 - `@MainActor` isolation for all UI/state management; `@unchecked Sendable` for backward compat
+
+#### Xcode Project Gotcha
+When adding new `.swift` files to the iOS project, they MUST be manually added to `ios/Abyss/Abyss.xcodeproj/project.pbxproj` in 4 places:
+1. **PBXBuildFile section** — `A1...` ID with `in Sources` reference
+2. **PBXFileReference section** — `A2...` ID with file path
+3. **PBXGroup section** — add the `A2...` ref to the appropriate group (Services, Tools, Views, etc.)
+4. **PBXSourcesBuildPhase section** — add the `A1...` build file ref
+
+IDs follow the pattern `A1000000000000010000XXXX` (build) / `A2000000000000010000XXXX` (file ref), incrementing the last hex digits. Without this, Xcode won't compile the file and you'll get "Cannot find type in scope" errors.
 
 #### Markdown Rendering
 Assistant messages rendered via `MarkdownTextView` → parses into `.text` (inline formatting) and `.codeBlock(language, code)` (terminal-style with copy button). User messages use plain `Text`.
@@ -158,3 +171,4 @@ iOS reads from `Secrets.plist` (gitignored) → `Info.plist` → environment var
 - `ELEVEN_LABS_API_KEY` — Required for ElevenLabs TTS (falls back to system voice)
 - `CURSOR_API_KEY` — Required for Cursor Cloud Agents (also configurable in Settings UI)
 - `BACKEND_WS_URL` — WebSocket server URL (defaults to `ws://localhost:8080/ws`)
+- `CANVAS_BASE_URL` — Optional default Canvas LMS URL (defaults to `https://canvas.cmu.edu`; also configurable in Settings UI)
