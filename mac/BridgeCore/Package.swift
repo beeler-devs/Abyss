@@ -1,10 +1,10 @@
-// swift-tools-version: 6.2
+// swift-tools-version: 6.1
 import PackageDescription
 
 let package = Package(
     name: "BridgeCore",
     platforms: [
-        .macOS(.v26),
+        .macOS(.v14),
     ],
     products: [
         .library(name: "BridgeCore", targets: ["BridgeCore"]),

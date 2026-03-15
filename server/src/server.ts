@@ -104,9 +104,15 @@ const conductor = new ConductorService(
     }),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
-      const devices = bridgeState
+      let devices = bridgeState
         .getSessionDevices(sessionId)
         .filter((device) => device.status === "online");
+      // Session churn resilience: if no session-matched devices, fall back to global online
+      // devices (mirrors resolveDeviceForTool behaviour so the LLM sees bridge tools after
+      // the iOS app restarts with a new sessionId).
+      if (devices.length === 0) {
+        devices = bridgeState.getOnlineDevices();
+      }
       return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
     },
     verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,

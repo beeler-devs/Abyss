@@ -174,3 +174,5 @@ iOS reads from `Secrets.plist` (gitignored) → `Info.plist` → environment var
 
 ### Production (AWS ECS)
 Server runs on ECS Fargate in **us-east-1** (cluster `abyss`, service `abyss-server`). ALB: `abyss-alb-1705721363.us-east-1.elb.amazonaws.com`. Full deployment details (ECR, security groups, target group) are in **docs/runbook.md** under "AWS ECS Deployment".
+
+**WebSocket stickiness:** The ALB keeps existing WebSocket connections pinned to the old task even after a new deployment. The iOS app must be killed and reopened after a deploy to reconnect to the new container.

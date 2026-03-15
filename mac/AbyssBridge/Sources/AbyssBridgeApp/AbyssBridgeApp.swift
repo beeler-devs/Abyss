@@ -454,7 +454,7 @@ struct BridgeStatusView: View {
                     }
                 }
 
-                Section("Workspaces") {
+                Section(header: Text("Workspaces")) {
                     Picker("Active Workspace", selection: $model.selectedWorkspaceId) {
                         ForEach(model.workspaces) { workspace in
                             Text(workspace.path).tag(workspace.id)
@@ -467,9 +467,9 @@ struct BridgeStatusView: View {
 
                     HStack(spacing: 8) {
                         Button("Add Workspace…") { model.addWorkspace() }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.bordered)
                         Button("Remove Selected") { model.removeSelectedWorkspace() }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.bordered)
                             .tint(.red)
                             .disabled(model.workspaces.count <= 1)
                         Spacer()
@@ -491,9 +491,9 @@ struct BridgeStatusView: View {
                     }
                     HStack(spacing: 8) {
                         Button("Generate Code") { model.generatePairingCode() }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.bordered)
                         Button("Copy") { model.copyPairingCode() }
-                            .buttonStyle(.glass)
+                            .buttonStyle(.bordered)
                             .disabled(model.pairingCode.isEmpty)
                         Spacer()
                     }
@@ -554,7 +554,7 @@ struct BridgeStatusView: View {
                         Button("Cancel Active Command") {
                             model.cancelActiveCommand()
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                         .tint(.red)
                     } else {
                         Label("No active command", systemImage: "terminal")
@@ -607,7 +607,7 @@ struct BridgeStatusView: View {
                         }
                         .animation(.easeInOut(duration: 0.15), value: transientMessage)
                     }
-                    .buttonStyle(.glass)
+                    .buttonStyle(.bordered)
                     .allowsHitTesting(false)
                     .animation(.spring(duration: 0.25), value: transientMessage)
                 }
@@ -616,15 +616,14 @@ struct BridgeStatusView: View {
                     HStack(spacing: 6) {
                         if model.pairingCode.isEmpty {
                             Button("Get Pairing Code") { model.generatePairingCode() }
-                                .buttonStyle(.glass)
+                                .buttonStyle(.bordered)
                         }
                         Button("", systemImage: "arrow.clockwise") {
                             model.reconnect()
                         }
-                        .buttonStyle(.glass)
+                        .buttonStyle(.bordered)
                     }
                 }
-                .sharedBackgroundVisibility(.hidden)
             }
         }
     }
