@@ -10,11 +10,14 @@ final class ConversationAgentManager: ObservableObject {
     private let eventBus: EventBus
     private let toolRouter: ToolRouter
     private let sessionId: String
+    private let conversationMessages: @MainActor @Sendable () -> [ConversationMessage]
     private let sendConductorEvent: @MainActor @Sendable (Event) async -> Void
     private let shouldUseWebhookUpdates: @MainActor @Sendable () -> Bool
     private let isUsingServerClient: @MainActor @Sendable () -> Bool
 
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
+    private var pendingAnchorAssignments: [String] = []
+    private var pendingAssistantAppendAnchors: [String: String] = [:]
     private var agentStatusPollingTask: Task<Void, Never>?
     private var notifiedTerminalAgentIDs: Set<String> = []
     private var hasReceivedWebhookDrivenAgentStatus = false
@@ -24,6 +27,7 @@ final class ConversationAgentManager: ObservableObject {
         eventBus: EventBus,
         toolRouter: ToolRouter,
         sessionId: String,
+        conversationMessages: @escaping @MainActor @Sendable () -> [ConversationMessage],
         sendConductorEvent: @escaping @MainActor @Sendable (Event) async -> Void,
         shouldUseWebhookUpdates: @escaping @MainActor @Sendable () -> Bool,
         isUsingServerClient: @escaping @MainActor @Sendable () -> Bool
@@ -31,6 +35,7 @@ final class ConversationAgentManager: ObservableObject {
         self.eventBus = eventBus
         self.toolRouter = toolRouter
         self.sessionId = sessionId
+        self.conversationMessages = conversationMessages
         self.sendConductorEvent = sendConductorEvent
         self.shouldUseWebhookUpdates = shouldUseWebhookUpdates
         self.isUsingServerClient = isUsingServerClient
@@ -46,8 +51,13 @@ final class ConversationAgentManager: ObservableObject {
             pendingToolCalls[toolCall.callId] = toolCall
             if toolCall.name == AgentSpawnTool.name {
                 registerPendingCard(from: toolCall)
+            } else if toolCall.name == ConvoAppendMessageTool.name {
+                handleConversationAppendToolCall(toolCall)
             }
         case .toolResult(let toolResult):
+            if let spawnCallID = pendingAssistantAppendAnchors.removeValue(forKey: toolResult.callId) {
+                handleConversationAppendResult(toolResult, for: spawnCallID)
+            }
             guard let toolCall = pendingToolCalls.removeValue(forKey: toolResult.callId) else {
                 return
             }
@@ -68,7 +78,10 @@ final class ConversationAgentManager: ObservableObject {
     }
 
     func dismissCard(cardID: UUID) {
+        guard let card = cards.first(where: { $0.id == cardID }) else { return }
         cards.removeAll { $0.id == cardID }
+        pendingAnchorAssignments.removeAll { $0 == card.spawnCallId }
+        pendingAssistantAppendAnchors = pendingAssistantAppendAnchors.filter { $0.value != card.spawnCallId }
     }
 
     func cancelAgent(cardID: UUID) {
@@ -93,19 +106,25 @@ final class ConversationAgentManager: ObservableObject {
         cards[index].isConversationExpanded.toggle()
     }
 
+    func toggleCardExpanded(cardID: UUID) {
+        guard let index = cards.firstIndex(where: { $0.id == cardID }) else { return }
+        cards[index].isExpanded.toggle()
+    }
+
     private func registerPendingCard(from toolCall: Event.ToolCall) {
         guard let args = decode(AgentSpawnTool.Arguments.self, from: toolCall.arguments) else { return }
         guard !cards.contains(where: { $0.spawnCallId == toolCall.callId }) else { return }
 
-        cards.insert(
+        cards.append(
             AgentProgressCard.pending(
                 spawnCallId: toolCall.callId,
                 prompt: args.prompt,
                 repository: args.repository,
-                autoCreatePR: args.autoCreatePr ?? false
-            ),
-            at: 0
+                autoCreatePR: args.autoCreatePr ?? false,
+                anchorMessageID: nil
+            )
         )
+        pendingAnchorAssignments.append(toolCall.callId)
     }
 
     private func handleToolResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
@@ -126,7 +145,6 @@ final class ConversationAgentManager: ObservableObject {
             updateCard(spawnCallId: toolCall.callId) {
                 $0 = $0.applyingSpawnError(error)
             }
-            sortCardsByLastUpdate()
             return
         }
 
@@ -139,12 +157,12 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: toolCall.callId,
                 prompt: "Cursor agent task",
                 repository: nil,
-                autoCreatePR: false
+                autoCreatePR: false,
+                anchorMessageID: latestAssistantMessageID()
             ).applyingSpawnResult(result)
-            cards.insert(fallback, at: 0)
+            cards.append(fallback)
         }
 
-        sortCardsByLastUpdate()
         if result.status.uppercased() != "FINISHED" {
             ensureAgentStatusPolling()
         }
@@ -160,7 +178,6 @@ final class ConversationAgentManager: ObservableObject {
             updateCard(agentID: args.id) {
                 $0 = $0.notingStatusRefreshError(error)
             }
-            sortCardsByLastUpdate()
             return
         }
 
@@ -173,12 +190,12 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: toolCall.callId,
                 prompt: result.name ?? "Cursor agent task",
                 repository: nil,
-                autoCreatePR: false
+                autoCreatePR: false,
+                anchorMessageID: latestAssistantMessageID()
             ).applyingStatusResult(result)
-            cards.insert(fallback, at: 0)
+            cards.append(fallback)
         }
 
-        sortCardsByLastUpdate()
         if !cards.filter({ !$0.isTerminal && $0.agentId != nil }).isEmpty {
             ensureAgentStatusPolling()
         }
@@ -194,7 +211,6 @@ final class ConversationAgentManager: ObservableObject {
         updateCard(agentID: result.id) {
             $0 = $0.applyingCancelled(agentID: result.id)
         }
-        sortCardsByLastUpdate()
     }
 
     private func handleAgentStatusEvent(_ status: Event.AgentStatus) {
@@ -214,12 +230,12 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: "server-\(agentID)",
                 prompt: status.summary ?? status.detail ?? "Cursor agent task",
                 repository: nil,
-                autoCreatePR: false
+                autoCreatePR: false,
+                anchorMessageID: latestAssistantMessageID()
             ).applyingAgentStatusEvent(status)
-            cards.insert(fallback, at: 0)
+            cards.append(fallback)
         }
 
-        sortCardsByLastUpdate()
         if shouldAutoPollAgentStatus(),
            !cards.filter({ !$0.isTerminal && $0.agentId != nil }).isEmpty {
             ensureAgentStatusPolling()
@@ -232,11 +248,9 @@ final class ConversationAgentManager: ObservableObject {
 
     private func handleAgentConversationEvent(_ conversation: Event.AgentConversation) {
         guard !conversation.agentId.isEmpty else { return }
-        if updateCard(agentID: conversation.agentId, mutate: { card in
+        _ = updateCard(agentID: conversation.agentId, mutate: { card in
             card = card.appendingConversationMessages(conversation.messages)
-        }) {
-            sortCardsByLastUpdate()
-        }
+        })
     }
 
     private func ensureAgentStatusPolling() {
@@ -302,6 +316,29 @@ final class ConversationAgentManager: ObservableObject {
         Task { await sendConductorEvent(event) }
     }
 
+    private func handleConversationAppendToolCall(_ toolCall: Event.ToolCall) {
+        guard let args = decode(ConvoAppendMessageTool.Arguments.self, from: toolCall.arguments),
+              args.role == ConversationMessage.Role.assistant.rawValue,
+              let pendingSpawnCallID = pendingAnchorAssignments.first else {
+            return
+        }
+
+        pendingAnchorAssignments.removeFirst()
+        pendingAssistantAppendAnchors[toolCall.callId] = pendingSpawnCallID
+    }
+
+    private func handleConversationAppendResult(_ toolResult: Event.ToolResult, for spawnCallID: String) {
+        guard toolResult.error == nil,
+              let result = decode(ConvoAppendMessageTool.Result.self, from: toolResult.result),
+              let messageID = UUID(uuidString: result.messageId) else {
+            return
+        }
+
+        _ = updateCard(spawnCallId: spawnCallID) {
+            $0.anchorMessageID = messageID
+        }
+    }
+
     @discardableResult
     private func updateCard(
         spawnCallId: String,
@@ -326,8 +363,8 @@ final class ConversationAgentManager: ObservableObject {
         return true
     }
 
-    private func sortCardsByLastUpdate() {
-        cards.sort { $0.updatedAt > $1.updatedAt }
+    private func latestAssistantMessageID() -> UUID? {
+        conversationMessages().last(where: { $0.role == .assistant })?.id
     }
 
     private func shouldAutoPollAgentStatus() -> Bool {

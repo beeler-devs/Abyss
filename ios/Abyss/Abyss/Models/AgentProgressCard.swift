@@ -19,6 +19,7 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
     let id: UUID
     let spawnCallId: String
 
+    var anchorMessageID: UUID?
     var agentId: String?
     var title: String
     var repository: String?
@@ -33,18 +34,21 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
     var updatedAt: Date
     var errorMessage: String?
     var conversationMessages: [Event.AgentConversationMessage] = []
+    var isExpanded: Bool = true
     var isConversationExpanded: Bool = false
 
     static func pending(
         spawnCallId: String,
         prompt: String,
         repository: String?,
-        autoCreatePR: Bool
+        autoCreatePR: Bool,
+        anchorMessageID: UUID? = nil
     ) -> AgentProgressCard {
         let repoTitle = shortRepositoryName(from: repository)
         return AgentProgressCard(
             id: UUID(),
             spawnCallId: spawnCallId,
+            anchorMessageID: anchorMessageID,
             agentId: nil,
             title: repoTitle ?? "Cursor Cloud Agent",
             repository: repository,
@@ -167,5 +171,10 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
         let comps = url.pathComponents.filter { $0 != "/" }
         guard comps.count >= 2 else { return nil }
         return "\(comps[comps.count - 2])/\(comps[comps.count - 1])"
+    }
+
+    var displayTitle: String {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Cursor Cloud Agent" : trimmed
     }
 }
