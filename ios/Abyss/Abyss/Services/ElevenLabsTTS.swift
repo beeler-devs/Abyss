@@ -1,4 +1,5 @@
 import AVFoundation
+import Combine
 import Foundation
 
 /// ElevenLabs streaming TTS implementation.
@@ -6,6 +7,7 @@ import Foundation
 final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
     private let lock = NSLock()
     private var _isSpeaking = false
+    private let speakingSubject = CurrentValueSubject<Bool, Never>(false)
     private let fallbackSynth = AVSpeechSynthesizer()
     private var elevenLabsDisabledForSession = false
     private var didLogElevenLabsDisableReason = false
@@ -21,6 +23,10 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         lock.withLock { _isSpeaking }
     }
 
+    var isSpeakingPublisher: AnyPublisher<Bool, Never> {
+        speakingSubject.eraseToAnyPublisher()
+    }
+
     init(voiceId: String = "21m00Tcm4TlvDq8ikWAM", modelId: String = "eleven_turbo_v2_5") {
         self.voiceId = voiceId
         self.modelId = modelId
@@ -33,9 +39,11 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
 
         await stop()
         lock.withLock { _isSpeaking = true }
+        speakingSubject.send(true)
 
         defer {
             lock.withLock { _isSpeaking = false }
+            speakingSubject.send(false)
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
 
@@ -54,6 +62,7 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
 
     func stop() async {
         lock.withLock { _isSpeaking = false }
+        speakingSubject.send(false)
 
         await MainActor.run {
             if StreamingPCMPlayer.shared.hasActivePlaybackSession {
