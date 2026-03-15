@@ -398,6 +398,14 @@ final class BridgeAppModel: ObservableObject {
 struct BridgeStatusView: View {
     @ObservedObject var model: BridgeAppModel
 
+    private var connectionDotColor: Color {
+        switch model.connectionState {
+        case .connected:    return .green
+        case .connecting:   return .yellow
+        case .disconnected: return Color(nsColor: .systemGray)
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -405,20 +413,33 @@ struct BridgeStatusView: View {
                     LabeledContent("Server URL") {
                         Text(model.serverURLText)
                             .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
                     }
-                    LabeledContent("Paired", value: model.paired ? "Yes" : "No")
-                    LabeledContent("Online", value: model.onlineLabel)
+                    LabeledContent("Paired") {
+                        Text(model.paired ? "Yes" : "No")
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Online") {
+                        Text(model.onlineLabel)
+                            .foregroundStyle(.secondary)
+                    }
                     LabeledContent("Device ID") {
                         Text(model.deviceId.isEmpty ? "Not assigned" : model.deviceId)
-                            .font(.system(.body, design: .monospaced))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                     LabeledContent("Workspace") {
                         Text(model.selectedWorkspacePath)
-                            .font(.system(.body, design: .monospaced))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
-                    LabeledContent("Last Exit Code", value: model.lastExitCode.map(String.init) ?? "N/A")
+                    LabeledContent("Last Exit Code") {
+                        Text(model.lastExitCode.map(String.init) ?? "N/A")
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Workspaces") {
@@ -428,70 +449,90 @@ struct BridgeStatusView: View {
                         }
                     }
                     .pickerStyle(.menu)
-                    .onChange(of: model.selectedWorkspaceId) { _ in
+                    .onChange(of: model.selectedWorkspaceId) {
                         model.reconnect()
                     }
 
-                    HStack {
+                    HStack(spacing: 8) {
                         Button("Add Workspace…") { model.addWorkspace() }
                         Button("Remove Selected") { model.removeSelectedWorkspace() }
                             .disabled(model.workspaces.count <= 1)
+                        Spacer()
                     }
 
                     ForEach(model.workspaces) { workspace in
                         Text(workspace.path)
                             .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.tertiary)
                             .textSelection(.enabled)
-                            .foregroundStyle(.secondary)
                     }
                 }
 
                 Section("Pairing") {
-                    Text(model.pairingCode.isEmpty ? "—" : model.pairingCode)
-                        .font(.system(.title2, design: .monospaced).weight(.semibold))
-
-                    HStack {
+                    LabeledContent("Code") {
+                        Text(model.pairingCode.isEmpty ? "—" : model.pairingCode)
+                            .font(.system(.title2, design: .monospaced).weight(.semibold))
+                            .textSelection(.enabled)
+                    }
+                    HStack(spacing: 8) {
                         Button("Generate Code") { model.generatePairingCode() }
                         Button("Copy") { model.copyPairingCode() }
                             .disabled(model.pairingCode.isEmpty)
+                        Spacer()
                     }
                 }
 
                 Section("Permissions") {
                     Toggle("Allow command execution", isOn: $model.allowExecRun)
-                        .onChange(of: model.allowExecRun) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowExecRun) { model.applyPermissions() }
                     Toggle("Allow writes / apply patch / git stage+commit", isOn: $model.allowWritesApplyPatch)
-                        .onChange(of: model.allowWritesApplyPatch) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowWritesApplyPatch) { model.applyPermissions() }
                     Toggle("Allow git push", isOn: $model.allowGitPush)
-                        .onChange(of: model.allowGitPush) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowGitPush) { model.applyPermissions() }
                     Toggle("Require git push confirmation", isOn: $model.requireGitPushConfirmation)
-                        .onChange(of: model.requireGitPushConfirmation) { _ in model.applyPermissions() }
+                        .onChange(of: model.requireGitPushConfirmation) { model.applyPermissions() }
                     Toggle("Allow Claude Code (bridge.claude.run)", isOn: $model.allowClaudeRun)
-                        .onChange(of: model.allowClaudeRun) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
                 }
 
                 Section("Active Command") {
                     if let active = model.activeCommand {
-                        LabeledContent("Command ID", value: active.commandId)
-                        LabeledContent("State", value: active.state.rawValue)
-                        LabeledContent("CWD") {
-                            Text(active.cwd)
-                                .font(.system(.body, design: .monospaced))
+                        LabeledContent("Command ID") {
+                            Text(active.commandId)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                         }
-                        LabeledContent("Started", value: active.startedAt)
+                        LabeledContent("State") {
+                            Text(active.state.rawValue)
+                                .foregroundStyle(.secondary)
+                        }
+                        LabeledContent("CWD") {
+                            Text(active.cwd)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        LabeledContent("Started") {
+                            Text(active.startedAt)
+                                .foregroundStyle(.secondary)
+                        }
 
                         Text(active.command)
                             .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
 
                         ScrollView {
                             Text(active.stdoutTail + (active.stderrTail.isEmpty ? "" : "\n\n[stderr]\n" + active.stderrTail))
                                 .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                         }
                         .frame(minHeight: 100, maxHeight: 160)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
 
                         Button("Cancel Active Command") {
                             model.cancelActiveCommand()
@@ -499,53 +540,64 @@ struct BridgeStatusView: View {
                         .buttonStyle(.glass)
                         .tint(.red)
                     } else {
-                        ContentUnavailableView("No active command", systemImage: "terminal")
+                        Label("No active command", systemImage: "terminal")
+                            .foregroundStyle(.tertiary)
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 6)
                     }
                 }
 
                 Section("Configuration") {
                     LabeledContent("Server") {
-                        TextField("ws://…", text: $model.serverURLText)
+                        TextField("ws://localhost:8080/ws", text: $model.serverURLText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 300)
                     }
                     LabeledContent("Device Name") {
                         TextField("My Mac", text: $model.deviceName)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: 300)
                     }
                 }
             }
+            .formStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .navigationTitle("Abyss Bridge")
             .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(model.connectionState == .connected ? Color.green
-                                : model.connectionState == .connecting ? Color.yellow
-                                : Color.secondary)
-                            .frame(width: 8, height: 8)
-                        Text(model.connectionStateLabel)
-                            .font(.callout)
-                            .foregroundStyle(.primary)
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 10) {
+                        Text("Abyss Bridge")
+                            .font(.headline)
+                            .fontWeight(.semibold)
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(connectionDotColor)
+                                .frame(width: 7, height: 7)
+                            Text(model.connectionStateLabel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(.regularMaterial, in: Capsule())
                     }
                 }
 
                 ToolbarItem(placement: .primaryAction) {
-                    GlassEffectContainer {
-                        HStack(spacing: 8) {
-                            if model.pairingCode.isEmpty {
-                                Button("Get Pairing Code") { model.generatePairingCode() }
-                                    .buttonStyle(.glassProminent)
-                                    .tint(.blue)
-                            }
-                            Button("Reconnect", systemImage: "arrow.clockwise") {
-                                model.reconnect()
-                            }
-                            .buttonStyle(.glass)
+                    HStack(spacing: 6) {
+                        if model.pairingCode.isEmpty {
+                            Button("Get Pairing Code") { model.generatePairingCode() }
+                                .buttonStyle(.glassProminent)
                         }
+                        Button("", systemImage: "arrow.clockwise") {
+                            model.reconnect()
+                        }
+                        .buttonStyle(.glass)
                     }
                 }
             }
 
-            if !model.statusMessage.isEmpty {
+            if model.connectionState == .connected && !model.statusMessage.isEmpty {
                 Text(model.statusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)

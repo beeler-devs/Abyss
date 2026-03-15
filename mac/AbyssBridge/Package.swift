@@ -19,5 +19,6 @@ let package = Package(
                 .product(name: "BridgeCore", package: "BridgeCore"),
             ]
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )
