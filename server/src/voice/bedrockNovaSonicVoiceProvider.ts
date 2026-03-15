@@ -121,7 +121,14 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
   }
 
   async startStream(sessionId: string, context: VoiceProviderContext): Promise<void> {
-    if (this.sessions.has(sessionId)) {
+    const existing = this.sessions.get(sessionId);
+    if (existing) {
+      // Session already open — audio content stream stays open across turns.
+      existing.context.emit(makeEvent("tool.call", sessionId, {
+        callId: crypto.randomUUID(),
+        name: "convo.setState",
+        arguments: JSON.stringify({ state: "listening" }),
+      }));
       return;
     }
 
@@ -261,9 +268,24 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     });
   }
 
-  async endStream(_sessionId: string): Promise<void> {
-    // Nova Sonic handles endpointing server-side. Keep the audio content stream open
-    // for the duration of the conversation so subsequent turns can reuse the same session.
+  async endStream(sessionId: string): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.closed) {
+      return;
+    }
+
+    // Send trailing silence so Nova Sonic's server-side VAD detects
+    // end-of-speech. The audio content stream stays open for future turns.
+    const silenceChunk = Buffer.alloc(3200).toString("base64"); // 100ms at 16kHz/16-bit/mono
+    for (let i = 0; i < 15; i++) {
+      this.sendEvent(session, {
+        audioInput: {
+          promptName: session.promptName,
+          contentName: session.audioContentName,
+          content: silenceChunk,
+        },
+      });
+    }
   }
 
   async interrupt(sessionId: string): Promise<void> {
@@ -406,12 +428,14 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (!audio) {
         return;
       }
-      session.sawAssistantAudio = true;
-      session.context.emit(makeEvent("tool.call", session.sessionId, {
-        callId: crypto.randomUUID(),
-        name: "convo.setState",
-        arguments: JSON.stringify({ state: "speaking" }),
-      }));
+      if (!session.sawAssistantAudio) {
+        session.sawAssistantAudio = true;
+        session.context.emit(makeEvent("tool.call", session.sessionId, {
+          callId: crypto.randomUUID(),
+          name: "convo.setState",
+          arguments: JSON.stringify({ state: "speaking" }),
+        }));
+      }
       session.context.emit(makeEvent("assistant.audio.chunk", session.sessionId, {
         audio,
         encoding: "pcm_s16le",
@@ -485,6 +509,17 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
       if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0) {
         const text = info.text.trim();
+
+        // Skip Nova Sonic metadata responses (e.g., { "interrupted" : true })
+        if (text.startsWith("{") && text.endsWith("}")) {
+          try {
+            JSON.parse(text);
+            return;
+          } catch {
+            // Not valid JSON — treat as speech
+          }
+        }
+
         session.context.emit(makeEvent("assistant.speech.final", session.sessionId, { text }));
         session.context.emit(makeEvent("tool.call", session.sessionId, {
           callId: crypto.randomUUID(),

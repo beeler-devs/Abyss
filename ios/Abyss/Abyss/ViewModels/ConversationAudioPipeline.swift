@@ -117,7 +117,12 @@ final class ConversationAudioPipeline: ObservableObject {
         guard recordingMode == .pushToTalk else { return }
         guard isChatActive else { return }
         if voiceMode == .novaSonic {
-            Task { await startRemoteVoiceCapture() }
+            Task {
+                if appState == .speaking {
+                    await bargeIn(reason: "ptt_barge_in")
+                }
+                await startRemoteVoiceCapture()
+            }
             return
         }
         guard !transcriber.isListening, !isStartingRecording else { return }
