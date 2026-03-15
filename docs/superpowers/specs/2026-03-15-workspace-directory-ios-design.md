@@ -123,7 +123,7 @@ case .bridgeWorkspaceSet(let value):
     ]
 ```
 
-**`EventEnvelope.toEvent()` — inbound decoding:** This event is outbound-only. Do **not** add a `"bridge.workspace.set"` case to `toEvent()`. If it ever arrives inbound it falls to `default: throw ConversionError.unsupportedType` — acceptable.
+**`EventEnvelope.toEvent()` — inbound decoding:** This event is outbound-only. Do **not** add a `"bridge.workspace.set"` case to `toEvent()`. If it ever arrives inbound it falls to `default: throw ConversionError.unsupportedType`. This throw is non-fatal — the iOS conductor client catches `toEvent()` errors and skips the message without tearing down the connection.
 
 **`handleInboundEvent` switch in `ConversationEventCoordinator`:** Add `.bridgeWorkspaceSet` to the exhaustive switch. Swift requires all `Event.Kind` cases to appear even though this event is outbound-only and `EventEnvelope.toEvent()` will throw before producing this value. The case is therefore unreachable dead code. Use `break` as the body to make the intent explicit — do not call `eventBus.emit(event)` since the event value can never be legitimately constructed from inbound data.
 
@@ -246,6 +246,11 @@ const context = socketContexts.get(socket);
 const sessionId = context?.sessionId;
 if (!sessionId) return; // drop — session not established yet
 
+// deviceId and workspacePath come from the parsed EventEnvelope payload
+const deviceId = typeof event.payload.deviceId === "string" ? event.payload.deviceId : undefined;
+const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
+if (!deviceId || !workspacePath) return; // drop — malformed payload
+
 const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
 if (!resolved.device) {
   return; // drop — device not found or not accessible to this session
@@ -265,8 +270,16 @@ case "bridge.workspace.set":
 
 `handleWorkspaceSet(_:)` implementation:
 
-1. Extract `workspacePath` from `envelope.payload`
-2. Validate with `FileManager.default.fileExists(atPath: path, isDirectory: &isDir)` synchronously on the actor's run loop (acceptable for local paths; may block on network mounts — accepted tradeoff in Out of Scope)
+1. Extract `workspacePath` string from `envelope.payload` (using the same `JSONValue` dictionary access pattern used elsewhere in `BridgeCore`)
+2. Validate that the path is a directory using `FileManager` synchronously on the actor's run loop (acceptable for local paths; may block on network mounts — accepted tradeoff in Out of Scope):
+
+   ```swift
+   var isDir: ObjCBool = false
+   let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+   guard exists && isDir.boolValue else {
+       // log warning and return
+   }
+   ```
 3. If valid directory: call `updateWorkspaceRoot(URL(fileURLWithPath: path))`
 
    `updateWorkspaceRoot` (already on `BridgeCore`):
