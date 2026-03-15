@@ -400,6 +400,7 @@ async function handleBridgeRegister(
     emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
       deviceId: registration.device.deviceId,
       deviceName: registration.device.deviceName,
+      workspaceRoot: registration.device.workspaceRoot,
       status: "online",
     }));
 
