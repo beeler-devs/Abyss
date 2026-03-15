@@ -50,6 +50,8 @@ interface SonicSession {
   sawAssistantAudio: boolean;
   contents: Map<string, SonicContentInfo>;
   pendingToolUse: PendingToolUse | null;
+  /** Maps sanitized tool names (underscores) back to original names (dots). */
+  toolNameMap: Map<string, string>;
 }
 
 interface SonicEventEnvelope {
@@ -81,28 +83,44 @@ function parseAdditionalModelFields(value: unknown): Record<string, unknown> {
 
 const VOICE_PIPELINE_TOOL_PREFIXES = ["stt.", "tts.", "convo."] as const;
 
-function convertToolsForSonic(tools: ToolDefinition[]): Record<string, unknown> | undefined {
+/** Sanitize tool name for Nova Sonic — only [a-zA-Z0-9_] allowed. */
+function sanitizeToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_]/g, "_");
+}
+
+function convertToolsForSonic(
+  tools: ToolDefinition[],
+): { config: Record<string, unknown>; nameMap: Map<string, string> } | undefined {
   const eligible = tools.filter(
     (t) => !VOICE_PIPELINE_TOOL_PREFIXES.some((prefix) => t.name.startsWith(prefix)),
   );
   if (eligible.length === 0) {
     return undefined;
   }
-  return {
-    tools: eligible.map((t) => ({
-      toolSpec: {
-        name: t.name,
-        description: t.description,
-        inputSchema: {
-          json: JSON.stringify({
-            type: t.input_schema.type,
-            properties: t.input_schema.properties,
-            ...(t.input_schema.required ? { required: t.input_schema.required } : {}),
-          }),
+
+  const nameMap = new Map<string, string>();
+
+  const config = {
+    tools: eligible.map((t) => {
+      const sanitized = sanitizeToolName(t.name);
+      nameMap.set(sanitized, t.name);
+      return {
+        toolSpec: {
+          name: sanitized,
+          description: t.description,
+          inputSchema: {
+            json: JSON.stringify({
+              type: t.input_schema.type,
+              properties: t.input_schema.properties,
+              ...(t.input_schema.required ? { required: t.input_schema.required } : {}),
+            }),
+          },
         },
-      },
-    })),
+      };
+    }),
   };
+
+  return { config, nameMap };
 }
 
 export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
@@ -153,25 +171,38 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       sawAssistantAudio: false,
       contents: new Map(),
       pendingToolUse: null,
+      toolNameMap: new Map(),
     };
     this.sessions.set(sessionId, session);
 
+    const rawTools = context.listTools(sessionId);
+    const toolResult = this.config.enableTools !== false
+      ? convertToolsForSonic(rawTools)
+      : undefined;
+    const toolConfiguration = toolResult?.config;
+    const toolCount = toolConfiguration
+      ? (toolConfiguration.tools as unknown[]).length
+      : 0;
+    if (toolResult) {
+      session.toolNameMap = toolResult.nameMap;
+    }
+    logger.info(`tools configured: ${toolCount} (enableTools=${this.config.enableTools})`, { sessionId });
+    if (toolCount > 0) {
+      logger.info(`tool names: ${[...session.toolNameMap.keys()].join(", ")}`, { sessionId });
+    }
+
     // Queue ALL setup events BEFORE calling send() — the SDK starts consuming
     // the iterator immediately and expects sessionStart as the first event.
+    // Nova Sonic docs: use temperature 0 when tools are enabled
     this.sendEvent(session, {
       sessionStart: {
         inferenceConfiguration: {
           maxTokens: 1024,
-          temperature: 0.7,
+          temperature: toolCount > 0 ? 0 : 0.7,
           topP: 0.9,
         },
       },
     });
-
-    const rawTools = context.listTools(sessionId);
-    const toolConfiguration = this.config.enableTools !== false
-      ? convertToolsForSonic(rawTools)
-      : undefined;
 
     const promptStartPayload: Record<string, unknown> = {
       promptName,
@@ -196,9 +227,6 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
     this.sendEvent(session, { promptStart: promptStartPayload });
 
-    const toolCount = toolConfiguration
-      ? (toolConfiguration.tools as unknown[]).length
-      : 0;
     const toolsLine = toolCount > 0
       ? ` You have access to ${toolCount} tools including code execution, file operations, git, and agent spawning. Call them one at a time.`
       : "";
@@ -363,7 +391,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unknown voice provider error";
+      const message = error instanceof Error ? error.message : JSON.stringify(error, null, 2);
       logger.error(`voice provider failed: ${message}`, { sessionId: session.sessionId });
       session.context.emit(makeEvent("error", session.sessionId, {
         code: "voice_provider_failed",
@@ -379,6 +407,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
 
     const event = parsed.event;
+    // Log tool-related and key lifecycle events (skip verbose audio/usage)
+    if ("toolUse" in event || ("contentEnd" in event && asRecord(event.contentEnd)?.type === "TOOL")) {
+      logger.info(`sonic output: ${JSON.stringify(event).slice(0, 500)}`, { sessionId: session.sessionId });
+    }
     if ("contentStart" in event) {
       const payload = asRecord(event.contentStart);
       if (!payload) {
@@ -447,12 +479,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (!payload) {
         return;
       }
-      const toolName = asString(payload.toolName) ?? asString(payload.name);
+      const sanitizedName = asString(payload.toolName) ?? asString(payload.name);
       const toolUseId = asString(payload.toolUseId);
       const content = asString(payload.content) ?? "{}";
-      if (!toolName || !toolUseId) {
+      if (!sanitizedName || !toolUseId) {
         return;
       }
+
+      // Map sanitized name back to original name (with dots)
+      const toolName = session.toolNameMap.get(sanitizedName) ?? sanitizedName;
 
       // Store tool use data — execution happens on contentEnd with type "TOOL"
       session.pendingToolUse = { toolName, toolUseId, content };
