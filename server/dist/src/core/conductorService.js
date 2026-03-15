@@ -451,6 +451,78 @@ const SERVER_GMAIL_TOOLS = [
         },
     },
 ];
+const SERVER_CALENDAR_TOOLS = [
+    {
+        name: "calendar.list",
+        description: "List events from the user's Google Calendar within a date range. Returns title, start/end times, location, and attendees for each event.",
+        input_schema: {
+            type: "object",
+            properties: {
+                timeMin: { type: "string", description: "Start of time range in ISO 8601 format (e.g. '2026-03-15T00:00:00Z'). Required." },
+                timeMax: { type: "string", description: "End of time range in ISO 8601 format (e.g. '2026-03-16T00:00:00Z'). Required." },
+                maxResults: { type: "number", description: "Max events to return (default 10, max 50)." },
+                q: { type: "string", description: "Free-text search filter (optional)." },
+            },
+            required: ["timeMin", "timeMax"],
+        },
+    },
+    {
+        name: "calendar.get",
+        description: "Get full details of a specific calendar event by its event ID.",
+        input_schema: {
+            type: "object",
+            properties: {
+                eventId: { type: "string", description: "The Google Calendar event ID." },
+            },
+            required: ["eventId"],
+        },
+    },
+    {
+        name: "calendar.create",
+        description: "Create a new Google Calendar event. The app will show a confirmation card for the user to review before creating. Just call this tool with the event details.",
+        input_schema: {
+            type: "object",
+            properties: {
+                summary: { type: "string", description: "Event title." },
+                startTime: { type: "string", description: "Start time in ISO 8601 format." },
+                endTime: { type: "string", description: "End time in ISO 8601 format." },
+                description: { type: "string", description: "Event description (optional)." },
+                location: { type: "string", description: "Event location (optional)." },
+                attendees: { type: "string", description: "Comma-separated attendee email addresses (optional)." },
+            },
+            required: ["summary", "startTime", "endTime"],
+        },
+    },
+    {
+        name: "calendar.update",
+        description: "Update an existing Google Calendar event (change time, title, etc.). The app will show a confirmation card before applying changes.",
+        input_schema: {
+            type: "object",
+            properties: {
+                eventId: { type: "string", description: "The event ID to update." },
+                summary: { type: "string", description: "New event title (optional)." },
+                startTime: { type: "string", description: "New start time in ISO 8601 (optional)." },
+                endTime: { type: "string", description: "New end time in ISO 8601 (optional)." },
+                description: { type: "string", description: "New description (optional)." },
+                location: { type: "string", description: "New location (optional)." },
+                attendees: { type: "string", description: "New comma-separated attendee emails (optional)." },
+            },
+            required: ["eventId"],
+        },
+    },
+    {
+        name: "calendar.delete",
+        description: "Delete a Google Calendar event. The app will show a confirmation card before deleting.",
+        input_schema: {
+            type: "object",
+            properties: {
+                eventId: { type: "string", description: "The event ID to delete." },
+                summary: { type: "string", description: "Event title for display in the confirmation card." },
+            },
+            required: ["eventId"],
+        },
+    },
+];
 const SERVER_CANVAS_TOOLS = [
     {
         name: "canvas.courses",
@@ -530,6 +602,7 @@ export class ConductorService {
     cursorClient;
     gmailClient;
     canvasClient;
+    calendarClient;
     webhookPendingTtlMs;
     now;
     bridgeToolExecutor;
@@ -543,6 +616,7 @@ export class ConductorService {
         this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
         this.gmailClient = dependencies.gmailClient;
         this.canvasClient = dependencies.canvasClient;
+        this.calendarClient = dependencies.calendarClient;
         this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
         this.now = dependencies.now ?? (() => new Date());
         this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -772,6 +846,12 @@ export class ConductorService {
                 });
             }
         }
+        if (this.calendarClient?.isConfigured()) {
+            const session = this.sessions.getOrCreate(sessionId);
+            if (session.gmailAccessToken) {
+                tools.push(...SERVER_CALENDAR_TOOLS);
+            }
+        }
         // Canvas tools: available when token is present, otherwise offer authenticate
         {
             const session = this.sessions.getOrCreate(sessionId);
@@ -796,6 +876,9 @@ export class ConductorService {
             return Boolean(this.bridgeToolExecutor);
         }
         if (toolName.startsWith("gmail.") && toolName !== "gmail.authenticate") {
+            return true;
+        }
+        if (toolName.startsWith("calendar.") && toolName !== "calendar.authenticate") {
             return true;
         }
         if (toolName.startsWith("canvas.") && toolName !== "canvas.authenticate") {
@@ -1467,6 +1550,162 @@ export class ConductorService {
                     }
                     const announcements = await this.canvasClient.announcements(session, courseId);
                     return { result: stableJSONStringify(announcements), error: null };
+                }
+                case "calendar.list": {
+                    if (!this.calendarClient) {
+                        return { result: null, error: "calendar_not_configured" };
+                    }
+                    const timeMin = stringFromRecord(args, "timeMin");
+                    const timeMax = stringFromRecord(args, "timeMax");
+                    if (!timeMin || !timeMax) {
+                        return { result: null, error: "calendar_list_requires_timeMin_and_timeMax" };
+                    }
+                    const maxResults = Math.min(typeof args.maxResults === "number" ? args.maxResults : 10, 50);
+                    const q = stringFromRecord(args, "q");
+                    const listResult = await this.calendarClient.listEvents(session, { timeMin, timeMax, maxResults, q: q ?? undefined });
+                    return { result: stableJSONStringify(listResult), error: null };
+                }
+                case "calendar.get": {
+                    if (!this.calendarClient) {
+                        return { result: null, error: "calendar_not_configured" };
+                    }
+                    const eventId = stringFromRecord(args, "eventId");
+                    if (!eventId) {
+                        return { result: null, error: "calendar_get_requires_eventId" };
+                    }
+                    const eventDetail = await this.calendarClient.getEvent(session, eventId);
+                    return { result: stableJSONStringify(eventDetail), error: null };
+                }
+                case "calendar.create": {
+                    if (!this.calendarClient) {
+                        return { result: null, error: "calendar_not_configured" };
+                    }
+                    const summary = stringFromRecord(args, "summary");
+                    const startTime = stringFromRecord(args, "startTime");
+                    const endTime = stringFromRecord(args, "endTime");
+                    if (!summary || !startTime || !endTime) {
+                        return { result: null, error: "calendar_create_requires_summary_startTime_endTime" };
+                    }
+                    const description = stringFromRecord(args, "description");
+                    const location = stringFromRecord(args, "location");
+                    const attendees = stringFromRecord(args, "attendees");
+                    const confirmCallId = crypto.randomUUID();
+                    const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+                        callId: confirmCallId,
+                        name: "calendar.create.confirm",
+                        arguments: JSON.stringify({ summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
+                    });
+                    session.pendingToolCalls.set(confirmCallId, {
+                        callId: confirmCallId,
+                        toolName: "calendar.create.confirm",
+                        emittedAt: confirmEnvelope.timestamp,
+                        toolArguments: { summary, startTime, endTime, description, location, attendees },
+                    });
+                    emit(confirmEnvelope);
+                    const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+                    if (confirmError || !confirmResult) {
+                        return { result: null, error: confirmError ?? "calendar_create_not_confirmed" };
+                    }
+                    let confirmed = false;
+                    try {
+                        const parsed = JSON.parse(confirmResult);
+                        confirmed = parsed.confirmed === true;
+                    }
+                    catch {
+                        return { result: null, error: "calendar_create_invalid_confirmation" };
+                    }
+                    if (!confirmed) {
+                        return { result: stableJSONStringify({ status: "cancelled", message: "User declined to create the event." }), error: null };
+                    }
+                    const attendeeList = attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined;
+                    const createResult = await this.calendarClient.createEvent(session, { summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendeeList });
+                    return { result: stableJSONStringify(createResult), error: null };
+                }
+                case "calendar.update": {
+                    if (!this.calendarClient) {
+                        return { result: null, error: "calendar_not_configured" };
+                    }
+                    const eventId = stringFromRecord(args, "eventId");
+                    if (!eventId) {
+                        return { result: null, error: "calendar_update_requires_eventId" };
+                    }
+                    const summary = stringFromRecord(args, "summary");
+                    const startTime = stringFromRecord(args, "startTime");
+                    const endTime = stringFromRecord(args, "endTime");
+                    const description = stringFromRecord(args, "description");
+                    const location = stringFromRecord(args, "location");
+                    const attendees = stringFromRecord(args, "attendees");
+                    const confirmCallId = crypto.randomUUID();
+                    const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+                        callId: confirmCallId,
+                        name: "calendar.update.confirm",
+                        arguments: JSON.stringify({ eventId, summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
+                    });
+                    session.pendingToolCalls.set(confirmCallId, {
+                        callId: confirmCallId,
+                        toolName: "calendar.update.confirm",
+                        emittedAt: confirmEnvelope.timestamp,
+                        toolArguments: { eventId, summary, startTime, endTime, description, location, attendees },
+                    });
+                    emit(confirmEnvelope);
+                    const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+                    if (confirmError || !confirmResult) {
+                        return { result: null, error: confirmError ?? "calendar_update_not_confirmed" };
+                    }
+                    let confirmed = false;
+                    try {
+                        const parsed = JSON.parse(confirmResult);
+                        confirmed = parsed.confirmed === true;
+                    }
+                    catch {
+                        return { result: null, error: "calendar_update_invalid_confirmation" };
+                    }
+                    if (!confirmed) {
+                        return { result: stableJSONStringify({ status: "cancelled", message: "User declined to update the event." }), error: null };
+                    }
+                    const attendeeList = attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined;
+                    const updateResult = await this.calendarClient.updateEvent(session, eventId, { summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendeeList });
+                    return { result: stableJSONStringify(updateResult), error: null };
+                }
+                case "calendar.delete": {
+                    if (!this.calendarClient) {
+                        return { result: null, error: "calendar_not_configured" };
+                    }
+                    const eventId = stringFromRecord(args, "eventId");
+                    if (!eventId) {
+                        return { result: null, error: "calendar_delete_requires_eventId" };
+                    }
+                    const summary = stringFromRecord(args, "summary");
+                    const confirmCallId = crypto.randomUUID();
+                    const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+                        callId: confirmCallId,
+                        name: "calendar.delete.confirm",
+                        arguments: JSON.stringify({ eventId, summary: summary ?? undefined }),
+                    });
+                    session.pendingToolCalls.set(confirmCallId, {
+                        callId: confirmCallId,
+                        toolName: "calendar.delete.confirm",
+                        emittedAt: confirmEnvelope.timestamp,
+                        toolArguments: { eventId, summary },
+                    });
+                    emit(confirmEnvelope);
+                    const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+                    if (confirmError || !confirmResult) {
+                        return { result: null, error: confirmError ?? "calendar_delete_not_confirmed" };
+                    }
+                    let confirmed = false;
+                    try {
+                        const parsed = JSON.parse(confirmResult);
+                        confirmed = parsed.confirmed === true;
+                    }
+                    catch {
+                        return { result: null, error: "calendar_delete_invalid_confirmation" };
+                    }
+                    if (!confirmed) {
+                        return { result: stableJSONStringify({ status: "cancelled", message: "User declined to delete the event." }), error: null };
+                    }
+                    const deleteResult = await this.calendarClient.deleteEvent(session, eventId);
+                    return { result: stableJSONStringify(deleteResult), error: null };
                 }
                 default:
                     return { result: null, error: `unsupported_server_tool:${toolName}` };

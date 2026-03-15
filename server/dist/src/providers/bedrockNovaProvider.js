@@ -60,6 +60,10 @@ export class BedrockNovaProvider {
                     "When the user asks to write, compose, draft, or send an email, draft the content yourself and call gmail.send immediately with the to, subject, and body fields. Do NOT ask the user for text confirmation — the app will show a draft card where they can review and tap Send. Just write the email and call the tool.",
                     "Similarly for gmail.reply — draft the reply body and call gmail.reply immediately. The app handles confirmation via a card.",
                     "If gmail tools are NOT available but gmail.authenticate IS available, call gmail.authenticate when the user asks about email — this opens the sign-in screen on their device.",
+                    "If calendar.list, calendar.get, calendar.create, calendar.update, or calendar.delete tools are available, use them when the user asks about their schedule, meetings, or calendar.",
+                    "For calendar.list, translate natural language time references into ISO 8601 timeMin/timeMax (e.g. 'today' means start/end of today, 'this week' means Monday through Sunday, 'tomorrow at 3pm' needs the user's context).",
+                    "When the user asks to create, move, or schedule a calendar event, compose the details and call calendar.create or calendar.update immediately. The app will show a confirmation card.",
+                    "For calendar.delete, call the tool with the eventId. The app handles confirmation.",
                 ].join(" "),
             }];
     }

@@ -15,6 +15,8 @@ final class ConversationViewModel: ObservableObject {
     @Published var agentProgressCards: [AgentProgressCard] = []
     @Published var emailCards: [EmailCard] = []
     @Published var emailDraftCards: [EmailDraftCard] = []
+    @Published var calendarEventCards: [CalendarEventCard] = []
+    @Published var calendarDraftCards: [CalendarDraftCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
@@ -51,7 +53,9 @@ final class ConversationViewModel: ObservableObject {
     private var eventCoordinator: ConversationEventCoordinator!
     private var agentManager: ConversationAgentManager!
     private var emailManager: ConversationEmailManager!
+    private var calendarManager: ConversationCalendarManager!
     private let emailDraftManager = EmailDraftManager()
+    private let calendarDraftManager = CalendarDraftManager()
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -262,6 +266,18 @@ final class ConversationViewModel: ObservableObject {
         emailDraftManager.cancelDraft(callId: callId)
     }
 
+    func toggleCalendarEventExpanded(cardID: UUID) {
+        calendarManager.toggleExpanded(cardId: cardID)
+    }
+
+    func confirmCalendarAction(callId: String) {
+        calendarDraftManager.confirm(callId: callId)
+    }
+
+    func cancelCalendarAction(callId: String) {
+        calendarDraftManager.cancel(callId: callId)
+    }
+
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
@@ -291,6 +307,9 @@ final class ConversationViewModel: ObservableObject {
         registry.register(RepositoriesSelectTool(client: cursorClient, selectionManager: repositorySelectionManager))
         registry.register(GmailSendConfirmTool(draftManager: emailDraftManager))
         registry.register(GmailReplyConfirmTool(draftManager: emailDraftManager))
+        registry.register(CalendarCreateConfirmTool(draftManager: calendarDraftManager))
+        registry.register(CalendarUpdateConfirmTool(draftManager: calendarDraftManager))
+        registry.register(CalendarDeleteConfirmTool(draftManager: calendarDraftManager))
 
         toolRegistry = registry
         toolRouter = ToolRouter(registry: registry, eventBus: eventBus)
@@ -332,6 +351,7 @@ final class ConversationViewModel: ObservableObject {
         )
 
         emailManager = ConversationEmailManager(eventBus: eventBus)
+        calendarManager = ConversationCalendarManager(eventBus: eventBus)
 
         eventCoordinator = ConversationEventCoordinator(
             eventBus: eventBus,
@@ -361,6 +381,7 @@ final class ConversationViewModel: ObservableObject {
             .sink { [weak self] event in
                 self?.eventCoordinator.handleEventStream(event)
                 self?.emailManager.handleEventStream(event)
+                self?.calendarManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -395,6 +416,14 @@ final class ConversationViewModel: ObservableObject {
         emailDraftManager.$activeDrafts
             .receive(on: RunLoop.main)
             .assign(to: &$emailDraftCards)
+
+        calendarManager.$calendarCards
+            .receive(on: RunLoop.main)
+            .assign(to: &$calendarEventCards)
+
+        calendarDraftManager.$activeDrafts
+            .receive(on: RunLoop.main)
+            .assign(to: &$calendarDraftCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)

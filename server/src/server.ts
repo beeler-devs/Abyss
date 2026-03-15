@@ -11,6 +11,7 @@ import { logger } from "./core/logger.js";
 import { EventEnvelope } from "./core/types.js";
 import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
+import { CalendarClient } from "./integrations/calendarClient.js";
 import { CanvasClient } from "./integrations/canvasClient.js";
 import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
@@ -100,6 +101,10 @@ const conductor = new ConductorService(
       webhookSecret: CURSOR_WEBHOOK_SECRET,
     }),
     gmailClient: new GmailClient({
+      googleClientId: GOOGLE_CLIENT_ID,
+      googleClientSecret: GOOGLE_CLIENT_SECRET,
+    }),
+    calendarClient: new CalendarClient({
       googleClientId: GOOGLE_CLIENT_ID,
       googleClientSecret: GOOGLE_CLIENT_SECRET,
     }),
