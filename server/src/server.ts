@@ -11,6 +11,8 @@ import { logger } from "./core/logger.js";
 import { EventEnvelope } from "./core/types.js";
 import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
+import { GmailClient } from "./integrations/gmailClient.js";
+import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
 import { buildProvider } from "./providers/index.js";
 import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
 import { VoiceProvider } from "./voice/types.js";
@@ -25,6 +27,8 @@ const TRANSCRIPT_TRACE_MAX_ENTRIES = parseInteger(process.env.TRANSCRIPT_TRACE_M
 const VERBOSE_TOOL_ROUTING_LOGS = parseBoolean(process.env.VERBOSE_TOOL_ROUTING_LOGS, false);
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? "";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 const CURSOR_API_KEY = process.env.CURSOR_API_KEY ?? "";
 const CURSOR_WEBHOOK_URL = process.env.CURSOR_WEBHOOK_URL ?? "";
 const CURSOR_WEBHOOK_SECRET = process.env.CURSOR_WEBHOOK_SECRET ?? "";
@@ -93,6 +97,10 @@ const conductor = new ConductorService(
       webhookUrl: CURSOR_WEBHOOK_URL,
       webhookSecret: CURSOR_WEBHOOK_SECRET,
     }),
+    gmailClient: new GmailClient({
+      googleClientId: GOOGLE_CLIENT_ID,
+      googleClientSecret: GOOGLE_CLIENT_SECRET,
+    }),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
       const devices = bridgeState
@@ -108,6 +116,10 @@ const conductor = new ConductorService(
 const httpServer = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/github/exchange") {
     await handleGithubExchange(req, res);
+    return;
+  }
+  if (req.method === "POST" && req.url === "/google/exchange") {
+    await handleGoogleExchange(req, res);
     return;
   }
   if (req.method === "POST" && req.url === "/cursor/webhook") {
@@ -550,6 +562,62 @@ async function handleGithubExchange(
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown";
     logger.warn(`github token exchange failed: ${message}`);
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "exchange_failed", message }));
+  }
+}
+
+async function handleGoogleExchange(
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    res.writeHead(503, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "google_not_configured" }));
+    return;
+  }
+
+  let body = "";
+  for await (const chunk of req) {
+    body += chunk;
+    if (body.length > 4096) {
+      res.writeHead(413, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "payload_too_large" }));
+      return;
+    }
+  }
+
+  let code: string;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    if (typeof parsed.code !== "string" || !parsed.code) {
+      throw new Error("missing code");
+    }
+    code = parsed.code;
+  } catch {
+    res.writeHead(400, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ error: "invalid_request", message: "Body must be JSON with a 'code' string." }));
+    return;
+  }
+
+  try {
+    const tokenResponse = await exchangeGoogleCode(
+      code,
+      GOOGLE_CLIENT_ID,
+      GOOGLE_CLIENT_SECRET,
+      "abyss://oauth-callback",
+    );
+
+    logger.info("google token exchange successful");
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      accessToken: tokenResponse.access_token,
+      refreshToken: tokenResponse.refresh_token,
+      expiresIn: tokenResponse.expires_in,
+    }));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown";
+    logger.warn(`google token exchange failed: ${message}`);
     res.writeHead(500, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "exchange_failed", message }));
   }

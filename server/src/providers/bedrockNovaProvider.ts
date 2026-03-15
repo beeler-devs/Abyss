@@ -114,6 +114,10 @@ export class BedrockNovaProvider implements ModelProvider {
         "When using legacy agent.spawn for repo work, if you do not know the exact owner/repo string, call repositories.list first.",
         "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
         "Never guess or hallucinate a repository name. Only use repos returned by repositories.list.",
+        "If gmail.inbox, gmail.search, gmail.read, gmail.send, or gmail.reply tools are available, use them when the user asks about email.",
+        "For gmail.search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
+        "CRITICAL: Before calling gmail.send or gmail.reply, you MUST present the full draft (To, Subject, Body) to the user and wait for explicit confirmation. Never send or reply without the user saying yes.",
+        "If Gmail tools are not available, tell the user to connect their Gmail account in the Settings screen.",
       ].join(" "),
     }];
   }

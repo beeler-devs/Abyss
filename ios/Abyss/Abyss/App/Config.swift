@@ -152,6 +152,15 @@ enum Config {
             ?? valueFromEnvironment("GITHUB_CLIENT_ID")
     }
 
+    // MARK: - Google / Gmail
+
+    /// Google OAuth client ID for Gmail integration.
+    static var googleClientId: String? {
+        valueFromSecretsPlist("GOOGLE_CLIENT_ID")
+            ?? valueFromInfoPlist("GOOGLE_CLIENT_ID")
+            ?? valueFromEnvironment("GOOGLE_CLIENT_ID")
+    }
+
     /// HTTP base URL of the backend, derived from the WebSocket URL by swapping scheme.
     /// e.g. ws://192.168.1.20:8080/ws → http://192.168.1.20:8080
     static var backendBaseURL: URL? {

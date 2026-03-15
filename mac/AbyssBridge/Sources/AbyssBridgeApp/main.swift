@@ -565,29 +565,24 @@ struct BridgeStatusView: View {
             .scrollContentBackground(.hidden)
             .toolbar {
                 ToolbarItem(placement: .principal) {
-                    HStack(spacing: 10) {
-                        Text("Abyss Bridge")
-                            .font(.headline)
-                            .fontWeight(.semibold)
-                        HStack(spacing: 5) {
-                            Circle()
-                                .fill(connectionDotColor)
-                                .frame(width: 7, height: 7)
-                            Text(model.connectionStateLabel)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(.regularMaterial, in: Capsule())
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(connectionDotColor)
+                            .frame(width: 8, height: 8)
+                        Text(model.connectionStateLabel.capitalized)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .glassEffect(in: Capsule())
                 }
 
                 ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 6) {
                         if model.pairingCode.isEmpty {
                             Button("Get Pairing Code") { model.generatePairingCode() }
-                                .buttonStyle(.glassProminent)
+                                .buttonStyle(.glass)
                         }
                         Button("", systemImage: "arrow.clockwise") {
                             model.reconnect()

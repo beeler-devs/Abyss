@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
 import { CursorClient } from "../integrations/cursorClient.js";
+import { GmailClient } from "../integrations/gmailClient.js";
 import {
   isTerminalAgentStatus,
   normalizeMode,
@@ -33,6 +34,7 @@ export interface ConductorServiceConfig {
 
 export interface ConductorServiceDependencies {
   cursorClient?: CursorClient;
+  gmailClient?: GmailClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
@@ -437,6 +439,77 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
   },
 ];
 
+const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
+  {
+    name: "gmail.inbox",
+    description:
+      "List recent emails from the user's Gmail inbox. Returns sender, subject, date, and snippet for each message.",
+    input_schema: {
+      type: "object",
+      properties: {
+        maxResults: { type: "number", description: "Number of emails to return (default 10, max 20)." },
+        pageToken: { type: "string", description: "Pagination token from a previous result." },
+      },
+    },
+  },
+  {
+    name: "gmail.search",
+    description:
+      "Search the user's Gmail using Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01'). Returns matching messages with sender, subject, date, and snippet.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Gmail search query string." },
+        maxResults: { type: "number", description: "Number of results to return (default 10, max 20)." },
+        pageToken: { type: "string", description: "Pagination token from a previous result." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "gmail.read",
+    description:
+      "Read the full content of a specific email by its message ID. Returns sender, recipients, subject, date, and body text.",
+    input_schema: {
+      type: "object",
+      properties: {
+        messageId: { type: "string", description: "The Gmail message ID to read." },
+      },
+      required: ["messageId"],
+    },
+  },
+  {
+    name: "gmail.send",
+    description:
+      "Send a new email. IMPORTANT: You MUST present the draft (To, Subject, Body) to the user and get explicit confirmation before calling this tool. Never send without user approval.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Recipient email address." },
+        cc: { type: "string", description: "CC email address (optional)." },
+        subject: { type: "string", description: "Email subject line." },
+        body: { type: "string", description: "Email body text." },
+      },
+      required: ["to", "subject", "body"],
+    },
+  },
+  {
+    name: "gmail.reply",
+    description:
+      "Reply to an existing email by message ID. IMPORTANT: You MUST present the draft reply to the user and get explicit confirmation before calling this tool. Never reply without user approval.",
+    input_schema: {
+      type: "object",
+      properties: {
+        messageId: { type: "string", description: "The Gmail message ID to reply to." },
+        body: { type: "string", description: "Reply body text." },
+        to: { type: "string", description: "Override recipient (optional, defaults to original sender)." },
+        cc: { type: "string", description: "CC email address (optional)." },
+      },
+      required: ["messageId", "body"],
+    },
+  },
+];
+
 const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 
 function waitForToolResult(
@@ -463,6 +536,7 @@ export class ConductorService {
   private readonly provider: ModelProvider;
   private readonly sessions: SessionStore;
   private readonly cursorClient: CursorClient;
+  private readonly gmailClient?: GmailClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
@@ -479,6 +553,7 @@ export class ConductorService {
       config.traceMaxEntries ?? 120,
     );
     this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
+    this.gmailClient = dependencies.gmailClient;
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -593,6 +668,15 @@ export class ConductorService {
       case "session.start": {
         if (typeof event.payload.githubToken === "string" && event.payload.githubToken) {
           session.githubToken = event.payload.githubToken;
+        }
+        if (typeof event.payload.gmailAccessToken === "string" && event.payload.gmailAccessToken) {
+          session.gmailAccessToken = event.payload.gmailAccessToken;
+        }
+        if (typeof event.payload.gmailRefreshToken === "string" && event.payload.gmailRefreshToken) {
+          session.gmailRefreshToken = event.payload.gmailRefreshToken;
+        }
+        if (typeof event.payload.gmailTokenExpiresAt === "number") {
+          session.gmailTokenExpiresAt = event.payload.gmailTokenExpiresAt;
         }
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
@@ -734,6 +818,12 @@ export class ConductorService {
         : SERVER_BRIDGE_TOOLS;
       tools.push(...bridgeTools);
     }
+    if (this.gmailClient?.isConfigured()) {
+      const session = this.sessions.getOrCreate(sessionId);
+      if (session.gmailAccessToken) {
+        tools.push(...SERVER_GMAIL_TOOLS);
+      }
+    }
 
     return tools;
   }
@@ -741,6 +831,10 @@ export class ConductorService {
   private shouldExecuteServerTool(toolName: string): boolean {
     if (toolName.startsWith("bridge.")) {
       return Boolean(this.bridgeToolExecutor);
+    }
+
+    if (toolName.startsWith("gmail.")) {
+      return true;
     }
 
     if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
@@ -1340,6 +1434,72 @@ export class ConductorService {
             args,
             timeoutMs: claudeTimeoutMs,
           }, emit);
+        }
+
+        case "gmail.inbox": {
+          if (!this.gmailClient) {
+            return { result: null, error: "gmail_not_configured" };
+          }
+          const maxResults = Math.min(typeof args.maxResults === "number" ? args.maxResults : 10, 20);
+          const pageToken = typeof args.pageToken === "string" ? args.pageToken : undefined;
+          const listResult = await this.gmailClient.list(session, { maxResults, pageToken });
+          return { result: stableJSONStringify(listResult), error: null };
+        }
+
+        case "gmail.search": {
+          if (!this.gmailClient) {
+            return { result: null, error: "gmail_not_configured" };
+          }
+          const query = stringFromRecord(args, "query");
+          if (!query) {
+            return { result: null, error: "gmail_missing_query" };
+          }
+          const maxResults = Math.min(typeof args.maxResults === "number" ? args.maxResults : 10, 20);
+          const pageToken = typeof args.pageToken === "string" ? args.pageToken : undefined;
+          const searchResult = await this.gmailClient.search(session, query, { maxResults, pageToken });
+          return { result: stableJSONStringify(searchResult), error: null };
+        }
+
+        case "gmail.read": {
+          if (!this.gmailClient) {
+            return { result: null, error: "gmail_not_configured" };
+          }
+          const messageId = stringFromRecord(args, "messageId");
+          if (!messageId) {
+            return { result: null, error: "gmail_missing_message_id" };
+          }
+          const message = await this.gmailClient.read(session, messageId);
+          return { result: stableJSONStringify(message), error: null };
+        }
+
+        case "gmail.send": {
+          if (!this.gmailClient) {
+            return { result: null, error: "gmail_not_configured" };
+          }
+          const to = stringFromRecord(args, "to");
+          const subject = stringFromRecord(args, "subject");
+          const body = stringFromRecord(args, "body");
+          if (!to || !subject || !body) {
+            return { result: null, error: "gmail_send_requires_to_subject_body" };
+          }
+          const cc = stringFromRecord(args, "cc");
+          const sendResult = await this.gmailClient.send(session, { to, cc, subject, body });
+          return { result: stableJSONStringify(sendResult), error: null };
+        }
+
+        case "gmail.reply": {
+          if (!this.gmailClient) {
+            return { result: null, error: "gmail_not_configured" };
+          }
+          const messageId = stringFromRecord(args, "messageId");
+          const body = stringFromRecord(args, "body");
+          if (!messageId || !body) {
+            return { result: null, error: "gmail_reply_requires_messageId_and_body" };
+          }
+          const to = stringFromRecord(args, "to");
+          const cc = stringFromRecord(args, "cc");
+          const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
+          return { result: stableJSONStringify(replyResult), error: null };
         }
 
         default:
