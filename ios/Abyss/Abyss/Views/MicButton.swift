@@ -167,9 +167,6 @@ struct MicButton: View {
                             #selector(UIResponder.resignFirstResponder),
                             to: nil, from: nil, for: nil
                         )
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            isTypingMode = false
-                        }
                     }
                 }
         )
