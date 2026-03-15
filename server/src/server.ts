@@ -44,7 +44,7 @@ const provider = buildProvider({
 });
 const voiceProvider: VoiceProvider | null = VOICE_PROVIDER === "nova-sonic"
   ? new BedrockNovaSonicVoiceProvider({
-    modelId: process.env.BEDROCK_SONIC_MODEL_ID ?? "us.amazon.nova-2-sonic-v1:0",
+    modelId: process.env.BEDROCK_SONIC_MODEL_ID ?? "amazon.nova-sonic-v1:0",
     region: process.env.AWS_REGION ?? "us-east-1",
     voiceId: process.env.BEDROCK_SONIC_VOICE_ID ?? "tiffany",
     enableTools: process.env.BEDROCK_SONIC_ENABLE_TOOLS !== "false",

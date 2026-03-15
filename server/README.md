@@ -85,7 +85,7 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 - `BEDROCK_TEXT_MODEL_ID` (default `us.amazon.nova-2-lite-v1:0`, used for push-to-talk + typed text turns)
 - `BEDROCK_MAX_TOKENS` (default `512`)
 - `BEDROCK_PARTIAL_DELAY_MS` (default `60`)
-- `BEDROCK_SONIC_MODEL_ID` (default `us.amazon.nova-2-sonic-v1:0`)
+- `BEDROCK_SONIC_MODEL_ID` (default `amazon.nova-sonic-v1:0`)
 - `BEDROCK_SONIC_VOICE_ID` (default `tiffany`)
 - `AWS_REGION` (default `us-east-1`)
 - `AWS_PROFILE` (optional)
