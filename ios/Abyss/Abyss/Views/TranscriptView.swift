@@ -74,6 +74,7 @@ struct TranscriptView: View {
                 }
                 .padding(.vertical, 12)
             }
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.count) { _, _ in
                 if let last = messages.last {
                     withAnimation(.easeOut(duration: 0.2)) {
