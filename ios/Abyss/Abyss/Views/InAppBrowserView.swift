@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import SafariServices
 
 // MARK: - URL + Identifiable (for .sheet(item:))
 
@@ -64,6 +65,22 @@ struct InAppBrowserView: View {
     }
 }
 
+// MARK: - UIApplication top view controller
+
+private extension UIApplication {
+    var topViewController: UIViewController? {
+        let keyWindow = connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first { $0.isKeyWindow }
+        var vc = keyWindow?.rootViewController
+        while let presented = vc?.presentedViewController {
+            vc = presented
+        }
+        return vc
+    }
+}
+
 // MARK: - WebView State
 
 private final class WebViewState: ObservableObject {
@@ -113,6 +130,36 @@ private struct WebView: UIViewRepresentable {
         init(state: WebViewState) {
             self.state = state
         }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url,
+                  let host = url.host else {
+                decisionHandler(.allow)
+                return
+            }
+
+            // Google blocks OAuth flows inside WKWebView — redirect to SFSafariViewController
+            let isGoogleAuth = host.hasSuffix("accounts.google.com")
+                || host.hasSuffix("google.com") && url.path.hasPrefix("/o/oauth2")
+
+            if isGoogleAuth {
+                decisionHandler(.cancel)
+                DispatchQueue.main.async {
+                    let safari = SFSafariViewController(url: url)
+                    safari.preferredControlTintColor = .systemBlue
+                    UIApplication.shared.topViewController?.present(safari, animated: true)
+                }
+                return
+            }
+
+            decisionHandler(.allow)
+        }
+
+        // MARK: - Helpers
 
         func observe(_ webView: WKWebView) {
             observations = [
