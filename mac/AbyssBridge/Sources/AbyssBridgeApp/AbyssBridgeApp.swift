@@ -438,13 +438,13 @@ struct BridgeStatusView: View {
                     }
                     LabeledContent("Device ID") {
                         Text(model.deviceId.isEmpty ? "Not assigned" : model.deviceId)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
                     LabeledContent("Workspace") {
                         Text(model.selectedWorkspacePath)
-                            .font(.system(.caption, design: .monospaced))
+                            .font(.system(.body, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                     }
