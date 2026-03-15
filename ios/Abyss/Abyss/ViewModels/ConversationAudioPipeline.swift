@@ -81,6 +81,11 @@ final class ConversationAudioPipeline: ObservableObject {
         }
     }
 
+    func tearDownTranscriber() {
+        transcriber.tearDown()
+        AppLogger.audio.debug("[PTT] Transcriber torn down for inactive chat")
+    }
+
     func updateRecordingMode(_ mode: RecordingMode) {
         guard recordingMode != mode else { return }
         let oldMode = recordingMode

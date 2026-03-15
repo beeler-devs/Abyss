@@ -18,6 +18,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
+    @AppStorage("isTTSMuted") var isTTSMuted: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     private weak var gmailAuthManager: GmailAuthManager?
@@ -81,7 +82,6 @@ final class ConversationViewModel: ObservableObject {
         setupToolSystem()
         setupConversationComponents()
         observeStores()
-        audioPipeline.preloadTranscriber()
         startSession()
     }
 
@@ -147,7 +147,17 @@ final class ConversationViewModel: ObservableObject {
 
     func setChatActive(_ isActive: Bool) {
         syncRecordingMode()
+        if isActive {
+            audioPipeline.preloadTranscriber()
+        }
         audioPipeline.setChatActive(isActive)
+        if !isActive {
+            audioPipeline.tearDownTranscriber()
+        }
+    }
+
+    func toggleTTSMute() {
+        isTTSMuted.toggle()
     }
 
     func toggleMute() {
@@ -265,7 +275,9 @@ final class ConversationViewModel: ObservableObject {
             self?.audioPipeline?.handlePartialTranscript(partial)
         }))
         registry.register(STTStopTool(transcriber: sttImpl))
-        registry.register(TTSSpeakTool(tts: ttsImpl))
+        registry.register(TTSSpeakTool(tts: ttsImpl, isMuted: { [weak self] in
+            self?.isTTSMuted ?? false
+        }))
         registry.register(TTSStopTool(tts: ttsImpl))
         registry.register(ConvoAppendMessageTool(store: conversationStore))
         registry.register(ConvoSetStateTool(stateStore: appStateStore))

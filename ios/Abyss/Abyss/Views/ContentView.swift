@@ -65,13 +65,23 @@ struct ContentView: View {
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-                            chatList.createChat()
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                                .offset(y: -1)
-                                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                        HStack(spacing: 16) {
+                            if let vm = viewModel {
+                                Button {
+                                    vm.toggleTTSMute()
+                                } label: {
+                                    Image(systemName: vm.isTTSMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                                }
+                            }
+                            Button {
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                chatList.createChat()
+                            } label: {
+                                Image(systemName: "square.and.pencil")
+                                    .offset(y: -1)
+                                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                            }
                         }
                     }
                 }
