@@ -11,16 +11,23 @@ export async function exchangeGoogleCode(
   clientSecret: string,
   redirectUri: string,
 ): Promise<GoogleTokenResponse> {
+  const body: Record<string, string> = {
+    code,
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    grant_type: "authorization_code",
+  };
+
+  // client_secret is only present for Web client types.
+  // iOS clients use PKCE instead and have no secret.
+  if (clientSecret) {
+    body.client_secret = clientSecret;
+  }
+
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      code,
-      client_id: clientId,
-      client_secret: clientSecret,
-      redirect_uri: redirectUri,
-      grant_type: "authorization_code",
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   });
 
@@ -46,17 +53,24 @@ export async function exchangeGoogleCode(
 export async function refreshGoogleToken(
   refreshToken: string,
   clientId: string,
-  clientSecret: string,
+  clientSecret?: string,
 ): Promise<{ access_token: string; expires_in: number }> {
+  const body: Record<string, string> = {
+    refresh_token: refreshToken,
+    client_id: clientId,
+    grant_type: "refresh_token",
+  };
+
+  // client_secret is only present for Web client types.
+  // iOS clients use PKCE and have no secret — omit it.
+  if (clientSecret) {
+    body.client_secret = clientSecret;
+  }
+
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-      grant_type: "refresh_token",
-    }),
+    body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
   });
 

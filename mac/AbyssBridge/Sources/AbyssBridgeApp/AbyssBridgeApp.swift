@@ -168,6 +168,7 @@ final class BridgeAppModel: ObservableObject {
         let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         pairingCode = String((0..<6).map { _ in alphabet.randomElement()! })
         defaults.set(pairingCode, forKey: Self.pairingCodeKey)
+        statusMessage = "Pairing code generated."
 
         Task {
             await bridgeCore?.updatePairingCode(pairingCode)
@@ -216,6 +217,7 @@ final class BridgeAppModel: ObservableObject {
             let record = WorkspaceRecord(path: path, bookmarkData: bookmark)
             workspaces.append(record)
             selectedWorkspaceId = record.id
+            statusMessage = "Workspace added."
             persistWorkspaces()
             reconnect()
         } catch {
@@ -235,6 +237,7 @@ final class BridgeAppModel: ObservableObject {
             selectedWorkspaceId = workspaces[0].id
         }
 
+        statusMessage = "Workspace removed."
         persistWorkspaces()
         reconnect()
     }
@@ -246,6 +249,7 @@ final class BridgeAppModel: ObservableObject {
         defaults.set(requireGitPushConfirmation, forKey: Self.requireGitPushConfirmationKey)
         defaults.set(allowClaudeRun, forKey: Self.allowClaudeRunKey)
 
+        statusMessage = "Permissions saved."
         Task {
             await bridgeCore?.updatePermissions(currentPermissions())
         }

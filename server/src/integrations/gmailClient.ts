@@ -48,7 +48,8 @@ export class GmailClient {
   }
 
   isConfigured(): boolean {
-    return this.clientId.length > 0 && this.clientSecret.length > 0;
+    // Only client ID is required — iOS clients use PKCE and have no secret.
+    return this.clientId.length > 0;
   }
 
   async getValidAccessToken(session: SessionState): Promise<string> {
@@ -68,7 +69,7 @@ export class GmailClient {
       const refreshed = await refreshGoogleToken(
         session.gmailRefreshToken,
         this.clientId,
-        this.clientSecret,
+        this.clientSecret || undefined,
       );
       session.gmailAccessToken = refreshed.access_token;
       session.gmailTokenExpiresAt = Date.now() + refreshed.expires_in * 1000;

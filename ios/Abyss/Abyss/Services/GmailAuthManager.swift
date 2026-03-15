@@ -1,4 +1,5 @@
 import AuthenticationServices
+import CommonCrypto
 import Foundation
 import Security
 
@@ -46,9 +47,15 @@ final class GmailAuthManager: NSObject, ObservableObject {
         defer { isAuthenticating = false }
 
         do {
-            let code = try await startOAuthFlow(clientId: clientId)
+            let pkce = PKCE.generate()
+            let code = try await startOAuthFlow(clientId: clientId, codeChallenge: pkce.codeChallenge)
             let redirectUri = "\(Self.reversedClientIdScheme(from: clientId)):/oauthredirect"
-            let tokens = try await exchangeCode(code, redirectUri: redirectUri)
+            let tokens = try await exchangeCodeOnDevice(
+                code: code,
+                clientId: clientId,
+                redirectUri: redirectUri,
+                codeVerifier: pkce.codeVerifier
+            )
             Self.saveAccessToken(tokens.accessToken)
             if let refreshToken = tokens.refreshToken {
                 Self.saveRefreshToken(refreshToken)
@@ -67,6 +74,28 @@ final class GmailAuthManager: NSObject, ObservableObject {
         isAuthenticated = false
     }
 
+    // MARK: - PKCE
+
+    private struct PKCE {
+        let codeVerifier: String
+        let codeChallenge: String
+
+        static func generate() -> PKCE {
+            var buffer = [UInt8](repeating: 0, count: 32)
+            _ = SecRandomCopyBytes(kSecRandomDefault, buffer.count, &buffer)
+            let verifier = Data(buffer).base64URLEncodedString()
+
+            var hash = [UInt8](repeating: 0, count: Int(CC_SHA256_DIGEST_LENGTH))
+            let verifierData = Data(verifier.utf8)
+            verifierData.withUnsafeBytes { ptr in
+                _ = CC_SHA256(ptr.baseAddress, CC_LONG(verifierData.count), &hash)
+            }
+            let challenge = Data(hash).base64URLEncodedString()
+
+            return PKCE(codeVerifier: verifier, codeChallenge: challenge)
+        }
+    }
+
     // MARK: - OAuth Flow
 
     /// Derives the reversed client ID scheme from a Google client ID.
@@ -75,7 +104,7 @@ final class GmailAuthManager: NSObject, ObservableObject {
         clientId.split(separator: ".").reversed().joined(separator: ".")
     }
 
-    private func startOAuthFlow(clientId: String) async throws -> String {
+    private func startOAuthFlow(clientId: String, codeChallenge: String) async throws -> String {
         let callbackScheme = Self.reversedClientIdScheme(from: clientId)
         let redirectUri = "\(callbackScheme):/oauthredirect"
 
@@ -89,6 +118,8 @@ final class GmailAuthManager: NSObject, ObservableObject {
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
             URLQueryItem(name: "state", value: state),
+            URLQueryItem(name: "code_challenge", value: codeChallenge),
+            URLQueryItem(name: "code_challenge_method", value: "S256"),
         ]
 
         guard let authURL = components.url else {
@@ -131,40 +162,58 @@ final class GmailAuthManager: NSObject, ObservableObject {
         }
     }
 
-    private struct ExchangeResponse: Decodable {
+    // MARK: - Token Exchange (on-device, no client_secret needed for iOS clients)
+
+    private struct TokenResponse {
         let accessToken: String
         let refreshToken: String?
         let expiresIn: Double
     }
 
-    private func exchangeCode(_ code: String, redirectUri: String) async throws -> ExchangeResponse {
-        guard let baseURL = Config.backendBaseURL else {
-            throw AuthError.noBackendURL
-        }
+    private func exchangeCodeOnDevice(
+        code: String,
+        clientId: String,
+        redirectUri: String,
+        codeVerifier: String
+    ) async throws -> TokenResponse {
+        let params: [String: String] = [
+            "code": code,
+            "client_id": clientId,
+            "redirect_uri": redirectUri,
+            "code_verifier": codeVerifier,
+            "grant_type": "authorization_code",
+        ]
 
-        let exchangeURL = baseURL.appendingPathComponent("google/exchange")
-        var request = URLRequest(url: exchangeURL)
+        let body = params
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
+            .joined(separator: "&")
+
+        var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["code": code, "redirectUri": redirectUri])
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(body.utf8)
         request.timeoutInterval = 15
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? "unknown"
-            throw AuthError.exchangeFailed(body)
+            let text = String(data: data, encoding: .utf8) ?? "unknown"
+            throw AuthError.exchangeFailed(text)
         }
 
-        let payload = try JSONDecoder().decode([String: String].self, from: data)
-        guard let accessToken = payload["accessToken"] else {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw AuthError.missingToken
         }
 
-        let refreshToken = payload["refreshToken"]
-        let expiresIn = Double(payload["expiresIn"] ?? "3600") ?? 3600
+        guard let accessToken = json["access_token"] as? String, !accessToken.isEmpty else {
+            throw AuthError.missingToken
+        }
 
-        return ExchangeResponse(accessToken: accessToken, refreshToken: refreshToken, expiresIn: expiresIn)
+        return TokenResponse(
+            accessToken: accessToken,
+            refreshToken: json["refresh_token"] as? String,
+            expiresIn: (json["expires_in"] as? Double) ?? 3600
+        )
     }
 
     // MARK: - Keychain
@@ -238,7 +287,6 @@ final class GmailAuthManager: NSObject, ObservableObject {
         case invalidURL
         case missingCode
         case stateMismatch
-        case noBackendURL
         case exchangeFailed(String)
         case missingToken
 
@@ -247,7 +295,6 @@ final class GmailAuthManager: NSObject, ObservableObject {
             case .invalidURL: return "Could not construct Google authorization URL."
             case .missingCode: return "Google did not return an authorization code."
             case .stateMismatch: return "OAuth state parameter mismatch — possible CSRF."
-            case .noBackendURL: return "Backend URL not configured. Set BACKEND_WS_URL in Secrets.plist."
             case .exchangeFailed(let body): return "Token exchange failed: \(body)"
             case .missingToken: return "Server response did not include an access token."
             }
@@ -267,5 +314,16 @@ extension GmailAuthManager: ASWebAuthenticationPresentationContextProviding {
             return findWindow()
         }
         return DispatchQueue.main.sync { findWindow() }
+    }
+}
+
+// MARK: - Base64URL encoding for PKCE
+
+private extension Data {
+    func base64URLEncodedString() -> String {
+        base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 }
