@@ -481,7 +481,7 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
   {
     name: "gmail.send",
     description:
-      "Send a new email. IMPORTANT: You MUST present the draft (To, Subject, Body) to the user and get explicit confirmation before calling this tool. Never send without user approval.",
+      "Send a new email on behalf of the user. The app will show the draft in a confirmation card before actually sending. Just call this tool with the composed email content.",
     input_schema: {
       type: "object",
       properties: {
@@ -496,7 +496,7 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
   {
     name: "gmail.reply",
     description:
-      "Reply to an existing email by message ID. IMPORTANT: You MUST present the draft reply to the user and get explicit confirmation before calling this tool. Never reply without user approval.",
+      "Reply to an existing email by message ID. The app will show the draft reply in a confirmation card before actually sending. Just call this tool with the composed reply.",
     input_schema: {
       type: "object",
       properties: {

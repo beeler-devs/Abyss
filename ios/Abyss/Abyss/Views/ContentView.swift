@@ -45,6 +45,7 @@ struct ContentView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                 showSidebar = true
                             }
@@ -60,6 +61,7 @@ struct ContentView: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                             chatList.createChat()
                         } label: {
                             Image(systemName: "square.and.pencil")
