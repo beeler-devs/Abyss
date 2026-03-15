@@ -13,6 +13,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
+    @Published var emailCards: [EmailCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
@@ -20,6 +21,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var isTTSSpeaking: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
+    private weak var gmailAuthManager: GmailAuthManager?
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
 
@@ -45,6 +47,7 @@ final class ConversationViewModel: ObservableObject {
     private var audioPipeline: ConversationAudioPipeline!
     private var eventCoordinator: ConversationEventCoordinator!
     private var agentManager: ConversationAgentManager!
+    private var emailManager: ConversationEmailManager!
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -211,6 +214,22 @@ final class ConversationViewModel: ObservableObject {
         repositorySelectionManager.cancelSelection()
     }
 
+    func setGmailAuthManager(_ manager: GmailAuthManager) {
+        guard gmailAuthManager == nil else { return }
+        gmailAuthManager = manager
+        toolRegistry.register(GmailAuthenticateTool(
+            authManager: manager,
+            onAuthenticated: { [weak self] in
+                guard let self else { return }
+                await self.configureConductorClient(forceReconnect: true)
+            }
+        ))
+    }
+
+    func toggleEmailCardExpanded(cardID: UUID) {
+        emailManager.toggleExpanded(cardId: cardID)
+    }
+
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
@@ -276,6 +295,8 @@ final class ConversationViewModel: ObservableObject {
             }
         )
 
+        emailManager = ConversationEmailManager(eventBus: eventBus)
+
         eventCoordinator = ConversationEventCoordinator(
             eventBus: eventBus,
             toolRouter: toolRouter,
@@ -303,6 +324,7 @@ final class ConversationViewModel: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] event in
                 self?.eventCoordinator.handleEventStream(event)
+                self?.emailManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -333,6 +355,17 @@ final class ConversationViewModel: ObservableObject {
         agentManager.$cards
             .receive(on: RunLoop.main)
             .assign(to: &$agentProgressCards)
+
+        emailManager.$emailCards
+            .receive(on: RunLoop.main)
+            .assign(to: &$emailCards)
+
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.syncRecordingMode()
+            }
+            .store(in: &cancellables)
     }
 
     private func syncRecordingMode() {
@@ -446,7 +479,16 @@ final class ConversationViewModel: ObservableObject {
 
     private func connectConductorClient(_ client: ConductorClient) async throws {
         let githubToken = GitHubAuthManager.loadToken()
-        try await client.connect(sessionId: sessionId, githubToken: githubToken)
+        let gmailAccessToken = GmailAuthManager.loadAccessToken()
+        let gmailRefreshToken = GmailAuthManager.loadRefreshToken()
+        let gmailTokenExpiresAt = GmailAuthManager.loadExpiresAt()
+        try await client.connect(
+            sessionId: sessionId,
+            githubToken: githubToken,
+            gmailAccessToken: gmailAccessToken,
+            gmailRefreshToken: gmailRefreshToken,
+            gmailTokenExpiresAt: gmailTokenExpiresAt
+        )
 
         inboundEventsTask?.cancel()
         inboundEventsTask = Task { [weak self] in

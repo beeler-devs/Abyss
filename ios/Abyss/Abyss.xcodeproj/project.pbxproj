@@ -60,6 +60,11 @@
 		A10000000000000100000037 /* ConversationEventCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000037 /* ConversationEventCoordinator.swift */; };
 		A10000000000000100000038 /* MarkdownTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000038 /* MarkdownTextView.swift */; };
 		A10000000000000100000039 /* InAppBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000039 /* InAppBrowserView.swift */; };
+		A1000000000000010000003A /* GmailAuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000003A /* GmailAuthManager.swift */; };
+		A1000000000000010000003B /* EmailCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000003B /* EmailCard.swift */; };
+		A1000000000000010000003C /* EmailCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000003C /* EmailCardView.swift */; };
+		A1000000000000010000003D /* ConversationEmailManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000003D /* ConversationEmailManager.swift */; };
+		A1000000000000010000003E /* GmailAuthenticateTool.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000003E /* GmailAuthenticateTool.swift */; };
 		B10000000000000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000100000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -117,6 +122,11 @@
 		A20000000000000100000037 /* ConversationEventCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationEventCoordinator.swift; sourceTree = "<group>"; };
 		A20000000000000100000038 /* MarkdownTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownTextView.swift; sourceTree = "<group>"; };
 		A20000000000000100000039 /* InAppBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InAppBrowserView.swift; sourceTree = "<group>"; };
+		A2000000000000010000003A /* GmailAuthManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GmailAuthManager.swift; sourceTree = "<group>"; };
+		A2000000000000010000003B /* EmailCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCard.swift; sourceTree = "<group>"; };
+		A2000000000000010000003C /* EmailCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmailCardView.swift; sourceTree = "<group>"; };
+		A2000000000000010000003D /* ConversationEmailManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationEmailManager.swift; sourceTree = "<group>"; };
+		A2000000000000010000003E /* GmailAuthenticateTool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GmailAuthenticateTool.swift; sourceTree = "<group>"; };
 		A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -174,6 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				A2000000000000010000000A /* Event.swift */,
+				A2000000000000010000003B /* EmailCard.swift */,
 				A2000000000000010000000B /* EventBus.swift */,
 				A2000000000000010000001D /* AgentProgressCard.swift */,
 				A2000000000000010000000C /* AppState.swift */,
@@ -198,6 +209,7 @@
 				A20000000000000100000007 /* StateIndicator.swift */,
 				A20000000000000100000008 /* SettingsView.swift */,
 				A20000000000000100000032 /* RepositorySelectionCardView.swift */,
+				A2000000000000010000003C /* EmailCardView.swift */,
 				A20000000000000100000039 /* InAppBrowserView.swift */,
 			);
 			path = Views;
@@ -208,6 +220,7 @@
 			children = (
 				A20000000000000100000036 /* ConversationAgentManager.swift */,
 				A20000000000000100000035 /* ConversationAudioPipeline.swift */,
+				A2000000000000010000003D /* ConversationEmailManager.swift */,
 				A20000000000000100000037 /* ConversationEventCoordinator.swift */,
 				A20000000000000100000009 /* ConversationViewModel.swift */,
 			);
@@ -220,6 +233,7 @@
 				A2000000000000010000000E /* ToolProtocol.swift */,
 				A2000000000000010000000F /* ToolRegistry.swift */,
 				A20000000000000100000010 /* ToolRouter.swift */,
+				A2000000000000010000003E /* GmailAuthenticateTool.swift */,
 				A5000000000000010000000D /* Agent */,
 				A5000000000000010000000B /* Audio */,
 				A5000000000000010000000C /* Conversation */,
@@ -232,6 +246,7 @@
 			children = (
 				A20000000000000100000020 /* CursorCloudAgentsClient.swift */,
 				A2000000000000010000002D /* GitHubAuthManager.swift */,
+				A2000000000000010000003A /* GmailAuthManager.swift */,
 				A20000000000000100000030 /* RepositorySelectionManager.swift */,
 				A20000000000000100000017 /* SpeechTranscriber.swift */,
 				A20000000000000100000018 /* TextToSpeech.swift */,
@@ -437,6 +452,11 @@
 				A1000000000000010000002E /* GitHubLoginView.swift in Sources */,
 				A10000000000000100000038 /* MarkdownTextView.swift in Sources */,
 				A10000000000000100000039 /* InAppBrowserView.swift in Sources */,
+				A1000000000000010000003A /* GmailAuthManager.swift in Sources */,
+				A1000000000000010000003B /* EmailCard.swift in Sources */,
+				A1000000000000010000003C /* EmailCardView.swift in Sources */,
+				A1000000000000010000003D /* ConversationEmailManager.swift in Sources */,
+				A1000000000000010000003E /* GmailAuthenticateTool.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

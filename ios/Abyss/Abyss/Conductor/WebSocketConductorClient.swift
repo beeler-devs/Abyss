@@ -222,6 +222,9 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var shouldReconnect: Bool = false
     private var currentSessionId: String?
     private var currentGithubToken: String?
+    private var currentGmailAccessToken: String?
+    private var currentGmailRefreshToken: String?
+    private var currentGmailTokenExpiresAt: Double?
 
     private var seenInboundEventIDs: BoundedEventIDCache
 
@@ -287,13 +290,28 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         self.init(backendURL: url)
     }
 
-    func connect(sessionId: String, githubToken: String? = nil) async throws {
+    func connect(
+        sessionId: String,
+        githubToken: String? = nil,
+        gmailAccessToken: String? = nil,
+        gmailRefreshToken: String? = nil,
+        gmailTokenExpiresAt: Double? = nil
+    ) async throws {
         currentSessionId = sessionId
         currentGithubToken = githubToken
+        currentGmailAccessToken = gmailAccessToken
+        currentGmailRefreshToken = gmailRefreshToken
+        currentGmailTokenExpiresAt = gmailTokenExpiresAt
         shouldReconnect = true
 
         try await openSocketAndStartListening()
-        try await send(event: Event.sessionStart(sessionId: sessionId, githubToken: githubToken))
+        try await send(event: Event.sessionStart(
+            sessionId: sessionId,
+            githubToken: githubToken,
+            gmailAccessToken: gmailAccessToken,
+            gmailRefreshToken: gmailRefreshToken,
+            gmailTokenExpiresAt: gmailTokenExpiresAt
+        ))
     }
 
     func disconnect() async {
@@ -404,8 +422,13 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
 
             do {
                 try await self.openSocketAndStartListening()
-                let token = self.currentGithubToken
-                try await self.send(event: Event.sessionStart(sessionId: sessionId, githubToken: token))
+                try await self.send(event: Event.sessionStart(
+                    sessionId: sessionId,
+                    githubToken: self.currentGithubToken,
+                    gmailAccessToken: self.currentGmailAccessToken,
+                    gmailRefreshToken: self.currentGmailRefreshToken,
+                    gmailTokenExpiresAt: self.currentGmailTokenExpiresAt
+                ))
             } catch {
                 await self.scheduleReconnect()
             }

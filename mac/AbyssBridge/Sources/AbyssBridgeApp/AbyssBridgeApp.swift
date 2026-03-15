@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
 
+        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+           let icon = NSImage(contentsOf: url) {
+            NSApplication.shared.applicationIconImage = icon
+        }
+
         DispatchQueue.main.async {
             for window in NSApplication.shared.windows {
                 window.delegate = self
@@ -163,6 +168,7 @@ final class BridgeAppModel: ObservableObject {
         let alphabet = Array("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
         pairingCode = String((0..<6).map { _ in alphabet.randomElement()! })
         defaults.set(pairingCode, forKey: Self.pairingCodeKey)
+        statusMessage = "Pairing code generated."
 
         Task {
             await bridgeCore?.updatePairingCode(pairingCode)
@@ -211,6 +217,7 @@ final class BridgeAppModel: ObservableObject {
             let record = WorkspaceRecord(path: path, bookmarkData: bookmark)
             workspaces.append(record)
             selectedWorkspaceId = record.id
+            statusMessage = "Workspace added."
             persistWorkspaces()
             reconnect()
         } catch {
@@ -230,6 +237,7 @@ final class BridgeAppModel: ObservableObject {
             selectedWorkspaceId = workspaces[0].id
         }
 
+        statusMessage = "Workspace removed."
         persistWorkspaces()
         reconnect()
     }
@@ -241,6 +249,7 @@ final class BridgeAppModel: ObservableObject {
         defaults.set(requireGitPushConfirmation, forKey: Self.requireGitPushConfirmationKey)
         defaults.set(allowClaudeRun, forKey: Self.allowClaudeRunKey)
 
+        statusMessage = "Permissions saved."
         Task {
             await bridgeCore?.updatePermissions(currentPermissions())
         }
@@ -398,159 +407,225 @@ final class BridgeAppModel: ObservableObject {
 struct BridgeStatusView: View {
     @ObservedObject var model: BridgeAppModel
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox("Status") {
-                VStack(alignment: .leading, spacing: 8) {
-                    statusRow("Server URL", model.serverURLText)
-                    statusRow("Connection", model.connectionStateLabel)
-                    statusRow("Paired", model.paired ? "Yes" : "No")
-                    statusRow("Online", model.onlineLabel)
-                    statusRow("Device ID", model.deviceId.isEmpty ? "Not assigned" : model.deviceId)
-                    statusRow("Selected Workspace", model.selectedWorkspacePath)
-                    statusRow("Last Exit Code", model.lastExitCode.map(String.init) ?? "N/A")
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+    @State private var transientMessage: String? = nil
+    @State private var transientTask: Task<Void, Never>? = nil
 
-            GroupBox("Workspaces") {
-                VStack(alignment: .leading, spacing: 10) {
+    private var connectionDotColor: Color {
+        switch model.connectionState {
+        case .connected:    return .green
+        case .connecting:   return .yellow
+        case .disconnected: return Color(nsColor: .systemGray)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Status") {
+                    LabeledContent("Server URL") {
+                        Text(model.serverURLText)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("Paired") {
+                        Text(model.paired ? "Yes" : "No")
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Online") {
+                        Text(model.onlineLabel)
+                            .foregroundStyle(.secondary)
+                    }
+                    LabeledContent("Device ID") {
+                        Text(model.deviceId.isEmpty ? "Not assigned" : model.deviceId)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("Workspace") {
+                        Text(model.selectedWorkspacePath)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("Last Exit Code") {
+                        Text(model.lastExitCode.map(String.init) ?? "N/A")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("Workspaces") {
                     Picker("Active Workspace", selection: $model.selectedWorkspaceId) {
                         ForEach(model.workspaces) { workspace in
                             Text(workspace.path).tag(workspace.id)
                         }
                     }
-                    .onChange(of: model.selectedWorkspaceId) { _ in
+                    .pickerStyle(.menu)
+                    .onChange(of: model.selectedWorkspaceId) {
                         model.reconnect()
                     }
 
-                    HStack {
-                        Button("Add…") { model.addWorkspace() }
+                    HStack(spacing: 8) {
+                        Button("Add Workspace…") { model.addWorkspace() }
+                            .buttonStyle(.glass)
                         Button("Remove Selected") { model.removeSelectedWorkspace() }
+                            .buttonStyle(.glass)
+                            .tint(.red)
                             .disabled(model.workspaces.count <= 1)
+                        Spacer()
                     }
 
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(model.workspaces) { workspace in
-                                Text(workspace.path)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(model.workspaces) { workspace in
+                        Text(workspace.path)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                            .textSelection(.enabled)
                     }
-                    .frame(maxHeight: 100)
                 }
-            }
 
-            GroupBox("Pairing") {
-                HStack(spacing: 12) {
-                    Text(model.pairingCode.isEmpty ? "(not generated)" : model.pairingCode)
-                        .font(.system(.title3, design: .monospaced).weight(.semibold))
-                        .frame(minWidth: 120, alignment: .leading)
-
-                    Button("Generate Pairing Code") {
-                        model.generatePairingCode()
+                Section("Pairing") {
+                    LabeledContent("Code") {
+                        Text(model.pairingCode.isEmpty ? "—" : model.pairingCode)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
                     }
-                    Button("Copy Code") {
-                        model.copyPairingCode()
+                    HStack(spacing: 8) {
+                        Button("Generate Code") { model.generatePairingCode() }
+                            .buttonStyle(.glass)
+                        Button("Copy") { model.copyPairingCode() }
+                            .buttonStyle(.glass)
+                            .disabled(model.pairingCode.isEmpty)
+                        Spacer()
                     }
-                    .disabled(model.pairingCode.isEmpty)
                 }
-            }
 
-            GroupBox("Permissions") {
-                VStack(alignment: .leading, spacing: 8) {
+                Section("Permissions") {
                     Toggle("Allow command execution", isOn: $model.allowExecRun)
-                        .onChange(of: model.allowExecRun) { _ in model.applyPermissions() }
-                    Toggle("Allow writes / applyPatch / git stage+commit", isOn: $model.allowWritesApplyPatch)
-                        .onChange(of: model.allowWritesApplyPatch) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowExecRun) { model.applyPermissions() }
+                    Toggle("Allow writes / apply patch / git stage+commit", isOn: $model.allowWritesApplyPatch)
+                        .onChange(of: model.allowWritesApplyPatch) { model.applyPermissions() }
                     Toggle("Allow git push", isOn: $model.allowGitPush)
-                        .onChange(of: model.allowGitPush) { _ in model.applyPermissions() }
-                    Toggle("Require confirmation for git push", isOn: $model.requireGitPushConfirmation)
-                        .onChange(of: model.requireGitPushConfirmation) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowGitPush) { model.applyPermissions() }
+                    Toggle("Require git push confirmation", isOn: $model.requireGitPushConfirmation)
+                        .onChange(of: model.requireGitPushConfirmation) { model.applyPermissions() }
                     Toggle("Allow Claude Code (bridge.claude.run)", isOn: $model.allowClaudeRun)
-                        .onChange(of: model.allowClaudeRun) { _ in model.applyPermissions() }
+                        .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
                 }
-            }
 
-            GroupBox("Active Command") {
-                VStack(alignment: .leading, spacing: 8) {
+                Section("Active Command") {
                     if let active = model.activeCommand {
-                        statusRow("Command ID", active.commandId)
-                        statusRow("State", active.state.rawValue)
-                        statusRow("CWD", active.cwd)
-                        statusRow("Started", active.startedAt)
+                        LabeledContent("Command ID") {
+                            Text(active.commandId)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        LabeledContent("State") {
+                            Text(active.state.rawValue)
+                                .foregroundStyle(.secondary)
+                        }
+                        LabeledContent("CWD") {
+                            Text(active.cwd)
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        LabeledContent("Started") {
+                            Text(active.startedAt)
+                                .foregroundStyle(.secondary)
+                        }
 
                         Text(active.command)
                             .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Text("stdout / stderr tail")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
 
                         ScrollView {
                             Text(active.stdoutTail + (active.stderrTail.isEmpty ? "" : "\n\n[stderr]\n" + active.stderrTail))
                                 .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                         }
-                        .frame(minHeight: 120, maxHeight: 180)
+                        .frame(minHeight: 100, maxHeight: 160)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 6))
 
                         Button("Cancel Active Command") {
                             model.cancelActiveCommand()
                         }
+                        .buttonStyle(.glass)
+                        .tint(.red)
                     } else {
-                        Text("No active command")
-                            .foregroundStyle(.secondary)
+                        Label("No active command", systemImage: "terminal")
+                            .foregroundStyle(.tertiary)
+                            .font(.subheadline)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 6)
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Section("Configuration") {
+                    TextField("Server", text: $model.serverURLText)
+                    TextField("Device Name", text: $model.deviceName)
+                }
             }
-
-            GroupBox("Configuration") {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Server")
-                        TextField("ws://localhost:8080/ws", text: $model.serverURLText)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        Text("Device Name")
-                        TextField("My Mac", text: $model.deviceName)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    HStack {
-                        Button("Reconnect") { model.reconnect() }
-                        Spacer()
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .onChange(of: model.statusMessage) {
+                guard !model.statusMessage.isEmpty else { return }
+                transientTask?.cancel()
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    transientMessage = model.statusMessage
+                }
+                transientTask = Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        transientMessage = nil
                     }
                 }
             }
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Button(action: {}) {
+                        HStack(spacing: 6) {
+                            if let msg = transientMessage {
+                                Text(msg)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            } else {
+                                Circle()
+                                    .fill(connectionDotColor)
+                                    .frame(width: 8, height: 8)
+                                Text(model.connectionStateLabel.capitalized)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            }
+                        }
+                        .animation(.easeInOut(duration: 0.15), value: transientMessage)
+                    }
+                    .buttonStyle(.glass)
+                    .allowsHitTesting(false)
+                    .animation(.spring(duration: 0.25), value: transientMessage)
+                }
 
-            if !model.statusMessage.isEmpty {
-                Text(model.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                ToolbarItem(placement: .primaryAction) {
+                    HStack(spacing: 6) {
+                        if model.pairingCode.isEmpty {
+                            Button("Get Pairing Code") { model.generatePairingCode() }
+                                .buttonStyle(.glass)
+                        }
+                        Button("", systemImage: "arrow.clockwise") {
+                            model.reconnect()
+                        }
+                        .buttonStyle(.glass)
+                    }
+                }
+                .sharedBackgroundVisibility(.hidden)
             }
-
-            Spacer()
-        }
-        .padding(20)
-    }
-
-    private func statusRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label + ":")
-                .frame(width: 140, alignment: .leading)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
         }
     }
 }

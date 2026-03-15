@@ -1,10 +1,10 @@
-// swift-tools-version: 5.9
+// swift-tools-version: 6.2
 import PackageDescription
 
 let package = Package(
     name: "AbyssBridge",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v26),
     ],
     products: [
         .executable(name: "AbyssBridge", targets: ["AbyssBridgeApp"]),
@@ -17,7 +17,11 @@ let package = Package(
             name: "AbyssBridgeApp",
             dependencies: [
                 .product(name: "BridgeCore", package: "BridgeCore"),
+            ],
+            resources: [
+                .process("Assets.xcassets"),
             ]
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )

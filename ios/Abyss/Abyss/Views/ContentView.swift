@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
     @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
+    @EnvironmentObject private var gmailAuthManager: GmailAuthManager
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = false
     @State private var showEventTimeline = false
@@ -32,6 +33,10 @@ struct ContentView: View {
                             isTypingMode: $isTypingMode,
                             typedMessage: $typedMessage
                         )
+                        .onAppear { vm.setGmailAuthManager(gmailAuthManager) }
+                        .onChange(of: chatList.selectedChatId) { _, _ in
+                            viewModel?.setGmailAuthManager(gmailAuthManager)
+                        }
                     } else {
                         emptyState
                     }

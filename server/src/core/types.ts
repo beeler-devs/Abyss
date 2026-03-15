@@ -63,6 +63,9 @@ export interface PendingCursorWebhookRecord {
 export interface SessionState {
   sessionId: string;
   githubToken?: string;
+  gmailAccessToken?: string;
+  gmailRefreshToken?: string;
+  gmailTokenExpiresAt?: number;
   history: ConversationTurn[];
   pendingToolCalls: Map<string, PendingToolCall>;
   toolResultResolvers: Map<

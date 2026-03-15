@@ -5,6 +5,7 @@ struct SettingsView: View {
     let pairedBridgeDevices: [PairedBridgeDevice]
     let bridgePairingMessage: String?
     let onPairComputer: ((String, String?) -> Void)?
+    @EnvironmentObject private var gmailAuthManager: GmailAuthManager
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("recordingMode") private var recordingModeRaw = RecordingMode.vadAuto.rawValue
@@ -110,6 +111,45 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.orange)
                     }
+                }
+
+                Section("Gmail") {
+                    if gmailAuthManager.isAuthenticated {
+                        HStack {
+                            Label("Connected", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                            Spacer()
+                            Button("Sign out") {
+                                gmailAuthManager.signOut()
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        }
+                    } else {
+                        Button {
+                            Task { await gmailAuthManager.authenticate() }
+                        } label: {
+                            HStack {
+                                Label("Connect Gmail", systemImage: "envelope")
+                                if gmailAuthManager.isAuthenticating {
+                                    Spacer()
+                                    ProgressView().scaleEffect(0.8)
+                                }
+                            }
+                        }
+                        .disabled(gmailAuthManager.isAuthenticating)
+                    }
+
+                    if let error = gmailAuthManager.authError {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+
+                    Text("Allows Abyss to read, search, and send emails on your behalf.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Bridge") {

@@ -1,5 +1,19 @@
 import Foundation
 
+enum VoiceMode: String, CaseIterable {
+    case local
+    case novaSonic
+
+    var displayName: String {
+        switch self {
+        case .local:
+            return "Local"
+        case .novaSonic:
+            return "Nova Sonic"
+        }
+    }
+}
+
 /// Centralized configuration loader.
 /// Reads runtime values from UserDefaults, Secrets.plist (git-ignored), Info.plist, or environment.
 enum Config {
@@ -132,6 +146,11 @@ enum Config {
         backendWSURL != nil
     }
 
+    static var voiceMode: VoiceMode {
+        let raw = UserDefaults.standard.string(forKey: "voiceMode") ?? VoiceMode.local.rawValue
+        return VoiceMode(rawValue: raw) ?? .local
+    }
+
     // MARK: - GitHub
 
     /// GitHub OAuth App client ID.
@@ -139,6 +158,15 @@ enum Config {
         valueFromSecretsPlist("GITHUB_CLIENT_ID")
             ?? valueFromInfoPlist("GITHUB_CLIENT_ID")
             ?? valueFromEnvironment("GITHUB_CLIENT_ID")
+    }
+
+    // MARK: - Google / Gmail
+
+    /// Google OAuth client ID for Gmail integration.
+    static var googleClientId: String? {
+        valueFromSecretsPlist("GOOGLE_CLIENT_ID")
+            ?? valueFromInfoPlist("GOOGLE_CLIENT_ID")
+            ?? valueFromEnvironment("GOOGLE_CLIENT_ID")
     }
 
     /// HTTP base URL of the backend, derived from the WebSocket URL by swapping scheme.

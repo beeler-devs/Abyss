@@ -8,4 +8,5 @@ enum AppLogger {
     static let conductor = Logger(subsystem: subsystem, category: "conductor")
     static let conversation = Logger(subsystem: subsystem, category: "conversation")
     static let tooling = Logger(subsystem: subsystem, category: "tooling")
+    static let interaction = Logger(subsystem: subsystem, category: "interaction")
 }

@@ -174,7 +174,7 @@ final class MockConductorClient: ConductorClient, @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func connect(sessionId: String, githubToken: String?) async throws {
+    func connect(sessionId: String, githubToken: String?, gmailAccessToken: String? = nil, gmailRefreshToken: String? = nil, gmailTokenExpiresAt: Double? = nil) async throws {
         lock.withLock {
             connectCallCount += 1
         }
