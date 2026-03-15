@@ -460,7 +460,10 @@ struct BridgeStatusView: View {
 
                     HStack(spacing: 8) {
                         Button("Add Workspace…") { model.addWorkspace() }
+                            .buttonStyle(.glass)
                         Button("Remove Selected") { model.removeSelectedWorkspace() }
+                            .buttonStyle(.glass)
+                            .tint(.red)
                             .disabled(model.workspaces.count <= 1)
                         Spacer()
                     }
@@ -476,12 +479,14 @@ struct BridgeStatusView: View {
                 Section("Pairing") {
                     LabeledContent("Code") {
                         Text(model.pairingCode.isEmpty ? "—" : model.pairingCode)
-                            .font(.system(.title2, design: .monospaced).weight(.semibold))
+                            .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled)
                     }
                     HStack(spacing: 8) {
                         Button("Generate Code") { model.generatePairingCode() }
+                            .buttonStyle(.glass)
                         Button("Copy") { model.copyPairingCode() }
+                            .buttonStyle(.glass)
                             .disabled(model.pairingCode.isEmpty)
                         Spacer()
                     }
