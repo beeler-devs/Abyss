@@ -48,10 +48,41 @@ ios/VoiceIDE/**
 
 # Node / TypeScript
 node_modules/
+**/node_modules/
+
+# TypeScript/Node build output
+dist/
+**/dist/
+*.tsbuildinfo
 
 # Backend (TypeScript compiled output)
 backend/dist/
 
+# Server build
+server/dist/
+
+# Test/coverage output
+coverage/
+**/coverage/
+.nyc_output/
+
+# Turborepo / monorepo caches
+.turbo/
+.turbo
+
+# Next.js (if ever used)
+.next/
+out/
+
+# Node/npm
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.npm/
+.eslintcache
+
 # AWS CDK
 infra/cdk.out/
+infra/**/node_modules/
 .cdk.staging
