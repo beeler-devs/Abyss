@@ -101,8 +101,16 @@ enum Config {
     // MARK: - Conductor Backend
 
     /// WebSocket URL used by the Phase 2 server conductor (e.g. ws://192.168.1.20:8080/ws).
+    /// Priority: in-app setting → Secrets.plist → Info.plist → environment.
     static var backendWSURL: URL? {
-        let raw = valueFromSecretsPlist("BACKEND_WS_URL")
+        let raw: String? = {
+            if let v = UserDefaults.standard.string(forKey: "backendWSURL")?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !v.isEmpty {
+                return v
+            }
+            return nil
+        }()
+            ?? valueFromSecretsPlist("BACKEND_WS_URL")
             ?? valueFromInfoPlist("BACKEND_WS_URL")
             ?? valueFromEnvironment("BACKEND_WS_URL")
 

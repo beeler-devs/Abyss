@@ -37,6 +37,16 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>elb.amazonaws.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Abyss uses the microphone to listen to your voice for speech-to-text and voice commands.</string>

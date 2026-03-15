@@ -11,6 +11,7 @@ struct SettingsView: View {
     @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
+    @AppStorage("backendWSURL") private var backendWSURL = ""
 
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -32,6 +33,25 @@ struct SettingsView: View {
                         Label("Appearance", systemImage: "sun.max")
                     }
                     .pickerStyle(.menu)
+                }
+
+                Section("Server") {
+                    TextField("ws://host:8080/ws", text: $backendWSURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(.system(.body, design: .monospaced))
+
+                    if backendWSURL.isEmpty {
+                        Text("Using default from Secrets.plist or Info.plist.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if Config.backendWSURL != nil {
+                        Label("Connected", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                    } else {
+                        Label("Invalid URL — must start with ws:// or wss://", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
 
                 Section("Recording") {
