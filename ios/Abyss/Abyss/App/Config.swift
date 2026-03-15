@@ -1,19 +1,5 @@
 import Foundation
 
-enum VoiceMode: String, CaseIterable {
-    case local
-    case novaSonic
-
-    var displayName: String {
-        switch self {
-        case .local:
-            return "Local"
-        case .novaSonic:
-            return "Nova Sonic"
-        }
-    }
-}
-
 /// Centralized configuration loader.
 /// Reads runtime values from UserDefaults, Secrets.plist (git-ignored), Info.plist, or environment.
 enum Config {
@@ -136,11 +122,6 @@ enum Config {
 
     static var isBackendWSConfigured: Bool {
         backendWSURL != nil
-    }
-
-    static var voiceMode: VoiceMode {
-        let raw = UserDefaults.standard.string(forKey: "voiceMode") ?? VoiceMode.local.rawValue
-        return VoiceMode(rawValue: raw) ?? .local
     }
 
     // MARK: - GitHub

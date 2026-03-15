@@ -29,7 +29,6 @@ final class ConversationAudioPipeline: ObservableObject {
     )
 
     private var recordingMode: RecordingMode = .vadAuto
-    private var voiceMode: VoiceMode = Config.voiceMode
     private var isChatActive = false
     private var isMuted = false
     private var isStoppingRecording = false
@@ -69,7 +68,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func preloadTranscriber() {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         let transcriber = self.transcriber
         Task {
             await transcriber.preload()
@@ -79,14 +78,10 @@ final class ConversationAudioPipeline: ObservableObject {
     func updateRecordingMode(_ mode: RecordingMode) {
         guard recordingMode != mode else { return }
         recordingMode = mode
+        voiceActivityDetector.stopMonitoring()
         if mode == .pushToTalk {
-            voiceActivityDetector.stopMonitoring()
+            preloadTranscriber()
         }
-    }
-
-    func updateVoiceMode(_ mode: VoiceMode) {
-        guard voiceMode != mode else { return }
-        voiceMode = mode
         Task { await refreshLiveConversationState() }
     }
 
@@ -116,15 +111,6 @@ final class ConversationAudioPipeline: ObservableObject {
     func micPressed() {
         guard recordingMode == .pushToTalk else { return }
         guard isChatActive else { return }
-        if voiceMode == .novaSonic {
-            Task {
-                if appState == .speaking {
-                    await bargeIn(reason: "ptt_barge_in")
-                }
-                await startRemoteVoiceCapture()
-            }
-            return
-        }
         guard !transcriber.isListening, !isStartingRecording else { return }
         Task {
             if appState == .speaking {
@@ -136,10 +122,6 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func micReleased() {
         guard recordingMode == .pushToTalk else { return }
-        if voiceMode == .novaSonic {
-            Task { await stopRemoteVoiceCapture() }
-            return
-        }
         guard !isStoppingRecording else { return }
         guard transcriber.isListening || isStartingRecording else { return }
         Task { await stopListeningAndProcess() }
@@ -168,7 +150,7 @@ final class ConversationAudioPipeline: ObservableObject {
             await refreshLiveConversationState()
         case .thinking, .speaking, .error:
             voiceActivityDetector.stopMonitoring()
-            if voiceMode == .local, transcriber.isListening && !isStoppingRecording {
+            if recordingMode == .pushToTalk, transcriber.isListening && !isStoppingRecording {
                 await stopListeningSilently()
             }
         case .listening, .transcribing:
@@ -177,7 +159,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handlePartialTranscript(_ text: String) {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         guard !isPlaceholderTranscript(text) else { return }
         partialTranscript = text
         eventBus.emit(Event.transcriptPartial(text, sessionId: sessionId))
@@ -220,14 +202,20 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func refreshLiveConversationState() async {
-        if voiceMode == .novaSonic {
+        if recordingMode == .vadAuto {
+            if transcriber.isListening && !isStoppingRecording {
+                await stopListeningSilently()
+            }
             await refreshRemoteVoiceConversationState()
             return
         }
 
+        await stopRemoteVoiceCapture()
+
         if canRunLiveConversation {
-            guard appState != .speaking, appState != .thinking else { return }
-            await startListening()
+            if appState != .speaking && appState != .thinking && !transcriber.isListening && !isStartingRecording {
+                setState(.idle)
+            }
             return
         }
 
@@ -245,7 +233,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private func handleMuteActivated() async {
         voiceActivityDetector.stopMonitoring()
 
-        if voiceMode == .novaSonic {
+        if recordingMode == .vadAuto {
             await stopRemoteVoiceCapture()
             if appState == .listening || appState == .transcribing || appState == .idle {
                 setState(.idle)
@@ -263,56 +251,8 @@ final class ConversationAudioPipeline: ObservableObject {
         }
     }
 
-    private func startListening() async {
-        guard voiceMode == .local else { return }
-        guard recordingMode == .vadAuto else { return }
-        guard canRunLiveConversation else { return }
-        guard !isStoppingRecording else { return }
-        guard !isStartingRecording else { return }
-        isStartingRecording = true
-        defer { isStartingRecording = false }
-
-        partialTranscript = ""
-        setState(.listening)
-
-        let setStateEvent = Event.toolCall(
-            name: ConvoSetStateTool.name,
-            arguments: encode(ConvoSetStateTool.Arguments(state: AppState.listening.rawValue)),
-            sessionId: sessionId
-        )
-        eventBus.emit(setStateEvent)
-        if case .toolCall(let toolCall) = setStateEvent.kind {
-            await toolRouter.dispatch(toolCall)
-        }
-
-        if transcriber.isListening {
-            if !voiceActivityDetector.isMonitoring {
-                voiceActivityDetector.startMonitoring()
-            }
-            return
-        }
-
-        let sttEvent = Event.toolCall(
-            name: STTStartTool.name,
-            arguments: encode(STTStartTool.Arguments()),
-            sessionId: sessionId
-        )
-        eventBus.emit(sttEvent)
-        if case .toolCall(let toolCall) = sttEvent.kind {
-            let result = await toolRouter.dispatch(toolCall)
-            if case .toolResult(let toolResult) = result.kind, toolResult.isError {
-                await handleError(toolResult.error ?? "STT start failed")
-                return
-            }
-        }
-
-        if !voiceActivityDetector.isMonitoring {
-            voiceActivityDetector.startMonitoring()
-        }
-    }
-
     private func startListeningPTT() async {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         guard !isStoppingRecording else { return }
         guard !isStartingRecording else { return }
         isStartingRecording = true
@@ -348,7 +288,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func stopListeningSilently() async {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         guard transcriber.isListening else { return }
 
         isStoppingRecording = true
@@ -367,7 +307,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func stopListeningAndProcess() async {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         guard transcriber.isListening else { return }
 
         AppLogger.conversation.debug("Stopping recording; state=\(self.appState.rawValue, privacy: .public)")
@@ -447,7 +387,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private func bargeIn(reason: String) async {
         voiceActivityDetector.stopMonitoring()
 
-        if voiceMode == .local {
+        if recordingMode == .pushToTalk {
             let stopEvent = Event.toolCall(
                 name: TTSStopTool.name,
                 arguments: encode(TTSStopTool.Arguments()),
@@ -476,7 +416,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
-        guard voiceMode == .novaSonic else { return }
+        guard recordingMode == .vadAuto else { return }
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
         do {
             if !remotePlaybackPrepared {
@@ -494,7 +434,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handleAssistantAudioEnd() async {
-        guard voiceMode == .novaSonic, remotePlaybackPrepared else { return }
+        guard recordingMode == .vadAuto, remotePlaybackPrepared else { return }
         await MainActor.run {
             StreamingPCMPlayer.shared.finishReceivingAudio()
         }
@@ -502,7 +442,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handleAssistantAudioInterrupted() async {
-        guard voiceMode == .novaSonic else { return }
+        guard recordingMode == .vadAuto else { return }
         await stopRemoteAssistantAudio()
     }
 
@@ -523,7 +463,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func startRemoteVoiceCapture() async {
-        guard voiceMode == .novaSonic else { return }
+        guard recordingMode == .vadAuto else { return }
         guard !remoteVoiceCapture.isStreaming else { return }
         do {
             partialTranscript = ""

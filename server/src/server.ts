@@ -17,7 +17,7 @@ import { VoiceProvider } from "./voice/types.js";
 
 const PORT = parseInteger(process.env.PORT, 8080);
 const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "bedrock").toLowerCase() === "anthropic" ? "anthropic" : "bedrock";
-const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "local").toLowerCase();
+const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "nova-sonic").toLowerCase();
 const MAX_EVENT_BYTES = parseInteger(process.env.MAX_EVENT_BYTES, 65_536);
 const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);

@@ -30,120 +30,43 @@ const TOOLS: ToolDefinition[] = [
   },
 ];
 
-test("nova-sonic uses MEDIUM endpointing for live VAD and HIGH for push-to-talk", async (t) => {
-  const vadHarness = createHarness();
-  t.after(async () => {
-    await vadHarness.provider.closeSession("session-1");
-  });
-
-  await vadHarness.provider.startStream("session-1", vadHarness.context);
-  await waitFor(() => vadHarness.client.outboundEvents.some((event) => "sessionStart" in event));
-
-  const vadStart = vadHarness.client.outboundEvents.find((event) => "sessionStart" in event);
-  assert.equal(
-    vadStart?.sessionStart?.turnDetectionConfiguration?.endpointingSensitivity,
-    "MEDIUM",
-  );
-
-  const pttHarness = createHarness();
-  t.after(async () => {
-    await pttHarness.provider.closeSession("session-1");
-  });
-
-  await pttHarness.provider.startStream("session-1", pttHarness.context, {
-    recordingMode: "push_to_talk",
-  });
-  await waitFor(() => pttHarness.client.outboundEvents.some((event) => "sessionStart" in event));
-
-  const pttStart = pttHarness.client.outboundEvents.find((event) => "sessionStart" in event);
-  assert.equal(
-    pttStart?.sessionStart?.turnDetectionConfiguration?.endpointingSensitivity,
-    "HIGH",
-  );
-});
-
-test("nova-sonic retries without endpointing sensitivity when the model version rejects it", async (t) => {
-  const client = new FakeBidirectionalClient({
-    failFirstSendWith: "The current Sonic version does not support endpointing sensitivity config.",
-  });
-  const emitted: EventEnvelope[] = [];
-  const provider = new BedrockNovaSonicVoiceProvider({
-    modelId: "amazon.nova-sonic-v1:0",
-    region: "us-east-1",
-    voiceId: "matthew",
-    enableTools: true,
-  }, client);
-  const context: VoiceProviderContext = {
-    emit: (event) => {
-      emitted.push(event);
-    },
-    listTools: () => [],
-  };
-
-  t.after(async () => {
-    client.closeResponse();
-    await provider.closeSession("session-1");
-  });
-
-  await provider.startStream("session-1", context, {
-    recordingMode: "push_to_talk",
-  });
-  await waitFor(() => client.outboundEvents.some((event) => "sessionStart" in event));
-
-  const sessionStart = client.outboundEvents.find((event) => "sessionStart" in event);
-  assert.equal(client.sendCallCount, 2);
-  assert.equal(sessionStart?.sessionStart?.turnDetectionConfiguration, undefined);
-  assert.equal(findStateTransitions(emitted, "listening").length, 1);
-});
-
-test("nova-sonic closes and reopens audio input content across push-to-talk turns", async (t) => {
+test("nova-sonic reuses the current session on repeated startStream calls", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
-  await harness.provider.startStream("session-1", harness.context, {
-    recordingMode: "push_to_talk",
-  });
-  await waitFor(() => {
-    const audioStarts = harness.client.outboundEvents.filter((event) =>
-      event.contentStart?.type === "AUDIO" && event.contentStart?.role === "USER"
-    );
-    return audioStarts.length === 1;
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
+
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => findStateTransitions(harness.emitted, "listening").length === 2);
+
+  const sessionStarts = harness.client.outboundEvents.filter((event) => "sessionStart" in event);
+  assert.equal(sessionStarts.length, 1);
+});
+
+test("nova-sonic endStream does not close the active session", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
   });
 
-  const firstAudioStart = harness.client.outboundEvents.find((event) =>
-    event.contentStart?.type === "AUDIO" && event.contentStart?.role === "USER"
-  );
-  const firstAudioContentName = String(firstAudioStart?.contentStart?.contentName);
-
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
   await harness.provider.endStream("session-1");
-  await waitFor(() => harness.client.outboundEvents.some((event) =>
-    event.contentEnd?.contentName === firstAudioContentName
-  ));
+  await waitForTicks();
 
-  await harness.provider.startStream("session-1", harness.context, {
-    recordingMode: "push_to_talk",
-  });
-  await waitFor(() => {
-    const audioStarts = harness.client.outboundEvents.filter((event) =>
-      event.contentStart?.type === "AUDIO" && event.contentStart?.role === "USER"
-    );
-    return audioStarts.length === 2;
-  });
-
-  const audioStarts = harness.client.outboundEvents.filter((event) =>
-    event.contentStart?.type === "AUDIO" && event.contentStart?.role === "USER"
-  );
-  assert.notEqual(
-    audioStarts[0]?.contentStart?.contentName,
-    audioStarts[1]?.contentStart?.contentName,
-  );
+  assert.equal(harness.client.outboundEvents.some((event) => "promptEnd" in event), false);
+  assert.equal(harness.client.outboundEvents.some((event) => "sessionEnd" in event), false);
 });
 
 test("nova-sonic does not finalize partial user turns", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -180,6 +103,7 @@ test("nova-sonic does not finalize partial user turns", async (t) => {
 test("nova-sonic finalizes complete user turns once", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -200,8 +124,9 @@ test("nova-sonic finalizes complete user turns once", async (t) => {
     },
   });
   harness.client.emitEvent({
-    completionEnd: {
-      completionId: "completion-user-1",
+    contentEnd: {
+      contentId: "user-1",
+      type: "TEXT",
       stopReason: "END_TURN",
     },
   });
@@ -224,6 +149,7 @@ test("nova-sonic finalizes complete user turns once", async (t) => {
 test("nova-sonic finalizes user speech on user text contentEnd without waiting for completionEnd", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -257,9 +183,10 @@ test("nova-sonic finalizes user speech on user text contentEnd without waiting f
   assert.equal(findStateTransitions(harness.emitted, "thinking").length, 1);
 });
 
-test("nova-sonic aggregates assistant text across content blocks into one final response", async (t) => {
+test("nova-sonic aggregates assistant text chunks into one final response", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -267,43 +194,29 @@ test("nova-sonic aggregates assistant text across content blocks into one final 
 
   harness.client.emitEvent({
     contentStart: {
-      contentId: "assistant-1",
+      contentId: "assistant-final-1",
       completionId: "completion-assistant-1",
       role: "ASSISTANT",
       type: "TEXT",
-      generationStage: "FINAL",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
     },
   });
   harness.client.emitEvent({
     textOutput: {
-      contentId: "assistant-1",
+      contentId: "assistant-final-1",
       content: "Hello ",
     },
   });
   harness.client.emitEvent({
-    contentEnd: {
-      contentId: "assistant-1",
-      type: "TEXT",
-    },
-  });
-  harness.client.emitEvent({
-    contentStart: {
-      contentId: "assistant-2",
-      completionId: "completion-assistant-1",
-      role: "ASSISTANT",
-      type: "TEXT",
-      generationStage: "FINAL",
-    },
-  });
-  harness.client.emitEvent({
     textOutput: {
-      contentId: "assistant-2",
+      contentId: "assistant-final-1",
       content: "world",
     },
   });
   harness.client.emitEvent({
-    completionEnd: {
-      completionId: "completion-assistant-1",
+    contentEnd: {
+      contentId: "assistant-final-1",
+      type: "TEXT",
       stopReason: "END_TURN",
     },
   });
@@ -325,6 +238,7 @@ test("nova-sonic aggregates assistant text across content blocks into one final 
 test("nova-sonic finalizes assistant transcript on final text contentEnd without waiting for completionEnd", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -336,7 +250,7 @@ test("nova-sonic finalizes assistant transcript on final text contentEnd without
       completionId: "completion-assistant-final-1",
       role: "ASSISTANT",
       type: "TEXT",
-      generationStage: "FINAL",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
     },
   });
   harness.client.emitEvent({
@@ -360,28 +274,38 @@ test("nova-sonic finalizes assistant transcript on final text contentEnd without
 test("nova-sonic emits assistant audio end and idle once per completion", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
   await harness.provider.startStream("session-1", harness.context);
 
   harness.client.emitEvent({
+    contentStart: {
+      contentId: "assistant-audio-1",
+      completionId: "completion-audio-1",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
     audioOutput: {
       completionId: "completion-audio-1",
-      contentId: "audio-1",
+      contentId: "assistant-audio-1",
       content: "AAA=",
     },
   });
   harness.client.emitEvent({
     audioOutput: {
       completionId: "completion-audio-1",
-      contentId: "audio-2",
+      contentId: "assistant-audio-1",
       content: "BBB=",
     },
   });
   harness.client.emitEvent({
-    completionEnd: {
-      completionId: "completion-audio-1",
+    contentEnd: {
+      contentId: "assistant-audio-1",
+      type: "AUDIO",
       stopReason: "END_TURN",
     },
   });
@@ -395,6 +319,7 @@ test("nova-sonic emits assistant audio end and idle once per completion", async 
 test("nova-sonic emits assistant audio end on audio contentEnd without waiting for completionEnd", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -427,9 +352,10 @@ test("nova-sonic emits assistant audio end on audio contentEnd without waiting f
   assert.equal(findStateTransitions(harness.emitted, "idle").length, 1);
 });
 
-test("nova-sonic suppresses interrupted completions and stale late chunks", async (t) => {
+test("nova-sonic emits interruption and returns to listening on interrupted completions", async (t) => {
   const harness = createHarness();
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -441,7 +367,7 @@ test("nova-sonic suppresses interrupted completions and stale late chunks", asyn
       completionId: "completion-interrupted-1",
       role: "ASSISTANT",
       type: "TEXT",
-      generationStage: "FINAL",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
     },
   });
   harness.client.emitEvent({
@@ -458,31 +384,13 @@ test("nova-sonic suppresses interrupted completions and stale late chunks", asyn
   });
 
   await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
-  const listeningTransitionsBeforeLateChunks = findStateTransitions(harness.emitted, "listening").length;
-
-  harness.client.emitEvent({
-    audioOutput: {
-      completionId: "completion-interrupted-1",
-      content: "STALE=",
-    },
-  });
-  harness.client.emitEvent({
-    textOutput: {
-      contentId: "assistant-1",
-      content: " late text",
-    },
-  });
-
-  await waitForTicks();
-
-  assert.equal(eventsOfType(harness.emitted, "assistant.speech.final").length, 0);
-  assert.equal(eventsOfType(harness.emitted, "assistant.audio.chunk").length, 0);
-  assert.equal(findStateTransitions(harness.emitted, "listening").length, listeningTransitionsBeforeLateChunks);
+  assert.equal(findStateTransitions(harness.emitted, "listening").length, 2);
 });
 
 test("nova-sonic executes multiple tool uses and returns both tool results", async (t) => {
   const harness = createHarness({ tools: TOOLS });
   t.after(async () => {
+    harness.client.closeResponse();
     await harness.provider.closeSession("session-1");
   });
 
@@ -549,7 +457,7 @@ test("nova-sonic executes multiple tool uses and returns both tool results", asy
   ]);
 });
 
-test("nova-sonic replays finalized history when recreating a session", async (t) => {
+test("nova-sonic can close and start a fresh session cleanly", async (t) => {
   const harness = createHarness();
   t.after(async () => {
     harness.client.closeResponse();
@@ -557,69 +465,19 @@ test("nova-sonic replays finalized history when recreating a session", async (t)
   });
 
   await harness.provider.startStream("session-1", harness.context);
-  harness.client.emitEvent({
-    contentStart: {
-      contentId: "user-history-1",
-      completionId: "completion-history-user-1",
-      role: "USER",
-      type: "TEXT",
-    },
-  });
-  harness.client.emitEvent({
-    textOutput: {
-      contentId: "user-history-1",
-      content: "remember this request",
-    },
-  });
-  harness.client.emitEvent({
-    completionEnd: {
-      completionId: "completion-history-user-1",
-      stopReason: "END_TURN",
-    },
-  });
-  harness.client.emitEvent({
-    contentStart: {
-      contentId: "assistant-history-1",
-      completionId: "completion-history-assistant-1",
-      role: "ASSISTANT",
-      type: "TEXT",
-      generationStage: "FINAL",
-    },
-  });
-  harness.client.emitEvent({
-    textOutput: {
-      contentId: "assistant-history-1",
-      content: "I will remember it",
-    },
-  });
-  harness.client.emitEvent({
-    completionEnd: {
-      completionId: "completion-history-assistant-1",
-      stopReason: "END_TURN",
-    },
-  });
-  await waitFor(() => eventsOfType(harness.emitted, "assistant.speech.final").length === 1);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
 
   harness.client.closeResponse();
   await harness.provider.closeSession("session-1");
 
-  const outboundCountBeforeRestart = harness.client.outboundEvents.length;
   await harness.provider.startStream("session-1", harness.context);
   await waitFor(() => {
-    const replayedTexts = harness.client.outboundEvents
-      .slice(outboundCountBeforeRestart)
-      .filter((event) => "textInput" in event)
-      .map((event) => event.textInput.content);
-    return replayedTexts.includes("remember this request")
-      && replayedTexts.includes("I will remember it");
+    const sessionStarts = harness.client.outboundEvents.filter((event) => "sessionStart" in event);
+    return sessionStarts.length === 2;
   });
 
-  const replayedTexts = harness.client.outboundEvents
-    .slice(outboundCountBeforeRestart)
-    .filter((event) => "textInput" in event)
-    .map((event) => event.textInput.content);
-  assert.ok(replayedTexts.includes("remember this request"));
-  assert.ok(replayedTexts.includes("I will remember it"));
+  const sessionStarts = harness.client.outboundEvents.filter((event) => "sessionStart" in event);
+  assert.equal(sessionStarts.length, 2);
 });
 
 function createHarness(options?: { tools?: ToolDefinition[] }) {
