@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
+    @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = false
     @State private var showEventTimeline = false
@@ -9,6 +10,11 @@ struct ContentView: View {
     @State private var typedMessage = ""
     @State private var showSidebar = false
     @State private var activeChatId: UUID?
+    @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
+
+    private var recordingMode: RecordingMode {
+        RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
+    }
 
     private var viewModel: ConversationViewModel? {
         chatList.selectedChat?.viewModel
@@ -43,7 +49,7 @@ struct ContentView: View {
                         }
                     }
                     ToolbarItem(placement: .principal) {
-                        if let vm = viewModel {
+                        if let vm = viewModel, recordingMode != .pushToTalk {
                             StateIndicator(state: vm.appState, isMuted: vm.isMuted)
                         }
                     }
@@ -52,6 +58,7 @@ struct ContentView: View {
                             chatList.createChat()
                         } label: {
                             Image(systemName: "square.and.pencil")
+                                .offset(y: -1)
                                 .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                         }
                     }
@@ -60,10 +67,6 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 if let vm = viewModel {
                     SettingsView(
-                        useServerConductor: Binding(
-                            get: { vm.useServerConductor },
-                            set: { vm.setUseServerConductor($0) }
-                        ),
                         pairedBridgeDevices: vm.pairedBridgeDevices,
                         bridgePairingMessage: vm.bridgePairingMessage,
                         onPairComputer: { code, deviceName in
@@ -72,7 +75,6 @@ struct ContentView: View {
                     )
                 } else {
                     SettingsView(
-                        useServerConductor: .constant(false),
                         pairedBridgeDevices: [],
                         bridgePairingMessage: nil,
                         onPairComputer: nil
@@ -99,6 +101,9 @@ struct ContentView: View {
             )
             .frame(width: 280)
             .offset(x: showSidebar ? 0 : -280)
+        }
+        .sheet(item: $browserCoordinator.urlToOpen) { url in
+            InAppBrowserView(url: url)
         }
         .onAppear {
             if chatList.chats.isEmpty {
@@ -132,8 +137,13 @@ struct ContentView: View {
                 chatList.createChat()
             } label: {
                 Label("New Chat", systemImage: "plus.message")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .glassButtonBackground(cornerRadius: 20, colorScheme: colorScheme)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -302,12 +312,9 @@ private struct ChatContentView: View {
         RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
     }
 
-    /// In PTT mode, the button should stay red during both .listening and .transcribing,
-    /// because handlePartialTranscript flips to .transcribing when partials arrive while
-    /// the user is still holding. Recording doesn't stop until release.
     private func isPTTRecording(viewModel: ConversationViewModel, recordingMode: RecordingMode) -> Bool {
         if recordingMode == .pushToTalk {
-            return viewModel.appState == .listening || viewModel.appState == .transcribing
+            return viewModel.isPTTHeld
         }
         return viewModel.appState == .listening
     }
@@ -331,9 +338,19 @@ private struct ChatContentView: View {
             // Conversation transcript
             TranscriptView(
                 messages: viewModel.messages,
+                agentProgressCards: viewModel.agentProgressCards,
                 partialTranscript: viewModel.partialTranscript,
                 assistantPartialSpeech: viewModel.assistantPartialSpeech,
-                appState: viewModel.appState
+                appState: viewModel.appState,
+                onRefreshAgent: { viewModel.refreshAgentStatus(cardID: $0) },
+                onCancelAgent: { viewModel.cancelAgent(cardID: $0) },
+                onDismissAgent: { cardID in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.dismissAgentCard(cardID: cardID)
+                    }
+                },
+                onToggleAgentConversation: { viewModel.toggleConversationExpanded(cardID: $0) },
+                onToggleAgentExpanded: { viewModel.toggleAgentCardExpanded(cardID: $0) }
             )
 
             // Repository selection card (takes priority)
@@ -348,37 +365,12 @@ private struct ChatContentView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Agent progress cards
-            if !viewModel.agentProgressCards.isEmpty {
-                VStack(spacing: 10) {
-                    ForEach(Array(viewModel.agentProgressCards.prefix(2))) { card in
-                        AgentProgressCardView(
-                            card: card,
-                            onRefresh: { viewModel.refreshAgentStatus(cardID: card.id) },
-                            onCancel: { viewModel.cancelAgent(cardID: card.id) },
-                            onDismiss: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    viewModel.dismissAgentCard(cardID: card.id)
-                                }
-                            },
-                            onToggleConversation: {
-                                viewModel.toggleConversationExpanded(cardID: card.id)
-                            }
-                        )
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
-            }
-
             // Event timeline (collapsible)
             if showEventTimeline {
                 EventTimelineView(events: viewModel.eventBus.events)
                     .frame(maxHeight: 200)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
-
-            Divider()
 
             // Bottom controls
             HStack(alignment: .center, spacing: UIConstants.actionBarSpacing) {
@@ -389,12 +381,18 @@ private struct ChatContentView: View {
                     typedText: $typedMessage,
                     recordingMode: recordingMode,
                     isRecording: isPTTRecording(viewModel: viewModel, recordingMode: recordingMode),
+                    showEventTimeline: showEventTimeline,
                     onToggleMute: { viewModel.toggleMute() },
                     onInterruptSpeaking: { viewModel.interruptAssistantSpeech() },
                     onMicPressed: { viewModel.micPressed() },
                     onMicReleased: { viewModel.micReleased() },
                     onSendTyped: { text in
                         viewModel.sendTypedMessage(text)
+                    },
+                    onToggleEventTimeline: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showEventTimeline.toggle()
+                        }
                     }
                 )
 
@@ -408,15 +406,9 @@ private struct ChatContentView: View {
                             .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
                             .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                             .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
-                            .background(
-                                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                                    .fill(AppTheme.pillBackground(for: colorScheme))
-                            )
+                            .glassButtonBackground(cornerRadius: UIConstants.actionBarControlHeight / 2, colorScheme: colorScheme)
                     }
                     .buttonStyle(.plain)
-                } else {
-                    Color.clear
-                        .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
                 }
             }
             .padding(.horizontal, UIConstants.actionBarHorizontalPadding)
@@ -436,4 +428,5 @@ private struct ChatContentView: View {
 
 #Preview {
     ContentView(chatList: ChatListViewModel())
+        .environmentObject(InAppBrowserCoordinator())
 }

@@ -199,7 +199,7 @@ export class BedrockNovaProvider implements ModelProvider {
           content: resolved.map((toolCall) => ({
             toolUse: {
               toolUseId: toolCall.id,
-              name: toolCall.name,
+              name: toolCall.name.replace(/\./g, "_"),
               input: toolCall.input,
             },
           } as ContentBlock)),

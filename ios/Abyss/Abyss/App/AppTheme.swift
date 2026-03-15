@@ -184,4 +184,65 @@ enum AppTheme {
 
     /// Auth button background (loading).
     static let authButtonBackgroundLoading = Color.white.opacity(0.7)
+
+    // MARK: - Code Blocks
+
+    /// Fenced code block background (dark terminal-like).
+    static func codeBlockBackground(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255)
+            : Color(red: 38 / 255, green: 38 / 255, blue: 38 / 255)
+    }
+
+    /// Fenced code block text color.
+    static func codeBlockText(for colorScheme: ColorScheme) -> Color {
+        Color(red: 220 / 255, green: 220 / 255, blue: 220 / 255)
+    }
+
+    /// Fenced code block language label text.
+    static func codeBlockLabelText(for colorScheme: ColorScheme) -> Color {
+        Color.white.opacity(0.4)
+    }
+
+    /// Inline code background.
+    static func inlineCodeBackground(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.1)
+            : Color.black.opacity(0.06)
+    }
+}
+
+// MARK: - Glass / Pill Background Helpers
+
+extension View {
+    /// Liquid glass on iOS 26+; standard pill background on earlier OS versions.
+    @ViewBuilder
+    func glassButtonBackground(cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
+        if #available(iOS 26, *) {
+            self.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            self
+                .background(RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(AppTheme.pillBackground(for: colorScheme)))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1))
+        }
+    }
+
+    /// Glass background that turns solid red while recording (PTT active state).
+    /// Uses non-interactive glass so the long-press gesture isn't stolen by the glass effect.
+    @ViewBuilder
+    func pttButtonBackground(isRecording: Bool, cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
+        if isRecording {
+            self.background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color.red))
+        } else if #available(iOS 26, *) {
+            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            self
+                .background(RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(AppTheme.pillBackground(for: colorScheme)))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1))
+        }
+    }
 }

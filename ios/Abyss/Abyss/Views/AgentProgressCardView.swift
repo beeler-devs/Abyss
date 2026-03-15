@@ -7,33 +7,68 @@ struct AgentProgressCardView: View {
     let onCancel: () -> Void
     let onDismiss: () -> Void
     let onToggleConversation: () -> Void
+    let onToggleExpanded: () -> Void
+    @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(card.title)
-                        .font(.headline)
-                        .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+            header
 
-                    if let repository = card.repository {
-                        Text(repository)
-                            .font(.caption.monospaced())
-                            .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
-                            .lineLimit(1)
+            if card.isExpanded {
+                expandedContent
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(AppTheme.agentCardBackground(for: colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20)
+                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
+        )
+    }
+
+    private var header: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Button(action: onToggleExpanded) {
+                HStack(alignment: .top, spacing: 10) {
+                    VStack(alignment: .leading, spacing: card.isExpanded ? 6 : 0) {
+                        Text(card.displayTitle)
+                            .font(.headline)
+                            .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+                            .multilineTextAlignment(.leading)
+
+                        if card.isExpanded, let repository = card.repository {
+                            Text(repository)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
+                                .lineLimit(1)
+                        }
                     }
+
+                    Spacer(minLength: 0)
+
+                    if card.isExpanded {
+                        Text(card.statusLabel)
+                            .font(.caption.bold())
+                            .foregroundStyle(statusBadgeForeground)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(AppTheme.agentCardStatusBadgeBackground(foreground: statusBadgeForeground, colorScheme: colorScheme))
+                    }
+
+                    Image(systemName: card.isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
+                        .frame(width: 24, height: 24)
                 }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
 
-                Spacer()
-
-                Text(card.statusLabel)
-                    .font(.caption.bold())
-                    .foregroundStyle(statusBadgeForeground)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(AppTheme.agentCardStatusBadgeBackground(foreground: statusBadgeForeground, colorScheme: colorScheme))
-
+            if card.isExpanded {
                 Button(action: onDismiss) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .bold))
@@ -44,7 +79,11 @@ struct AgentProgressCardView: View {
                 }
                 .buttonStyle(.plain)
             }
+        }
+    }
 
+    private var expandedContent: some View {
+        Group {
             VStack(alignment: .leading, spacing: 12) {
                 ForEach(card.steps) { step in
                     HStack(alignment: .top, spacing: 10) {
@@ -139,15 +178,6 @@ struct AgentProgressCardView: View {
 
             footerMeta
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(AppTheme.agentCardBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
-        )
     }
 
     private var statusBadgeForeground: Color {
@@ -210,12 +240,12 @@ struct AgentProgressCardView: View {
             }
 
             if let prURL = card.prURL, let url = URL(string: prURL) {
-                Link("Open PR", destination: url)
+                Button("Open PR") { browserCoordinator.urlToOpen = url }
                     .font(.caption)
             }
 
             if let agentURL = card.agentURL, let url = URL(string: agentURL) {
-                Link("Open Agent Run", destination: url)
+                Button("Open Agent Run") { browserCoordinator.urlToOpen = url }
                     .font(.caption)
             }
         }
