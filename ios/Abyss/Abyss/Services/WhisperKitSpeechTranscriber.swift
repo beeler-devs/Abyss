@@ -27,7 +27,11 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     private var partialTranscriptionTask: Task<Void, Never>?
     private var partialTranscriptionInFlight = false
     private var lastPartialSampleCount = 0
-    private let partialDebounceNanoseconds: UInt64 = 250_000_000
+    private var lastYieldedPartialText = ""
+    private let partialDebounceNanoseconds: UInt64 = 700_000_000
+    private let partialMinimumNewAudioSeconds: Double = 0.75
+    private let partialFullContextLimitSeconds: Double = 12.0
+    private let partialTrailingWindowSeconds: Double = 8.0
     #endif
 
     var isListening: Bool {
@@ -98,6 +102,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             partialTranscriptionTask = nil
             partialTranscriptionInFlight = false
             lastPartialSampleCount = 0
+            lastYieldedPartialText = ""
             #endif
         }
 
@@ -332,7 +337,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             )? in
             guard _isListening, !isTornDown, !partialTranscriptionInFlight else { return nil }
             let sampleCount = audioBuffers.count
-            let minNewSamples = max(Int(inputSampleRate * 0.2), 1600)
+            let minNewSamples = max(Int(inputSampleRate * partialMinimumNewAudioSeconds), 1600)
             guard sampleCount - lastPartialSampleCount >= minNewSamples else { return nil }
 
             partialTranscriptionInFlight = true
@@ -358,7 +363,11 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         let minSamplesAtInputRate = Int(snapshot.inputRate * 0.35)
         guard snapshot.samples.count > minSamplesAtInputRate else { return }
 
-        let forWhisper = resampleTo16k(snapshot.samples, sourceRate: snapshot.inputRate)
+        let partialInputSamples = boundedPartialSamples(
+            from: snapshot.samples,
+            sourceRate: snapshot.inputRate
+        )
+        let forWhisper = resampleTo16k(partialInputSamples, sourceRate: snapshot.inputRate)
         guard forWhisper.count > 3200 else { return }
 
         do {
@@ -366,13 +375,22 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             if let text = results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines),
                text.count > 1,
                text != "Listening…" {
-                let shouldYield = lock.withLock { () -> Bool in
-                    guard _isListening, !isTornDown else { return false }
-                    accumulatedText = text
-                    return true
+                let mergedText = lock.withLock { () -> String? in
+                    guard _isListening, !isTornDown else { return nil }
+                    let nextText: String
+                    if usesFullContext(for: snapshot.samples.count, sourceRate: snapshot.inputRate) {
+                        nextText = Self.normalizeTranscript(text)
+                    } else {
+                        nextText = Self.mergePartialTranscript(existing: accumulatedText, trailing: text)
+                    }
+
+                    guard !nextText.isEmpty, nextText != lastYieldedPartialText else { return nil }
+                    accumulatedText = nextText
+                    lastYieldedPartialText = nextText
+                    return nextText
                 }
-                if shouldYield {
-                    snapshot.continuation?.yield(text)
+                if let mergedText {
+                    snapshot.continuation?.yield(mergedText)
                 }
             }
         } catch {
@@ -400,6 +418,64 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         lock.withLock {
             partialTranscriptionTask = task
         }
+    }
+
+    private func boundedPartialSamples(from samples: [Float], sourceRate: Double) -> [Float] {
+        guard !samples.isEmpty else { return samples }
+        guard !usesFullContext(for: samples.count, sourceRate: sourceRate) else { return samples }
+
+        let maxWindowSamples = Int(sourceRate * partialTrailingWindowSeconds)
+        guard maxWindowSamples > 0, samples.count > maxWindowSamples else { return samples }
+        return Array(samples.suffix(maxWindowSamples))
+    }
+
+    private func usesFullContext(for sampleCount: Int, sourceRate: Double) -> Bool {
+        guard sourceRate > 0 else { return true }
+        return Double(sampleCount) / sourceRate <= partialFullContextLimitSeconds
+    }
+
+    static func normalizeTranscript(_ text: String) -> String {
+        text
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func mergePartialTranscript(existing: String, trailing: String) -> String {
+        let normalizedExisting = normalizeTranscript(existing)
+        let normalizedTrailing = normalizeTranscript(trailing)
+
+        guard !normalizedExisting.isEmpty else { return normalizedTrailing }
+        guard !normalizedTrailing.isEmpty else { return normalizedExisting }
+
+        if normalizedExisting.hasSuffix(normalizedTrailing) {
+            return normalizedExisting
+        }
+
+        if normalizedTrailing.hasPrefix(normalizedExisting) {
+            return normalizedTrailing
+        }
+
+        let existingChars = Array(normalizedExisting)
+        let trailingChars = Array(normalizedTrailing)
+        let maxOverlap = min(existingChars.count, trailingChars.count)
+        let minOverlap = min(12, maxOverlap)
+
+        if maxOverlap >= minOverlap {
+            for overlap in stride(from: maxOverlap, through: minOverlap, by: -1) {
+                let existingSuffix = existingChars.suffix(overlap)
+                let trailingPrefix = trailingChars.prefix(overlap)
+                if existingSuffix.elementsEqual(trailingPrefix) {
+                    return normalizedExisting + String(trailingChars.dropFirst(overlap))
+                }
+            }
+        }
+
+        if normalizedExisting.contains(normalizedTrailing) {
+            return normalizedExisting
+        }
+
+        return normalizedExisting + " " + normalizedTrailing
     }
     #endif
 }
