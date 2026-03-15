@@ -11,6 +11,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     private let lock = NSLock()
 
     private var _isListening = false
+    private var _isPaused = false
     private var partialContinuation: AsyncStream<String>.Continuation?
     private var _partials: AsyncStream<String>?
     private var accumulatedText = ""
@@ -32,6 +33,10 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
     var isListening: Bool {
         lock.withLock { _isListening }
+    }
+
+    var isPaused: Bool {
+        lock.withLock { _isPaused }
     }
 
     var partials: AsyncStream<String> {
@@ -255,6 +260,56 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         continuation?.finish()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return finalText
+    }
+
+    func pause() async {
+        AppLogger.audio.debug("Pausing transcription (keeping engine alive)")
+
+        lock.withLock {
+            _isPaused = true
+            _isListening = false
+            #if canImport(WhisperKit)
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+            #endif
+        }
+        // In-flight transcription (partialTranscriptionInFlight) finishes in background — harmless.
+        // Engine + tap + audio session stay alive.
+    }
+
+    func resume() async throws {
+        let engineRunning = lock.withLock { audioEngine?.isRunning ?? false }
+
+        guard engineRunning else {
+            AppLogger.audio.debug("Resume called but engine not running — falling back to full start()")
+            lock.withLock { _isPaused = false }
+            try await start()
+            return
+        }
+
+        AppLogger.audio.debug("Resuming transcription from paused state")
+
+        let (stream, continuation) = AsyncStream<String>.makeStream()
+        lock.withLock {
+            _isPaused = false
+            _isListening = true
+            _partials = stream
+            partialContinuation = continuation
+            accumulatedText = ""
+            #if canImport(WhisperKit)
+            audioBuffers = []
+            lastPartialSampleCount = 0
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+            partialTranscriptionInFlight = false
+            #endif
+        }
+
+        #if canImport(WhisperKit)
+        continuation.yield("Listening…")
+        #else
+        continuation.yield("Listening… (no transcription)")
+        #endif
     }
 
     private func computeAudioLevelDB(from samples: [Float]) -> Float {

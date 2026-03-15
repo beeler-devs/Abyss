@@ -144,8 +144,8 @@ final class ConversationViewModel: ObservableObject {
 
     func setChatActive(_ isActive: Bool) {
         AppLogger.interaction.debug("setChatActive(\(isActive))")
-        syncRecordingMode()
         audioPipeline.setChatActive(isActive)
+        syncRecordingMode()
     }
 
     func toggleMute() {
@@ -156,27 +156,27 @@ final class ConversationViewModel: ObservableObject {
     func setMuted(_ muted: Bool) {
         guard isMuted != muted else { return }
         isMuted = muted
-        syncRecordingMode()
         audioPipeline.setMuted(muted)
+        syncRecordingMode()
     }
 
     func interruptAssistantSpeech() {
-        syncRecordingMode()
         audioPipeline.interruptAssistantSpeech()
+        syncRecordingMode()
     }
 
     func micPressed() {
         AppLogger.interaction.debug("micPressed()")
         isPTTHeld = true
-        syncRecordingMode()
         audioPipeline.micPressed()
+        syncRecordingMode()
     }
 
     func micReleased() {
         AppLogger.interaction.debug("micReleased()")
         isPTTHeld = false
-        syncRecordingMode()
         audioPipeline.micReleased()
+        syncRecordingMode()
     }
 
     func sendTypedMessage(_ text: String) {
@@ -314,27 +314,21 @@ final class ConversationViewModel: ObservableObject {
             .store(in: &cancellables)
 
         audioPipeline.$appState
-            .receive(on: RunLoop.main)
             .assign(to: &$appState)
 
         audioPipeline.$partialTranscript
-            .receive(on: RunLoop.main)
             .assign(to: &$partialTranscript)
 
         eventCoordinator.$assistantPartialSpeech
-            .receive(on: RunLoop.main)
             .assign(to: &$assistantPartialSpeech)
 
         eventCoordinator.$pairedBridgeDevices
-            .receive(on: RunLoop.main)
             .assign(to: &$pairedBridgeDevices)
 
         eventCoordinator.$bridgePairingMessage
-            .receive(on: RunLoop.main)
             .assign(to: &$bridgePairingMessage)
 
         agentManager.$cards
-            .receive(on: RunLoop.main)
             .assign(to: &$agentProgressCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)

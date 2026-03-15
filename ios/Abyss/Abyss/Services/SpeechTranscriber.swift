@@ -12,13 +12,25 @@ protocol SpeechTranscriber: AnyObject, Sendable {
     /// Stop listening and return the final transcript.
     func stop() async throws -> String
 
+    /// Pause audio collection without tearing down the engine. In-flight transcription finishes in background.
+    func pause() async
+
+    /// Resume audio collection from a paused state.
+    func resume() async throws
+
     /// Stream of partial transcripts emitted while listening.
     var partials: AsyncStream<String> { get }
 
     /// Whether the transcriber is currently active.
     var isListening: Bool { get }
+
+    /// Whether the transcriber is paused (engine running but ignoring samples).
+    var isPaused: Bool { get }
 }
 
 extension SpeechTranscriber {
     func preload() async {}
+    func pause() async {}
+    func resume() async throws { try await start() }
+    var isPaused: Bool { false }
 }

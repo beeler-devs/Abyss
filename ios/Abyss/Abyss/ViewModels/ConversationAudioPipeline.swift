@@ -102,6 +102,9 @@ final class ConversationAudioPipeline: ObservableObject {
         }
         AppLogger.audio.debug("setChatActive(\(isActive))")
         isChatActive = isActive
+        if !isActive && (appState == .listening || appState == .idle) {
+            setState(.idle)
+        }
         Task { await refreshLiveConversationState() }
     }
 
@@ -112,6 +115,9 @@ final class ConversationAudioPipeline: ObservableObject {
         }
         AppLogger.audio.debug("setMuted(\(muted))")
         isMuted = muted
+        if muted && (appState == .listening || appState == .idle) {
+            setState(.idle)
+        }
         Task {
             if muted {
                 await handleMuteActivated()
@@ -247,6 +253,20 @@ final class ConversationAudioPipeline: ObservableObject {
 
         if canRunLiveConversation {
             guard appState != .speaking, appState != .thinking else { return }
+            if transcriber.isPaused {
+                do {
+                    try await transcriber.resume()
+                    partialTranscript = ""
+                    setState(.listening)
+                    if !voiceActivityDetector.isMonitoring {
+                        voiceActivityDetector.startMonitoring()
+                    }
+                } catch {
+                    AppLogger.audio.error("Resume from pause failed: \(error.localizedDescription, privacy: .public)")
+                    await startListening()
+                }
+                return
+            }
             await startListening()
             return
         }
@@ -274,8 +294,8 @@ final class ConversationAudioPipeline: ObservableObject {
         }
 
         if transcriber.isListening && !isStoppingRecording {
-            await stopListeningAndProcess()
-            return
+            await transcriber.pause()
+            partialTranscript = ""
         }
 
         if appState == .listening || appState == .transcribing || appState == .idle {
