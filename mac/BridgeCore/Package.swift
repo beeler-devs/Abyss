@@ -23,5 +23,6 @@ let package = Package(
             name: "BridgeCoreTests",
             dependencies: ["BridgeCore"]
         ),
-    ]
+    ],
+    swiftLanguageModes: [.v5]
 )
