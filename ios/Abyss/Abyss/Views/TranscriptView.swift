@@ -104,7 +104,6 @@ struct MessageBubble: View {
             .padding(.vertical, isUser ? 10 : 0)
             .background(bubbleBackground)
 
-            if !isUser { Spacer(minLength: 60) }
         }
         .padding(.horizontal)
         .padding(.vertical, 2)
