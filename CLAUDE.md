@@ -50,6 +50,8 @@ cd mac/BridgeCLI && swift run abyss-bridge --server ws://localhost:8080/ws --wor
 cd ios/Abyss && xcodebuild -scheme Abyss -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```
 
+**Note:** On this machine, `xcode-select` often points at `/Library/Developer/CommandLineTools` instead of Xcode.app. If `xcodebuild` fails with "requires Xcode", ask the user to run the `sudo xcode-select -s` command above — it requires their password.
+
 ## Architecture
 
 ### Event System
@@ -63,6 +65,9 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 5. Tool results are sent back as `tool.result` events → conductor resumes LLM
 6. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
+### Context Summarization
+When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
+
 ### Key Server Files
 - `server/src/server.ts` — HTTP/WS server setup; maintains `iosSocketsBySession` and `bridgeSocketsByDeviceId` maps
 - `server/src/core/conductorService.ts` — Orchestrates conversation turns, tool dispatch, rate limiting, Cursor integration
@@ -71,7 +76,7 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 - `server/src/bridge/state.ts` — Device pairing and online/offline tracking
 - `server/src/bridge/toolRouter.ts` — Routes bridge tools to connected macOS devices
 - `server/src/providers/` — Pluggable LLM backends; factory in `index.ts`
-- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents)
+- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `calendarClient.ts` (Google Calendar), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents)
 - `server/src/voice/` — Voice providers; `bedrockNovaSonicVoiceProvider.ts` for Nova Sonic streaming
 
 ### Model Providers
@@ -123,8 +128,8 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 #### iOS Patterns
 - Shared state uses `@StateObject` in `AbyssApp` + `@EnvironmentObject` in child views
 - Theming via `AppTheme` static methods that take `colorScheme` parameter
-- `@AppStorage` for persisted preferences: `appAppearance`, `recordingMode`, `voiceMode`, `cursorAPIKey`, `cursorAgentModel`, `elevenLabsVoiceId`
-- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `RepositorySelectionManager`, `EmailDraftManager`, `InAppBrowserCoordinator`
+- `@AppStorage` for persisted preferences: `appAppearance`, `recordingMode`, `voiceMode`, `cursorAPIKey`, `cursorAgentModel`, `elevenLabsVoiceId`. **Gotcha:** `@AppStorage` on `ObservableObject` does NOT fire `objectWillChange` — SwiftUI views won't re-render. Use `@Published` with manual `UserDefaults` sync in `didSet` instead (see `isTTSMuted` in `ConversationViewModel`).
+- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `ConversationEmailManager`, `ConversationCalendarManager`, `RepositorySelectionManager`, `EmailDraftManager`, `CalendarDraftManager`, `InAppBrowserCoordinator`
 - `@MainActor` isolation for all UI/state management; `@unchecked Sendable` for backward compat
 
 #### Xcode Project Gotcha
@@ -164,6 +169,8 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | `ANTHROPIC_API_KEY` | — | Required if using `anthropic` provider |
 | `AWS_REGION` | `us-east-1` | Required for Bedrock |
 | `CURSOR_API_KEY` | — | Optional; enables server-side Cursor agent tools |
+| `GOOGLE_CLIENT_ID` | — | Required for Gmail + Calendar OAuth |
+| `GOOGLE_CLIENT_SECRET` | — | Required for Gmail + Calendar OAuth |
 
 AWS credentials are resolved via standard SDK chain (profile, env vars, or instance role).
 
