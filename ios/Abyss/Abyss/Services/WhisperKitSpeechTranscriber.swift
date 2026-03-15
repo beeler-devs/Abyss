@@ -373,6 +373,13 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             do {
                 let kit = try await WhisperKit(model: "base.en")
                 AppLogger.audio.notice("WhisperKit initialized successfully")
+
+                // Run a tiny dummy transcription to force CoreML model compilation now,
+                // rather than on the first real transcription (which adds ~9s latency).
+                let silence = [Float](repeating: 0, count: 16_000) // 1s of silence at 16kHz
+                _ = try? await kit.transcribe(audioArray: silence)
+                AppLogger.audio.notice("WhisperKit model compilation complete")
+
                 return kit
             } catch {
                 AppLogger.audio.error("WhisperKit initialization failed: \(error.localizedDescription, privacy: .public)")
