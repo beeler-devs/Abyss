@@ -223,6 +223,25 @@ wss.on("connection", (socket, request) => {
       return;
     }
 
+    if (event.type === "bridge.workspace.set") {
+      const ctx = socketContexts.get(socket);
+      const sessionId = ctx?.sessionId;
+      if (!sessionId) return;
+
+      const deviceId = typeof event.payload.deviceId === "string" ? event.payload.deviceId : undefined;
+      const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
+      if (!deviceId || !workspacePath) return;
+
+      const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
+      if (!resolved.device) return;
+
+      const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
+      if (bridgeSocket) {
+        safeSend(bridgeSocket, event);
+      }
+      return;
+    }
+
     // Everything else on non-bridge connections is treated as iOS/client traffic.
     if (context.sessionId && context.sessionId !== event.sessionId) {
       safeSend(socket, makeEvent("error", context.sessionId, {
