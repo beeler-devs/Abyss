@@ -202,6 +202,10 @@ final class ConversationViewModel: ObservableObject {
         agentManager.toggleConversationExpanded(cardID: cardID)
     }
 
+    func toggleAgentCardExpanded(cardID: UUID) {
+        agentManager.toggleCardExpanded(cardID: cardID)
+    }
+
     func selectRepository(_ repository: RepositorySelectionCard.Repository) {
         repositorySelectionManager.completeSelection(repository: repository)
     }
@@ -261,6 +265,9 @@ final class ConversationViewModel: ObservableObject {
             eventBus: eventBus,
             toolRouter: toolRouter,
             sessionId: sessionId,
+            conversationMessages: { [weak self] in
+                self?.conversationStore.messages ?? []
+            },
             sendConductorEvent: { [weak self] event in
                 await self?.sendEventToConductor(event)
             },

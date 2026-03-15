@@ -8,17 +8,37 @@ import AppKit
 /// Displays the conversation transcript with auto-scrolling.
 struct TranscriptView: View {
     let messages: [ConversationMessage]
+    var agentProgressCards: [AgentProgressCard] = []
     var partialTranscript: String = ""
     var assistantPartialSpeech: String = ""
     var appState: AppState = .idle
+    var onRefreshAgent: (UUID) -> Void = { _ in }
+    var onCancelAgent: (UUID) -> Void = { _ in }
+    var onDismissAgent: (UUID) -> Void = { _ in }
+    var onToggleAgentConversation: (UUID) -> Void = { _ in }
+    var onToggleAgentExpanded: (UUID) -> Void = { _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    ForEach(messages) { message in
-                        MessageBubble(message: message)
-                            .id(message.id)
+                    ForEach(transcriptItems) { item in
+                        switch item {
+                        case .message(let message):
+                            MessageBubble(message: message)
+                                .id(item.id)
+                        case .agentCard(let card):
+                            AgentProgressCardView(
+                                card: card,
+                                onRefresh: { onRefreshAgent(card.id) },
+                                onCancel: { onCancelAgent(card.id) },
+                                onDismiss: { onDismissAgent(card.id) },
+                                onToggleConversation: { onToggleAgentConversation(card.id) },
+                                onToggleExpanded: { onToggleAgentExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+                        }
                     }
 
                     // Live AI response building up
@@ -39,7 +59,7 @@ struct TranscriptView: View {
                     }
 
                     // Empty state
-                    if messages.isEmpty && assistantPartialSpeech.isEmpty {
+                    if messages.isEmpty && agentProgressCards.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -57,8 +77,18 @@ struct TranscriptView: View {
             .onChange(of: messages.count) { _, _ in
                 if let last = messages.last {
                     withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
+                        proxy.scrollTo(TranscriptItem.message(last).id, anchor: .bottom)
                     }
+                }
+            }
+            .onChange(of: agentProgressCards.map(\.id)) { oldValue, newValue in
+                guard newValue.count > oldValue.count,
+                      let insertedID = newValue.first(where: { !oldValue.contains($0) }) else {
+                    return
+                }
+
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(TranscriptItem.agentCardID(insertedID), anchor: .center)
                 }
             }
             .onChange(of: assistantPartialSpeech) { _, _ in
@@ -73,6 +103,48 @@ struct TranscriptView: View {
                 }
             }
         }
+    }
+
+    private var transcriptItems: [TranscriptItem] {
+        let messageIDs = Set(messages.map(\.id))
+        let anchoredCards = Dictionary(grouping: agentProgressCards.compactMap { card -> (UUID, AgentProgressCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        var items: [TranscriptItem] = []
+        for message in messages {
+            items.append(.message(message))
+            if let cardsForMessage = anchoredCards[message.id] {
+                for entry in cardsForMessage {
+                    items.append(.agentCard(entry.1))
+                }
+            }
+        }
+
+        for card in agentProgressCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.agentCard(card))
+        }
+
+        return items
+    }
+}
+
+private enum TranscriptItem: Identifiable {
+    case message(ConversationMessage)
+    case agentCard(AgentProgressCard)
+
+    var id: String {
+        switch self {
+        case .message(let message):
+            return "message-\(message.id.uuidString)"
+        case .agentCard(let card):
+            return Self.agentCardID(card.id)
+        }
+    }
+
+    static func agentCardID(_ id: UUID) -> String {
+        "agent-card-\(id.uuidString)"
     }
 }
 

@@ -10,6 +10,11 @@ struct ContentView: View {
     @State private var typedMessage = ""
     @State private var showSidebar = false
     @State private var activeChatId: UUID?
+    @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
+
+    private var recordingMode: RecordingMode {
+        RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
+    }
 
     private var viewModel: ConversationViewModel? {
         chatList.selectedChat?.viewModel
@@ -44,7 +49,7 @@ struct ContentView: View {
                         }
                     }
                     ToolbarItem(placement: .principal) {
-                        if let vm = viewModel {
+                        if let vm = viewModel, recordingMode != .pushToTalk {
                             StateIndicator(state: vm.appState, isMuted: vm.isMuted)
                         }
                     }
@@ -327,9 +332,19 @@ private struct ChatContentView: View {
             // Conversation transcript
             TranscriptView(
                 messages: viewModel.messages,
+                agentProgressCards: viewModel.agentProgressCards,
                 partialTranscript: viewModel.partialTranscript,
                 assistantPartialSpeech: viewModel.assistantPartialSpeech,
-                appState: viewModel.appState
+                appState: viewModel.appState,
+                onRefreshAgent: { viewModel.refreshAgentStatus(cardID: $0) },
+                onCancelAgent: { viewModel.cancelAgent(cardID: $0) },
+                onDismissAgent: { cardID in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.dismissAgentCard(cardID: cardID)
+                    }
+                },
+                onToggleAgentConversation: { viewModel.toggleConversationExpanded(cardID: $0) },
+                onToggleAgentExpanded: { viewModel.toggleAgentCardExpanded(cardID: $0) }
             )
 
             // Repository selection card (takes priority)
@@ -342,29 +357,6 @@ private struct ChatContentView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 8)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-
-            // Agent progress cards
-            if !viewModel.agentProgressCards.isEmpty {
-                VStack(spacing: 10) {
-                    ForEach(Array(viewModel.agentProgressCards.prefix(2))) { card in
-                        AgentProgressCardView(
-                            card: card,
-                            onRefresh: { viewModel.refreshAgentStatus(cardID: card.id) },
-                            onCancel: { viewModel.cancelAgent(cardID: card.id) },
-                            onDismiss: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
-                                    viewModel.dismissAgentCard(cardID: card.id)
-                                }
-                            },
-                            onToggleConversation: {
-                                viewModel.toggleConversationExpanded(cardID: card.id)
-                            }
-                        )
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 8)
             }
 
             // Event timeline (collapsible)
