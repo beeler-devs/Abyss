@@ -34,6 +34,34 @@ final class ConversationAudioPipelineNovaTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.appState, .speaking)
     }
 
+    func testMicReopensAfterAssistantAudioEndAndIdleState() async {
+        // Regression test: mic must not open until handleAssistantAudioEnd returns.
+        // Previously, convo.setState:idle was processed before audio finished
+        // playing, causing acoustic echo on long responses.
+        let harness = makeHarness()
+        harness.pipeline.updateRecordingMode(.vadAuto)
+        harness.pipeline.setChatActive(true)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        // Simulate assistant audio starting (speaking state stops mic)
+        await harness.pipeline.applyRemoteState(.speaking)
+        await waitForCondition { !harness.remoteVoiceCapture.isStreaming }
+        XCTAssertFalse(harness.remoteVoiceCapture.isStreaming)
+
+        // Simulate audio end arriving — with no buffered audio this returns immediately
+        await harness.pipeline.handleAssistantAudioEnd()
+
+        // Mic should still be closed until idle state is applied
+        XCTAssertFalse(harness.remoteVoiceCapture.isStreaming)
+
+        // Now idle state arrives (next event in the serial queue after audio end)
+        await harness.pipeline.applyRemoteState(.idle)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        XCTAssertTrue(harness.remoteVoiceCapture.isStreaming)
+        XCTAssertEqual(harness.pipeline.appState, .listening)
+    }
+
     func testListeningRestartsRemoteStreamAfterSpeakingStopsIt() async {
         let harness = makeHarness()
 
