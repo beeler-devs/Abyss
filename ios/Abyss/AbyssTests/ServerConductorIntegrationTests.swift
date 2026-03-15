@@ -98,4 +98,159 @@ final class ServerConductorIntegrationTests: XCTestCase {
         XCTAssertEqual(card.prURL, "https://github.com/acme/repo/pull/77")
         XCTAssertEqual(card.branchName, "agent/webqa-branch")
     }
+
+    func testPendingSpawnCardAnchorsToKickoffAssistantMessageAndStartsExpanded() async {
+        var messages: [ConversationMessage] = []
+        let manager = makeAgentManager(messages: { messages })
+
+        manager.handleEventStream(Event.toolCall(
+            name: AgentSpawnTool.name,
+            arguments: encode(AgentSpawnTool.Arguments(
+                prompt: "Fix flaky tests",
+                repository: "https://github.com/acme/repo",
+                ref: "main",
+                prUrl: nil,
+                model: nil,
+                autoCreatePr: false,
+                openAsCursorGithubApp: nil,
+                skipReviewerRequest: nil,
+                branchName: nil,
+                autoBranch: nil
+            )),
+            callId: "spawn-1"
+        ))
+
+        let kickoffMessage = ConversationMessage(role: .assistant, text: "Starting a Cursor cloud agent.")
+        messages.append(kickoffMessage)
+
+        manager.handleEventStream(Event.toolCall(
+            name: ConvoAppendMessageTool.name,
+            arguments: encode(ConvoAppendMessageTool.Arguments(
+                role: ConversationMessage.Role.assistant.rawValue,
+                text: kickoffMessage.text,
+                isPartial: false
+            )),
+            callId: "append-assistant-1"
+        ))
+        manager.handleEventStream(Event.toolResult(
+            callId: "append-assistant-1",
+            result: encode(ConvoAppendMessageTool.Result(messageId: kickoffMessage.id.uuidString))
+        ))
+
+        guard let card = manager.cards.first else {
+            XCTFail("Expected pending spawn card")
+            return
+        }
+
+        XCTAssertEqual(card.anchorMessageID, kickoffMessage.id)
+        XCTAssertTrue(card.isExpanded)
+    }
+
+    func testStatusOnlyCardAnchorsToLatestAssistantMessage() async {
+        let assistantMessage = ConversationMessage(role: .assistant, text: "I started a review.")
+        let manager = makeAgentManager(messages: { [assistantMessage] })
+
+        manager.handleEventStream(Event.agentStatus(
+            "RUNNING",
+            detail: "Agent started",
+            agentId: "agent-1",
+            summary: "Working through checks"
+        ))
+
+        XCTAssertEqual(manager.cards.first?.anchorMessageID, assistantMessage.id)
+    }
+
+    func testStatusOnlyCardFallsBackToTranscriptEndWhenNoAssistantMessageExists() async {
+        let manager = makeAgentManager(messages: { [] })
+
+        manager.handleEventStream(Event.agentStatus(
+            "RUNNING",
+            detail: "Agent started",
+            agentId: "agent-2",
+            summary: "Working through checks"
+        ))
+
+        XCTAssertNil(manager.cards.first?.anchorMessageID)
+    }
+
+    func testTogglingOuterExpansionPreservesConversationDisclosureState() async {
+        let assistantMessage = ConversationMessage(role: .assistant, text: "Working on it.")
+        let manager = makeAgentManager(messages: { [assistantMessage] })
+
+        manager.handleEventStream(Event.agentStatus(
+            "RUNNING",
+            detail: "Agent started",
+            agentId: "agent-3",
+            summary: "Working through checks"
+        ))
+
+        guard let cardID = manager.cards.first?.id else {
+            XCTFail("Expected agent card")
+            return
+        }
+
+        manager.toggleConversationExpanded(cardID: cardID)
+        manager.toggleCardExpanded(cardID: cardID)
+
+        guard let card = manager.cards.first else {
+            XCTFail("Expected agent card after toggles")
+            return
+        }
+
+        XCTAssertFalse(card.isExpanded)
+        XCTAssertTrue(card.isConversationExpanded)
+    }
+
+    func testCardOrderRemainsStableAcrossMultipleAgentUpdates() async {
+        var messages = [ConversationMessage(role: .assistant, text: "First kickoff.")]
+        let manager = makeAgentManager(messages: { messages })
+
+        manager.handleEventStream(Event.agentStatus(
+            "RUNNING",
+            detail: "First agent started",
+            agentId: "agent-1",
+            summary: "First run"
+        ))
+
+        messages.append(ConversationMessage(role: .assistant, text: "Second kickoff."))
+        manager.handleEventStream(Event.agentStatus(
+            "RUNNING",
+            detail: "Second agent started",
+            agentId: "agent-2",
+            summary: "Second run"
+        ))
+
+        manager.handleEventStream(Event.agentStatus(
+            "FINISHED",
+            detail: "First agent finished",
+            agentId: "agent-1",
+            summary: "First run complete"
+        ))
+
+        XCTAssertEqual(manager.cards.compactMap(\.agentId), ["agent-1", "agent-2"])
+    }
+
+    private func makeAgentManager(
+        messages: @escaping @MainActor @Sendable () -> [ConversationMessage]
+    ) -> ConversationAgentManager {
+        let eventBus = EventBus()
+        let toolRouter = ToolRouter(registry: ToolRegistry(), eventBus: eventBus)
+
+        return ConversationAgentManager(
+            eventBus: eventBus,
+            toolRouter: toolRouter,
+            sessionId: "session-test",
+            conversationMessages: messages,
+            sendConductorEvent: { _ in },
+            shouldUseWebhookUpdates: { false },
+            isUsingServerClient: { false }
+        )
+    }
+
+    private func encode<T: Encodable>(_ value: T) -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let data = try! encoder.encode(value)
+        return String(decoding: data, as: UTF8.self)
+    }
 }

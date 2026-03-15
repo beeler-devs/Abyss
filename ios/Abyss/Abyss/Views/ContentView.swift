@@ -58,6 +58,7 @@ struct ContentView: View {
                             chatList.createChat()
                         } label: {
                             Image(systemName: "square.and.pencil")
+                                .offset(y: -1)
                                 .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                         }
                     }
