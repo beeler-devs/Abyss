@@ -94,24 +94,40 @@ struct MicButton: View {
     }
 
     private var pushToTalkButton: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isRecording ? "waveform" : "mic.fill")
-                .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-            Text(isRecording ? "Recording…" : "Hold to Speak")
-                .font(.subheadline.weight(.semibold))
-            Spacer()
+        // IMPORTANT: The gesture is attached to this outer container whose structural
+        // identity never changes. The visual content inside uses opacity (not if/else)
+        // so that SwiftUI view diffing doesn't reset the gesture recognizer mid-press.
+        // Previously, ternary-driven Image/Text swaps caused a view identity change
+        // that killed the active long-press gesture, firing an instant release.
+        ZStack {
+            // Idle state
+            HStack(spacing: 8) {
+                Image(systemName: "mic.fill")
+                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                Text("Hold to Speak")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+            .opacity(isRecording ? 0 : 1)
+
+            // Recording state
+            HStack(spacing: 8) {
+                Image(systemName: "waveform")
+                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                Text("Recording…")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            .foregroundStyle(.white)
+            .opacity(isRecording ? 1 : 0)
         }
-        .foregroundStyle(isRecording ? .white : AppTheme.actionBarIconTint(for: colorScheme))
         .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
         .frame(maxWidth: .infinity)
         .frame(height: UIConstants.actionBarControlHeight)
         .pttButtonBackground(isRecording: isRecording,
                              cornerRadius: UIConstants.actionBarControlHeight / 2,
                              colorScheme: colorScheme)
-        // DragGesture(minimumDistance: 0) was replaced because iOS's system gesture gate
-        // fires spurious .onEnded events (visible as "System gesture gate timed out" in logs).
-        // onLongPressGesture with minimumDuration: .infinity never fires perform(), so
-        // pressing: false is the only release signal — reliable for PTT.
         .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
             if isPressing { onMicPressed() } else { onMicReleased() }
         }, perform: {})
