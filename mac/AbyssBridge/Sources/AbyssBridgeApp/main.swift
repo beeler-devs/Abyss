@@ -399,98 +399,91 @@ struct BridgeStatusView: View {
     @ObservedObject var model: BridgeAppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            GroupBox("Status") {
-                VStack(alignment: .leading, spacing: 8) {
-                    statusRow("Server URL", model.serverURLText)
-                    statusRow("Connection", model.connectionStateLabel)
-                    statusRow("Paired", model.paired ? "Yes" : "No")
-                    statusRow("Online", model.onlineLabel)
-                    statusRow("Device ID", model.deviceId.isEmpty ? "Not assigned" : model.deviceId)
-                    statusRow("Selected Workspace", model.selectedWorkspacePath)
-                    statusRow("Last Exit Code", model.lastExitCode.map(String.init) ?? "N/A")
+        NavigationStack {
+            Form {
+                Section("Status") {
+                    LabeledContent("Server URL") {
+                        Text(model.serverURLText)
+                            .font(.system(.body, design: .monospaced))
+                    }
+                    LabeledContent("Paired", value: model.paired ? "Yes" : "No")
+                    LabeledContent("Online", value: model.onlineLabel)
+                    LabeledContent("Device ID") {
+                        Text(model.deviceId.isEmpty ? "Not assigned" : model.deviceId)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("Workspace") {
+                        Text(model.selectedWorkspacePath)
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    LabeledContent("Last Exit Code", value: model.lastExitCode.map(String.init) ?? "N/A")
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
-            GroupBox("Workspaces") {
-                VStack(alignment: .leading, spacing: 10) {
+                Section("Workspaces") {
                     Picker("Active Workspace", selection: $model.selectedWorkspaceId) {
                         ForEach(model.workspaces) { workspace in
                             Text(workspace.path).tag(workspace.id)
                         }
                     }
+                    .pickerStyle(.menu)
                     .onChange(of: model.selectedWorkspaceId) { _ in
                         model.reconnect()
                     }
 
                     HStack {
-                        Button("Add…") { model.addWorkspace() }
+                        Button("Add Workspace…") { model.addWorkspace() }
                         Button("Remove Selected") { model.removeSelectedWorkspace() }
                             .disabled(model.workspaces.count <= 1)
                     }
 
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(model.workspaces) { workspace in
-                                Text(workspace.path)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ForEach(model.workspaces) { workspace in
+                        Text(workspace.path)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .foregroundStyle(.secondary)
                     }
-                    .frame(maxHeight: 100)
                 }
-            }
 
-            GroupBox("Pairing") {
-                HStack(spacing: 12) {
-                    Text(model.pairingCode.isEmpty ? "(not generated)" : model.pairingCode)
-                        .font(.system(.title3, design: .monospaced).weight(.semibold))
-                        .frame(minWidth: 120, alignment: .leading)
+                Section("Pairing") {
+                    Text(model.pairingCode.isEmpty ? "—" : model.pairingCode)
+                        .font(.system(.title2, design: .monospaced).weight(.semibold))
 
-                    Button("Generate Pairing Code") {
-                        model.generatePairingCode()
+                    HStack {
+                        Button("Generate Code") { model.generatePairingCode() }
+                        Button("Copy") { model.copyPairingCode() }
+                            .disabled(model.pairingCode.isEmpty)
                     }
-                    Button("Copy Code") {
-                        model.copyPairingCode()
-                    }
-                    .disabled(model.pairingCode.isEmpty)
                 }
-            }
 
-            GroupBox("Permissions") {
-                VStack(alignment: .leading, spacing: 8) {
+                Section("Permissions") {
                     Toggle("Allow command execution", isOn: $model.allowExecRun)
                         .onChange(of: model.allowExecRun) { _ in model.applyPermissions() }
-                    Toggle("Allow writes / applyPatch / git stage+commit", isOn: $model.allowWritesApplyPatch)
+                    Toggle("Allow writes / apply patch / git stage+commit", isOn: $model.allowWritesApplyPatch)
                         .onChange(of: model.allowWritesApplyPatch) { _ in model.applyPermissions() }
                     Toggle("Allow git push", isOn: $model.allowGitPush)
                         .onChange(of: model.allowGitPush) { _ in model.applyPermissions() }
-                    Toggle("Require confirmation for git push", isOn: $model.requireGitPushConfirmation)
+                    Toggle("Require git push confirmation", isOn: $model.requireGitPushConfirmation)
                         .onChange(of: model.requireGitPushConfirmation) { _ in model.applyPermissions() }
                     Toggle("Allow Claude Code (bridge.claude.run)", isOn: $model.allowClaudeRun)
                         .onChange(of: model.allowClaudeRun) { _ in model.applyPermissions() }
                 }
-            }
 
-            GroupBox("Active Command") {
-                VStack(alignment: .leading, spacing: 8) {
+                Section("Active Command") {
                     if let active = model.activeCommand {
-                        statusRow("Command ID", active.commandId)
-                        statusRow("State", active.state.rawValue)
-                        statusRow("CWD", active.cwd)
-                        statusRow("Started", active.startedAt)
+                        LabeledContent("Command ID", value: active.commandId)
+                        LabeledContent("State", value: active.state.rawValue)
+                        LabeledContent("CWD") {
+                            Text(active.cwd)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                        }
+                        LabeledContent("Started", value: active.startedAt)
 
                         Text(active.command)
                             .font(.system(.caption, design: .monospaced))
                             .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        Text("stdout / stderr tail")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
 
                         ScrollView {
                             Text(active.stdoutTail + (active.stderrTail.isEmpty ? "" : "\n\n[stderr]\n" + active.stderrTail))
@@ -498,36 +491,56 @@ struct BridgeStatusView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .textSelection(.enabled)
                         }
-                        .frame(minHeight: 120, maxHeight: 180)
+                        .frame(minHeight: 100, maxHeight: 160)
 
                         Button("Cancel Active Command") {
                             model.cancelActiveCommand()
                         }
+                        .buttonStyle(.glass)
+                        .tint(.red)
                     } else {
-                        Text("No active command")
-                            .foregroundStyle(.secondary)
+                        ContentUnavailableView("No active command", systemImage: "terminal")
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
-            GroupBox("Configuration") {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text("Server")
-                        TextField("ws://localhost:8080/ws", text: $model.serverURLText)
-                            .textFieldStyle(.roundedBorder)
+                Section("Configuration") {
+                    LabeledContent("Server") {
+                        TextField("ws://…", text: $model.serverURLText)
                     }
-
-                    HStack {
-                        Text("Device Name")
+                    LabeledContent("Device Name") {
                         TextField("My Mac", text: $model.deviceName)
-                            .textFieldStyle(.roundedBorder)
                     }
+                }
+            }
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Abyss Bridge")
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(model.connectionState == .connected ? Color.green
+                                : model.connectionState == .connecting ? Color.yellow
+                                : Color.secondary)
+                            .frame(width: 8, height: 8)
+                        Text(model.connectionStateLabel)
+                            .font(.callout)
+                            .foregroundStyle(.primary)
+                    }
+                }
 
-                    HStack {
-                        Button("Reconnect") { model.reconnect() }
-                        Spacer()
+                ToolbarItem(placement: .primaryAction) {
+                    GlassEffectContainer {
+                        HStack(spacing: 8) {
+                            if model.pairingCode.isEmpty {
+                                Button("Get Pairing Code") { model.generatePairingCode() }
+                                    .buttonStyle(.glassProminent)
+                                    .tint(.blue)
+                            }
+                            Button("Reconnect", systemImage: "arrow.clockwise") {
+                                model.reconnect()
+                            }
+                            .buttonStyle(.glass)
+                        }
                     }
                 }
             }
@@ -536,21 +549,9 @@ struct BridgeStatusView: View {
                 Text(model.statusMessage)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
             }
-
-            Spacer()
-        }
-        .padding(20)
-    }
-
-    private func statusRow(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .top) {
-            Text(label + ":")
-                .frame(width: 140, alignment: .leading)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.body, design: .monospaced))
-                .textSelection(.enabled)
         }
     }
 }
