@@ -17,6 +17,9 @@ let package = Package(
             name: "AbyssBridgeApp",
             dependencies: [
                 .product(name: "BridgeCore", package: "BridgeCore"),
+            ],
+            resources: [
+                .process("Assets.xcassets"),
             ]
         ),
     ],

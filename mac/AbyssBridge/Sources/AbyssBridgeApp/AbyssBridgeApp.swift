@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
 
+        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+           let icon = NSImage(contentsOf: url) {
+            NSApplication.shared.applicationIconImage = icon
+        }
+
         DispatchQueue.main.async {
             for window in NSApplication.shared.windows {
                 window.delegate = self
@@ -571,17 +576,17 @@ struct BridgeStatusView: View {
                     .allowsHitTesting(false)
                 }
 
-                ToolbarItem(placement: .primaryAction) {
-                    HStack(spacing: 6) {
-                        if model.pairingCode.isEmpty {
-                            Button("Get Pairing Code") { model.generatePairingCode() }
-                                .buttonStyle(.glass)
-                        }
-                        Button("", systemImage: "arrow.clockwise") {
-                            model.reconnect()
-                        }
-                        .buttonStyle(.glass)
+                if model.pairingCode.isEmpty {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Get Pairing Code") { model.generatePairingCode() }
+                            .buttonStyle(.glass)
                     }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("", systemImage: "arrow.clockwise") {
+                        model.reconnect()
+                    }
+                    .buttonStyle(.glass)
                 }
             }
 
