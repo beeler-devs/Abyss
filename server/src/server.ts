@@ -163,9 +163,14 @@ wss.on("connection", (socket, request) => {
 
     const event = parsed.event;
 
-    // Audio stream chunks are high-frequency by design (~10/sec); exempt them from rate limiting.
+    // High-frequency event types exempt from rate limiting:
+    // - audio stream chunks (~10/sec from mic)
+    // - assistant speech partials (streamed TTS events)
+    // - tool results (responses to server-initiated tool calls, can burst during speech streaming)
     const isAudioStream = event.type.startsWith("user.audio.stream.");
-    if (!isAudioStream && !limiter.allow()) {
+    const isSpeechStream = event.type.startsWith("assistant.speech.");
+    const isToolResult = event.type === "tool.result";
+    if (!isAudioStream && !isSpeechStream && !isToolResult && !limiter.allow()) {
       const context = socketContexts.get(socket);
       const fallbackSessionId = context?.sessionId ?? "unknown";
       safeSend(socket, makeEvent("error", fallbackSessionId, {

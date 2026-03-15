@@ -135,7 +135,35 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | `AWS_REGION` | `us-east-1` | Required for Bedrock |
 | `CURSOR_API_KEY` | — | Optional; enables server-side Cursor agent tools |
 
-AWS credentials are resolved via standard SDK chain (profile, env vars, or instance role).
+AWS credentials are resolved via Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or standard SDK chain (profile, env vars, or instance role).
+
+## AWS Infrastructure
+
+| Resource | Value |
+|---|---|
+| Account ID | `192440504332` |
+| Region | `us-east-1` |
+| ECS Cluster | `abyss` |
+| ECS Service | `abyss-server` |
+| ECR Repo | `192440504332.dkr.ecr.us-east-1.amazonaws.com/abyss-server` |
+| ALB DNS | `abyss-alb-1705721363.us-east-1.elb.amazonaws.com` |
+| Target Group ARN | `arn:aws:elasticloadbalancing:us-east-1:192440504332:targetgroup/abyss-tg/f75b69fc8c1c8f84` |
+| Security Group | `sg-04ce02d7ffde1a343` |
+| VPC | `vpc-0e852251aec649cd6` (default VPC) |
+| Execution Role | `abyss-ecs-execution-role` |
+| Task Role | `abyss-ecs-task-role` (Bedrock permissions) |
+| Log Group | `/ecs/abyss-server` |
+
+### Deploy commands
+```bash
+# Build and push
+cd server
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 192440504332.dkr.ecr.us-east-1.amazonaws.com
+docker buildx build --platform linux/amd64 -t 192440504332.dkr.ecr.us-east-1.amazonaws.com/abyss-server:latest --push .
+
+# Update service
+aws ecs update-service --cluster abyss --service abyss-server --force-new-deployment --region us-east-1
+```
 
 ### iOS Configuration
 iOS reads from `Secrets.plist` (gitignored) → `Info.plist` → environment variables. Key values:
@@ -143,3 +171,6 @@ iOS reads from `Secrets.plist` (gitignored) → `Info.plist` → environment var
 - `ELEVEN_LABS_API_KEY` — Required for ElevenLabs TTS (falls back to system voice)
 - `CURSOR_API_KEY` — Required for Cursor Cloud Agents (also configurable in Settings UI)
 - `BACKEND_WS_URL` — WebSocket server URL (defaults to `ws://localhost:8080/ws`)
+
+### Production (AWS ECS)
+Server runs on ECS Fargate in **us-east-1** (cluster `abyss`, service `abyss-server`). ALB: `abyss-alb-1705721363.us-east-1.elb.amazonaws.com`. Full deployment details (ECR, security groups, target group) are in **docs/runbook.md** under "AWS ECS Deployment".
