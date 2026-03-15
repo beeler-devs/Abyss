@@ -47,7 +47,8 @@ final class GmailAuthManager: NSObject, ObservableObject {
 
         do {
             let code = try await startOAuthFlow(clientId: clientId)
-            let tokens = try await exchangeCode(code)
+            let redirectUri = "\(Self.reversedClientIdScheme(from: clientId)):/oauthredirect"
+            let tokens = try await exchangeCode(code, redirectUri: redirectUri)
             Self.saveAccessToken(tokens.accessToken)
             if let refreshToken = tokens.refreshToken {
                 Self.saveRefreshToken(refreshToken)
@@ -68,12 +69,21 @@ final class GmailAuthManager: NSObject, ObservableObject {
 
     // MARK: - OAuth Flow
 
+    /// Derives the reversed client ID scheme from a Google client ID.
+    /// e.g. "123456789-abc.apps.googleusercontent.com" → "com.googleusercontent.apps.123456789-abc"
+    private static func reversedClientIdScheme(from clientId: String) -> String {
+        clientId.split(separator: ".").reversed().joined(separator: ".")
+    }
+
     private func startOAuthFlow(clientId: String) async throws -> String {
+        let callbackScheme = Self.reversedClientIdScheme(from: clientId)
+        let redirectUri = "\(callbackScheme):/oauthredirect"
+
         var components = URLComponents(string: "https://accounts.google.com/o/oauth2/v2/auth")!
         let state = UUID().uuidString
         components.queryItems = [
             URLQueryItem(name: "client_id", value: clientId),
-            URLQueryItem(name: "redirect_uri", value: "abyss://oauth-callback"),
+            URLQueryItem(name: "redirect_uri", value: redirectUri),
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "scope", value: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"),
             URLQueryItem(name: "access_type", value: "offline"),
@@ -88,7 +98,7 @@ final class GmailAuthManager: NSObject, ObservableObject {
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
                 url: authURL,
-                callbackURLScheme: "abyss"
+                callbackURLScheme: callbackScheme
             ) { [weak self] callbackURL, error in
                 Task { @MainActor in self?.authSession = nil }
 
@@ -127,7 +137,7 @@ final class GmailAuthManager: NSObject, ObservableObject {
         let expiresIn: Double
     }
 
-    private func exchangeCode(_ code: String) async throws -> ExchangeResponse {
+    private func exchangeCode(_ code: String, redirectUri: String) async throws -> ExchangeResponse {
         guard let baseURL = Config.backendBaseURL else {
             throw AuthError.noBackendURL
         }
@@ -136,7 +146,7 @@ final class GmailAuthManager: NSObject, ObservableObject {
         var request = URLRequest(url: exchangeURL)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(["code": code])
+        request.httpBody = try JSONEncoder().encode(["code": code, "redirectUri": redirectUri])
         request.timeoutInterval = 15
 
         let (data, response) = try await URLSession.shared.data(for: request)

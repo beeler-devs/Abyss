@@ -576,17 +576,19 @@ struct BridgeStatusView: View {
                     .allowsHitTesting(false)
                 }
 
-                if model.pairingCode.isEmpty {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button("Get Pairing Code") { model.generatePairingCode() }
-                            .buttonStyle(.glass)
-                    }
-                }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("", systemImage: "arrow.clockwise") {
-                        model.reconnect()
+                    HStack(spacing: 6) {
+                        if model.pairingCode.isEmpty {
+                            Button("Get Pairing Code") { model.generatePairingCode() }
+                                .buttonStyle(.glass)
+                                .sharedBackgroundVisibility(.hidden)
+                        }
+                        Button("", systemImage: "arrow.clockwise") {
+                            model.reconnect()
+                        }
+                        .buttonStyle(.glass)
+                        .sharedBackgroundVisibility(.hidden)
                     }
-                    .buttonStyle(.glass)
                 }
             }
 
