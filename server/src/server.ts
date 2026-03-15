@@ -150,17 +150,6 @@ wss.on("connection", (socket, request) => {
   socket.on("message", async (raw) => {
     const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
 
-    if (!limiter.allow()) {
-      const context = socketContexts.get(socket);
-      const fallbackSessionId = context?.sessionId ?? "unknown";
-      safeSend(socket, makeEvent("error", fallbackSessionId, {
-        code: "rate_limited",
-        message: "Too many events for this session in the last minute.",
-      }));
-      logger.warn("rate limit hit for socket");
-      return;
-    }
-
     const parsed = parseIncomingEvent(text, MAX_EVENT_BYTES);
     if (!parsed.event) {
       const context = socketContexts.get(socket);
@@ -173,6 +162,20 @@ wss.on("connection", (socket, request) => {
     }
 
     const event = parsed.event;
+
+    // Audio stream chunks are high-frequency by design (~10/sec); exempt them from rate limiting.
+    const isAudioStream = event.type.startsWith("user.audio.stream.");
+    if (!isAudioStream && !limiter.allow()) {
+      const context = socketContexts.get(socket);
+      const fallbackSessionId = context?.sessionId ?? "unknown";
+      safeSend(socket, makeEvent("error", fallbackSessionId, {
+        code: "rate_limited",
+        message: "Too many events for this session in the last minute.",
+      }));
+      logger.warn("rate limit hit for socket");
+      return;
+    }
+
     const context = socketContexts.get(socket) ?? { kind: "unknown" };
 
     if (event.type === "bridge.register") {
@@ -211,10 +214,12 @@ wss.on("connection", (socket, request) => {
     socketContexts.set(socket, context);
     iosSocketsBySession.set(event.sessionId, socket);
 
-    logger.info(`inbound ${event.type}`, {
-      sessionId: event.sessionId,
-      eventId: event.id,
-    });
+    if (!isAudioStream) {
+      logger.info(`inbound ${event.type}`, {
+        sessionId: event.sessionId,
+        eventId: event.id,
+      });
+    }
 
     if (event.type === "session.start") {
       emitBridgeStatusSnapshot(event.sessionId, socket);
