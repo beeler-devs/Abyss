@@ -229,6 +229,21 @@ extension View {
         }
     }
 
+    /// Liquid glass panel on iOS 26+; solid rounded card on earlier OS versions.
+    @ViewBuilder
+    func glassTimelineBackground(cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
+        if #available(iOS 26, *) {
+            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+        } else {
+            self
+                .background(RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(AppTheme.eventTimelineBackground(for: colorScheme)))
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(AppTheme.eventTimelineBorder(for: colorScheme), lineWidth: 0.5))
+        }
+    }
+
     /// Glass background that turns solid red while recording (PTT active state).
     /// Uses non-interactive glass so the long-press gesture isn't stolen by the glass effect.
     @ViewBuilder

@@ -25,8 +25,9 @@ struct EventTimelineView: View {
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(AppTheme.eventTimelineHeaderBackground(for: colorScheme))
+            .padding(.vertical, 8)
+
+            Divider()
 
             ScrollViewReader { proxy in
                 ScrollView {
@@ -45,12 +46,7 @@ struct EventTimelineView: View {
                 }
             }
         }
-        .background(AppTheme.eventTimelineBackground(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(AppTheme.eventTimelineBorder(for: colorScheme), lineWidth: 0.5)
-        )
+        .glassTimelineBackground(cornerRadius: 20, colorScheme: colorScheme)
         .padding(.horizontal, 8)
     }
 }
