@@ -18,7 +18,9 @@ final class ConversationViewModel: ObservableObject {
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
-    @AppStorage("isTTSMuted") var isTTSMuted: Bool = false
+    @Published var isTTSMuted: Bool = UserDefaults.standard.bool(forKey: "isTTSMuted") {
+        didSet { UserDefaults.standard.set(isTTSMuted, forKey: "isTTSMuted") }
+    }
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     private weak var gmailAuthManager: GmailAuthManager?
@@ -147,11 +149,10 @@ final class ConversationViewModel: ObservableObject {
 
     func setChatActive(_ isActive: Bool) {
         syncRecordingMode()
+        audioPipeline.setChatActive(isActive)
         if isActive {
             audioPipeline.preloadTranscriber()
-        }
-        audioPipeline.setChatActive(isActive)
-        if !isActive {
+        } else {
             audioPipeline.tearDownTranscriber()
         }
     }
