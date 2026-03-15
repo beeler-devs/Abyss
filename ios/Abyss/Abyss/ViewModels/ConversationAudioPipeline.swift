@@ -33,6 +33,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private var isMuted = false
     private var isStoppingRecording = false
     private var isStartingRecording = false
+    private var pendingPTTRelease = false
     private let remoteVoiceCapture = RemoteAudioCapture()
     private var remotePlaybackPrepared = false
 
@@ -113,19 +114,28 @@ final class ConversationAudioPipeline: ObservableObject {
         guard isChatActive else { return }
         guard !transcriber.isListening, !isStartingRecording else { return }
         isStartingRecording = true
+        pendingPTTRelease = false
         Task {
             defer { isStartingRecording = false }
             if appState == .speaking {
                 await bargeIn(reason: "ptt_barge_in")
             }
             await startListeningPTT()
+            if pendingPTTRelease {
+                pendingPTTRelease = false
+                await stopListeningAndProcess()
+            }
         }
     }
 
     func micReleased() {
         guard recordingMode == .pushToTalk else { return }
         guard !isStoppingRecording else { return }
-        guard transcriber.isListening || isStartingRecording else { return }
+        if isStartingRecording {
+            pendingPTTRelease = true
+            return
+        }
+        guard transcriber.isListening else { return }
         Task { await stopListeningAndProcess() }
     }
 
