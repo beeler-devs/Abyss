@@ -9,11 +9,13 @@ struct MicButton: View {
     @Binding var typedText: String
     let recordingMode: RecordingMode
     let isRecording: Bool
+    let showEventTimeline: Bool
     let onToggleMute: () -> Void
     let onInterruptSpeaking: () -> Void
     let onMicPressed: () -> Void
     let onMicReleased: () -> Void
     let onSendTyped: (String) -> Void
+    let onToggleEventTimeline: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -118,45 +120,58 @@ struct MicButton: View {
 
     private var typingBar: some View {
         HStack(spacing: UIConstants.actionBarSpacing) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    isTypingMode = false
-                }
-            } label: {
-                Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
-                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
-            }
-            .buttonStyle(.plain)
-
             TextField("Type a message", text: $typedText)
                 .font(.body)
                 .textFieldStyle(.plain)
                 .submitLabel(.send)
                 .onSubmit(submitTypedText)
 
-            Button(action: submitTypedText) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                    .foregroundStyle(
-                        canSubmitText
-                        ? AppTheme.actionBarIconTint(for: colorScheme)
-                        : AppTheme.actionBarIconTint(for: colorScheme).opacity(0.35)
-                    )
+            if canSubmitText {
+                Button(action: submitTypedText) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isTypingMode = false
+                    }
+                } label: {
+                    Image(systemName: isMuted ? "mic.slash.fill" : "mic.fill")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onToggleEventTimeline()
+                } label: {
+                    Image(systemName: showEventTimeline ? "list.bullet.circle.fill" : "list.bullet.circle")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .disabled(!canSubmitText)
         }
         .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
         .frame(maxWidth: .infinity)
         .frame(height: UIConstants.actionBarControlHeight)
-        .background(
-            RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                .fill(AppTheme.pillBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
-                .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
+        .glassButtonBackground(cornerRadius: UIConstants.actionBarControlHeight / 2, colorScheme: colorScheme)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 30)
+                .onEnded { value in
+                    if value.translation.height > 30 {
+                        UIApplication.shared.sendAction(
+                            #selector(UIResponder.resignFirstResponder),
+                            to: nil, from: nil, for: nil
+                        )
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isTypingMode = false
+                        }
+                    }
+                }
         )
     }
 

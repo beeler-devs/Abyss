@@ -137,8 +137,13 @@ struct ContentView: View {
                 chatList.createChat()
             } label: {
                 Label("New Chat", systemImage: "plus.message")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .glassButtonBackground(cornerRadius: 20, colorScheme: colorScheme)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -376,12 +381,18 @@ private struct ChatContentView: View {
                     typedText: $typedMessage,
                     recordingMode: recordingMode,
                     isRecording: isPTTRecording(viewModel: viewModel, recordingMode: recordingMode),
+                    showEventTimeline: showEventTimeline,
                     onToggleMute: { viewModel.toggleMute() },
                     onInterruptSpeaking: { viewModel.interruptAssistantSpeech() },
                     onMicPressed: { viewModel.micPressed() },
                     onMicReleased: { viewModel.micReleased() },
                     onSendTyped: { text in
                         viewModel.sendTypedMessage(text)
+                    },
+                    onToggleEventTimeline: {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showEventTimeline.toggle()
+                        }
                     }
                 )
 
@@ -398,9 +409,6 @@ private struct ChatContentView: View {
                             .glassButtonBackground(cornerRadius: UIConstants.actionBarControlHeight / 2, colorScheme: colorScheme)
                     }
                     .buttonStyle(.plain)
-                } else {
-                    Color.clear
-                        .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
                 }
             }
             .padding(.horizontal, UIConstants.actionBarHorizontalPadding)

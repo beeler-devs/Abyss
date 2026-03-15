@@ -230,12 +230,19 @@ extension View {
     }
 
     /// Glass background that turns solid red while recording (PTT active state).
+    /// Uses non-interactive glass so the long-press gesture isn't stolen by the glass effect.
     @ViewBuilder
     func pttButtonBackground(isRecording: Bool, cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
         if isRecording {
             self.background(RoundedRectangle(cornerRadius: cornerRadius).fill(Color.red))
+        } else if #available(iOS 26, *) {
+            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
         } else {
-            self.glassButtonBackground(cornerRadius: cornerRadius, colorScheme: colorScheme)
+            self
+                .background(RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(AppTheme.pillBackground(for: colorScheme)))
+                .overlay(RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1))
         }
     }
 }
