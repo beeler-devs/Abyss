@@ -29,12 +29,12 @@ final class ConversationAudioPipeline: ObservableObject {
     )
 
     private var recordingMode: RecordingMode = .vadAuto
-    private var voiceMode: VoiceMode = Config.voiceMode
     private var isChatActive = false
     private var isMuted = false
     private var isStoppingRecording = false
     private var isStartingRecording = false
-    private let remoteVoiceCapture = RemoteAudioCapture()
+    private var pendingPTTRelease = false
+    private let remoteVoiceCapture: RemoteVoiceCapturing
     private var remotePlaybackPrepared = false
 
     init(
@@ -45,6 +45,7 @@ final class ConversationAudioPipeline: ObservableObject {
         toolRouter: ToolRouter,
         appStateStore: AppStateStore,
         sessionId: String,
+        remoteVoiceCapture: RemoteVoiceCapturing? = nil,
         sendConductorEvent: @escaping @MainActor @Sendable (Event, Bool) async -> Void,
         handleError: @escaping @MainActor @Sendable (String) async -> Void
     ) {
@@ -55,6 +56,7 @@ final class ConversationAudioPipeline: ObservableObject {
         self.toolRouter = toolRouter
         self.appStateStore = appStateStore
         self.sessionId = sessionId
+        self.remoteVoiceCapture = remoteVoiceCapture ?? RemoteAudioCapture()
         self.sendConductorEvent = sendConductorEvent
         self.handleError = handleError
 
@@ -69,7 +71,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func preloadTranscriber() {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         let transcriber = self.transcriber
         Task {
             await transcriber.preload()
@@ -78,37 +80,23 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func updateRecordingMode(_ mode: RecordingMode) {
         guard recordingMode != mode else { return }
-        AppLogger.audio.debug("updateRecordingMode(\(mode.rawValue, privacy: .public)) — was \(self.recordingMode.rawValue, privacy: .public)")
         recordingMode = mode
+        voiceActivityDetector.stopMonitoring()
         if mode == .pushToTalk {
-            voiceActivityDetector.stopMonitoring()
+            preloadTranscriber()
         }
-        Task { await refreshLiveConversationState() }
-    }
-
-    func updateVoiceMode(_ mode: VoiceMode) {
-        guard voiceMode != mode else { return }
-        voiceMode = mode
         Task { await refreshLiveConversationState() }
     }
 
     func setChatActive(_ isActive: Bool) {
         guard isChatActive != isActive else { return }
-        AppLogger.audio.debug("setChatActive(\(isActive))")
         isChatActive = isActive
-        if !isActive && (appState == .listening || appState == .idle) {
-            setState(.idle)
-        }
         Task { await refreshLiveConversationState() }
     }
 
     func setMuted(_ muted: Bool) {
         guard isMuted != muted else { return }
-        AppLogger.audio.debug("setMuted(\(muted))")
         isMuted = muted
-        if muted && (appState == .listening || appState == .idle) {
-            setState(.idle)
-        }
         Task {
             if muted {
                 await handleMuteActivated()
@@ -124,35 +112,67 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func micPressed() {
-        guard recordingMode == .pushToTalk else { return }
-        guard isChatActive else { return }
-        AppLogger.audio.debug("micPressed() — starting PTT capture")
-        if voiceMode == .novaSonic {
-            Task { await startRemoteVoiceCapture() }
+        AppLogger.audio.debug("[PTT] micPressed — mode=\(self.recordingMode.rawValue, privacy: .public) chatActive=\(self.isChatActive) listening=\(self.transcriber.isListening) isStarting=\(self.isStartingRecording) isStopping=\(self.isStoppingRecording) state=\(self.appState.rawValue, privacy: .public)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] micPressed SKIP: not pushToTalk")
             return
         }
-        guard !transcriber.isListening, !isStartingRecording else { return }
+        guard isChatActive else {
+            AppLogger.audio.debug("[PTT] micPressed SKIP: chat not active")
+            return
+        }
+        guard !transcriber.isListening, !isStartingRecording else {
+            AppLogger.audio.debug("[PTT] micPressed SKIP: already listening or starting")
+            return
+        }
+        isStartingRecording = true
+        pendingPTTRelease = false
+        AppLogger.audio.debug("[PTT] micPressed — set isStartingRecording=true, launching start task")
         Task {
+            defer {
+                isStartingRecording = false
+                AppLogger.audio.debug("[PTT] micPressed task defer — isStartingRecording=false")
+            }
             if appState == .speaking {
+                AppLogger.audio.debug("[PTT] micPressed — barging in (was speaking)")
                 await bargeIn(reason: "ptt_barge_in")
             }
+            AppLogger.audio.debug("[PTT] micPressed — calling startListeningPTT")
             await startListeningPTT()
+            AppLogger.audio.debug("[PTT] micPressed — startListeningPTT returned, pendingRelease=\(self.pendingPTTRelease) transcriber.isListening=\(self.transcriber.isListening)")
+            if pendingPTTRelease {
+                pendingPTTRelease = false
+                AppLogger.audio.debug("[PTT] micPressed — handling pending release, calling stopListeningAndProcess")
+                await stopListeningAndProcess()
+            }
         }
     }
 
     func micReleased() {
-        guard recordingMode == .pushToTalk else { return }
-        AppLogger.audio.debug("micReleased()")
-        if voiceMode == .novaSonic {
-            Task { await stopRemoteVoiceCapture() }
+        AppLogger.audio.debug("[PTT] micReleased — mode=\(self.recordingMode.rawValue, privacy: .public) isStarting=\(self.isStartingRecording) isStopping=\(self.isStoppingRecording) listening=\(self.transcriber.isListening) state=\(self.appState.rawValue, privacy: .public)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] micReleased SKIP: not pushToTalk")
             return
         }
-        guard !isStoppingRecording else { return }
-        guard transcriber.isListening || isStartingRecording else { return }
+        guard !isStoppingRecording else {
+            AppLogger.audio.debug("[PTT] micReleased SKIP: already stopping")
+            return
+        }
+        if isStartingRecording {
+            pendingPTTRelease = true
+            AppLogger.audio.debug("[PTT] micReleased — start in progress, set pendingPTTRelease=true")
+            return
+        }
+        guard transcriber.isListening else {
+            AppLogger.audio.debug("[PTT] micReleased SKIP: transcriber not listening")
+            return
+        }
+        AppLogger.audio.debug("[PTT] micReleased — transcriber is listening, launching stop task")
         Task { await stopListeningAndProcess() }
     }
 
     func applyRemoteState(_ requestedState: AppState) async {
+        AppLogger.audio.debug("[PTT] applyRemoteState — requested=\(requestedState.rawValue, privacy: .public) mode=\(self.recordingMode.rawValue, privacy: .public) listening=\(self.transcriber.isListening) isStarting=\(self.isStartingRecording) state=\(self.appState.rawValue, privacy: .public)")
         let effectiveState: AppState
         if isMuted && (requestedState == .listening || requestedState == .transcribing) {
             effectiveState = .idle
@@ -166,7 +186,10 @@ final class ConversationAudioPipeline: ObservableObject {
             && effectiveState != .listening
             && effectiveState != .transcribing
 
-        guard !preservePTTRecording else { return }
+        guard !preservePTTRecording else {
+            AppLogger.audio.debug("[PTT] applyRemoteState — preserving PTT recording, ignoring state change to \(effectiveState.rawValue, privacy: .public)")
+            return
+        }
 
         setState(effectiveState)
 
@@ -175,16 +198,18 @@ final class ConversationAudioPipeline: ObservableObject {
             await refreshLiveConversationState()
         case .thinking, .speaking, .error:
             voiceActivityDetector.stopMonitoring()
-            if voiceMode == .local, transcriber.isListening && !isStoppingRecording {
+            if recordingMode == .vadAuto {
+                await stopRemoteVoiceCapture()
+            } else if transcriber.isListening && !isStoppingRecording {
                 await stopListeningSilently()
             }
         case .listening, .transcribing:
-            break
+            await refreshLiveConversationState()
         }
     }
 
     func handlePartialTranscript(_ text: String) {
-        guard voiceMode == .local else { return }
+        guard recordingMode == .pushToTalk else { return }
         guard !isPlaceholderTranscript(text) else { return }
         partialTranscript = text
         eventBus.emit(Event.transcriptPartial(text, sessionId: sessionId))
@@ -196,6 +221,14 @@ final class ConversationAudioPipeline: ObservableObject {
 
     private var canRunLiveConversation: Bool {
         isChatActive && !isMuted
+    }
+
+    private var shouldStreamRemoteVoiceCapture: Bool {
+        canRunLiveConversation
+            && recordingMode == .vadAuto
+            && appState != .thinking
+            && appState != .speaking
+            && appState != .error
     }
 
     private func configureVoicePipeline() {
@@ -227,29 +260,20 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func refreshLiveConversationState() async {
-        AppLogger.audio.debug("refreshLiveConversationState() — chatActive=\(self.isChatActive) muted=\(self.isMuted) appState=\(self.appState.rawValue, privacy: .public) recordingMode=\(self.recordingMode.rawValue, privacy: .public)")
-        if voiceMode == .novaSonic {
+        if recordingMode == .vadAuto {
+            if transcriber.isListening && !isStoppingRecording {
+                await stopListeningSilently()
+            }
             await refreshRemoteVoiceConversationState()
             return
         }
 
+        await stopRemoteVoiceCapture()
+
         if canRunLiveConversation {
-            guard appState != .speaking, appState != .thinking else { return }
-            if transcriber.isPaused {
-                do {
-                    try await transcriber.resume()
-                    partialTranscript = ""
-                    setState(.listening)
-                    if !voiceActivityDetector.isMonitoring {
-                        voiceActivityDetector.startMonitoring()
-                    }
-                } catch {
-                    AppLogger.audio.error("Resume from pause failed: \(error.localizedDescription, privacy: .public)")
-                    await startListening()
-                }
-                return
+            if appState != .speaking && appState != .thinking && !transcriber.isListening && !isStartingRecording {
+                setState(.idle)
             }
-            await startListening()
             return
         }
 
@@ -267,7 +291,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private func handleMuteActivated() async {
         voiceActivityDetector.stopMonitoring()
 
-        if voiceMode == .novaSonic {
+        if recordingMode == .vadAuto {
             await stopRemoteVoiceCapture()
             if appState == .listening || appState == .transcribing || appState == .idle {
                 setState(.idle)
@@ -276,8 +300,8 @@ final class ConversationAudioPipeline: ObservableObject {
         }
 
         if transcriber.isListening && !isStoppingRecording {
-            await transcriber.pause()
-            partialTranscript = ""
+            await stopListeningAndProcess()
+            return
         }
 
         if appState == .listening || appState == .transcribing || appState == .idle {
@@ -285,64 +309,20 @@ final class ConversationAudioPipeline: ObservableObject {
         }
     }
 
-    private func startListening() async {
-        guard voiceMode == .local else { return }
-        guard recordingMode == .vadAuto else { return }
-        guard canRunLiveConversation else { return }
-        guard !isStoppingRecording else { return }
-        guard !isStartingRecording else { return }
-        AppLogger.audio.debug("startListening()")
-        isStartingRecording = true
-        defer { isStartingRecording = false }
-
-        partialTranscript = ""
-        setState(.listening)
-
-        let setStateEvent = Event.toolCall(
-            name: ConvoSetStateTool.name,
-            arguments: encode(ConvoSetStateTool.Arguments(state: AppState.listening.rawValue)),
-            sessionId: sessionId
-        )
-        eventBus.emit(setStateEvent)
-        if case .toolCall(let toolCall) = setStateEvent.kind {
-            await toolRouter.dispatch(toolCall)
+    private func startListeningPTT() async {
+        AppLogger.audio.debug("[PTT] startListeningPTT — mode=\(self.recordingMode.rawValue, privacy: .public) isStopping=\(self.isStoppingRecording)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] startListeningPTT SKIP: not pushToTalk")
+            return
         }
-
-        if transcriber.isListening {
-            if !voiceActivityDetector.isMonitoring {
-                voiceActivityDetector.startMonitoring()
-            }
+        guard !isStoppingRecording else {
+            AppLogger.audio.debug("[PTT] startListeningPTT SKIP: currently stopping")
             return
         }
 
-        let sttEvent = Event.toolCall(
-            name: STTStartTool.name,
-            arguments: encode(STTStartTool.Arguments()),
-            sessionId: sessionId
-        )
-        eventBus.emit(sttEvent)
-        if case .toolCall(let toolCall) = sttEvent.kind {
-            let result = await toolRouter.dispatch(toolCall)
-            if case .toolResult(let toolResult) = result.kind, toolResult.isError {
-                await handleError(toolResult.error ?? "STT start failed")
-                return
-            }
-        }
-
-        if !voiceActivityDetector.isMonitoring {
-            voiceActivityDetector.startMonitoring()
-        }
-    }
-
-    private func startListeningPTT() async {
-        guard voiceMode == .local else { return }
-        guard !isStoppingRecording else { return }
-        guard !isStartingRecording else { return }
-        isStartingRecording = true
-        defer { isStartingRecording = false }
-
         partialTranscript = ""
         setState(.listening)
+        AppLogger.audio.debug("[PTT] startListeningPTT — state set to listening, dispatching convo.setState")
 
         let setStateEvent = Event.toolCall(
             name: ConvoSetStateTool.name,
@@ -354,8 +334,12 @@ final class ConversationAudioPipeline: ObservableObject {
             await toolRouter.dispatch(toolCall)
         }
 
-        guard !transcriber.isListening else { return }
+        guard !transcriber.isListening else {
+            AppLogger.audio.debug("[PTT] startListeningPTT — transcriber already listening, skipping STT start")
+            return
+        }
 
+        AppLogger.audio.debug("[PTT] startListeningPTT — dispatching stt.start")
         let sttEvent = Event.toolCall(
             name: STTStartTool.name,
             arguments: encode(STTStartTool.Arguments()),
@@ -365,15 +349,20 @@ final class ConversationAudioPipeline: ObservableObject {
         if case .toolCall(let toolCall) = sttEvent.kind {
             let result = await toolRouter.dispatch(toolCall)
             if case .toolResult(let toolResult) = result.kind, toolResult.isError {
+                AppLogger.audio.error("[PTT] startListeningPTT — STT start FAILED: \(toolResult.error ?? "unknown", privacy: .public)")
                 await handleError(toolResult.error ?? "STT start failed")
+            } else {
+                AppLogger.audio.debug("[PTT] startListeningPTT — STT started OK, transcriber.isListening=\(self.transcriber.isListening)")
             }
         }
     }
 
     private func stopListeningSilently() async {
-        guard voiceMode == .local else { return }
+        AppLogger.audio.debug("[PTT] stopListeningSilently — mode=\(self.recordingMode.rawValue, privacy: .public) listening=\(self.transcriber.isListening)")
+        guard recordingMode == .pushToTalk else { return }
         guard transcriber.isListening else { return }
 
+        AppLogger.audio.debug("[PTT] stopListeningSilently — stopping transcriber without processing")
         isStoppingRecording = true
         defer { isStoppingRecording = false }
 
@@ -390,12 +379,22 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func stopListeningAndProcess() async {
-        guard voiceMode == .local else { return }
-        guard transcriber.isListening else { return }
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — mode=\(self.recordingMode.rawValue, privacy: .public) listening=\(self.transcriber.isListening) isStopping=\(self.isStoppingRecording) state=\(self.appState.rawValue, privacy: .public)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess SKIP: not pushToTalk")
+            return
+        }
+        guard transcriber.isListening else {
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess SKIP: transcriber not listening")
+            return
+        }
 
-        AppLogger.conversation.debug("Stopping recording; state=\(self.appState.rawValue, privacy: .public)")
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — proceeding with stop")
         isStoppingRecording = true
-        defer { isStoppingRecording = false }
+        defer {
+            isStoppingRecording = false
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess defer — isStopping=false")
+        }
 
         voiceActivityDetector.stopMonitoring()
         setState(.transcribing)
@@ -444,7 +443,9 @@ final class ConversationAudioPipeline: ObservableObject {
         }
 
         let normalizedTranscript = transcriptFormatter.normalizeForAgent(finalTranscript)
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — finalTranscript='\(finalTranscript, privacy: .public)' normalized='\(normalizedTranscript, privacy: .public)'")
         guard !normalizedTranscript.isEmpty else {
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess — empty transcript, resetting to idle")
             let resetEvent = Event.toolCall(
                 name: ConvoSetStateTool.name,
                 arguments: encode(ConvoSetStateTool.Arguments(state: AppState.idle.rawValue)),
@@ -460,9 +461,11 @@ final class ConversationAudioPipeline: ObservableObject {
             return
         }
 
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — sending transcript to conductor: '\(normalizedTranscript, privacy: .public)'")
         let transcriptEvent = Event.transcriptFinal(normalizedTranscript, sessionId: sessionId)
         eventBus.emit(transcriptEvent)
         await sendConductorEvent(transcriptEvent, true)
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — transcript sent, done")
 
         partialTranscript = ""
     }
@@ -470,7 +473,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private func bargeIn(reason: String) async {
         voiceActivityDetector.stopMonitoring()
 
-        if voiceMode == .local {
+        if recordingMode == .pushToTalk {
             let stopEvent = Event.toolCall(
                 name: TTSStopTool.name,
                 arguments: encode(TTSStopTool.Arguments()),
@@ -499,8 +502,11 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
-        guard voiceMode == .novaSonic else { return }
+        guard recordingMode == .vadAuto else { return }
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
+        if remoteVoiceCapture.isStreaming {
+            await stopRemoteVoiceCapture()
+        }
         do {
             if !remotePlaybackPrepared {
                 try await MainActor.run {
@@ -517,7 +523,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handleAssistantAudioEnd() async {
-        guard voiceMode == .novaSonic, remotePlaybackPrepared else { return }
+        guard recordingMode == .vadAuto, remotePlaybackPrepared else { return }
         await MainActor.run {
             StreamingPCMPlayer.shared.finishReceivingAudio()
         }
@@ -525,28 +531,24 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func handleAssistantAudioInterrupted() async {
-        guard voiceMode == .novaSonic else { return }
+        guard recordingMode == .vadAuto else { return }
         await stopRemoteAssistantAudio()
     }
 
     private func refreshRemoteVoiceConversationState() async {
-        if canRunLiveConversation {
-            if recordingMode == .vadAuto {
-                await startRemoteVoiceCapture()
-            } else if appState != .speaking && appState != .thinking {
-                setState(.idle)
-            }
+        if shouldStreamRemoteVoiceCapture {
+            await startRemoteVoiceCapture()
             return
         }
 
         await stopRemoteVoiceCapture()
-        if appState != .speaking && appState != .thinking {
+        if !canRunLiveConversation && appState != .speaking && appState != .thinking {
             setState(.idle)
         }
     }
 
     private func startRemoteVoiceCapture() async {
-        guard voiceMode == .novaSonic else { return }
+        guard shouldStreamRemoteVoiceCapture else { return }
         guard !remoteVoiceCapture.isStreaming else { return }
         do {
             partialTranscript = ""
@@ -570,6 +572,18 @@ final class ConversationAudioPipeline: ObservableObject {
     private func stopRemoteVoiceCapture() async {
         guard remoteVoiceCapture.isStreaming else { return }
         await remoteVoiceCapture.stop()
+
+        // Send trailing silence so Nova Sonic's server-side VAD detects
+        // end-of-speech. Sent inline (before the end event) to avoid a gap
+        // between real audio and silence that could cause false barge-in.
+        let silenceData = Data(repeating: 0, count: 3200) // 100ms at 16kHz/16-bit/mono
+        let silenceBase64 = silenceData.base64EncodedString()
+        for _ in 0..<10 {
+            let chunkEvent = Event.userAudioStreamChunk(audio: silenceBase64, sessionId: sessionId)
+            eventBus.emit(chunkEvent)
+            await sendConductorEvent(chunkEvent, false)
+        }
+
         let endEvent = Event.userAudioStreamEnd(sessionId: sessionId)
         eventBus.emit(endEvent)
         await sendConductorEvent(endEvent, false)
@@ -605,7 +619,14 @@ final class ConversationAudioPipeline: ObservableObject {
 }
 
 @MainActor
-private final class RemoteAudioCapture {
+protocol RemoteVoiceCapturing: AnyObject {
+    var isStreaming: Bool { get }
+    func start(onChunk: @escaping (String) -> Void) async throws
+    func stop() async
+}
+
+@MainActor
+private final class RemoteAudioCapture: RemoteVoiceCapturing {
     private let targetSampleRate: Double = 16_000
     private let emissionChunkBytes = 3_200
 
@@ -619,7 +640,7 @@ private final class RemoteAudioCapture {
         self.onChunk = onChunk
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker])
+        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.duckOthers, .defaultToSpeaker])
         try session.setActive(true)
 
         let engine = AVAudioEngine()

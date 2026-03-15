@@ -1,0 +1,46 @@
+{
+  "family": "abyss-server",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::192440504332:role/abyss-ecs-execution-role",
+  "taskRoleArn": "arn:aws:iam::192440504332:role/abyss-ecs-task-role",
+  "containerDefinitions": [
+    {
+      "name": "abyss-server",
+      "image": "192440504332.dkr.ecr.us-east-1.amazonaws.com/abyss-server:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        { "name": "PORT", "value": "8080" },
+        { "name": "MODEL_PROVIDER", "value": "bedrock" },
+        { "name": "VOICE_PROVIDER", "value": "local" },
+        { "name": "BEDROCK_TEXT_MODEL_ID", "value": "us.amazon.nova-2-lite-v1:0" },
+        { "name": "BEDROCK_SONIC_MODEL_ID", "value": "us.amazon.nova-2-sonic-v1:0" },
+        { "name": "BEDROCK_SONIC_VOICE_ID", "value": "tiffany" },
+        { "name": "AWS_REGION", "value": "us-east-1" }
+      ],
+      "healthCheck": {
+        "command": ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))\""],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3,
+        "startPeriod": 10
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/abyss-server",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}

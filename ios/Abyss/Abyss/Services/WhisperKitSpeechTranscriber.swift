@@ -11,7 +11,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     private let lock = NSLock()
 
     private var _isListening = false
-    private var _isPaused = false
     private var partialContinuation: AsyncStream<String>.Continuation?
     private var _partials: AsyncStream<String>?
     private var accumulatedText = ""
@@ -28,15 +27,15 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     private var partialTranscriptionTask: Task<Void, Never>?
     private var partialTranscriptionInFlight = false
     private var lastPartialSampleCount = 0
-    private let partialDebounceNanoseconds: UInt64 = 250_000_000
+    private var lastYieldedPartialText = ""
+    private let partialDebounceNanoseconds: UInt64 = 700_000_000
+    private let partialMinimumNewAudioSeconds: Double = 0.75
+    private let partialFullContextLimitSeconds: Double = 12.0
+    private let partialTrailingWindowSeconds: Double = 8.0
     #endif
 
     var isListening: Bool {
         lock.withLock { _isListening }
-    }
-
-    var isPaused: Bool {
-        lock.withLock { _isPaused }
     }
 
     var partials: AsyncStream<String> {
@@ -103,6 +102,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             partialTranscriptionTask = nil
             partialTranscriptionInFlight = false
             lastPartialSampleCount = 0
+            lastYieldedPartialText = ""
             #endif
         }
 
@@ -262,53 +262,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         return finalText
     }
 
-    func pause() async {
-        AppLogger.audio.debug("Pausing transcription (keeping engine alive)")
-
-        lock.withLock {
-            _isPaused = true
-            _isListening = false
-            #if canImport(WhisperKit)
-            partialTranscriptionTask?.cancel()
-            partialTranscriptionTask = nil
-            #endif
-        }
-        // In-flight transcription (partialTranscriptionInFlight) finishes in background — harmless.
-        // Engine + tap + audio session stay alive.
-    }
-
-    func resume() async throws {
-        let engineRunning = lock.withLock { audioEngine?.isRunning ?? false }
-
-        guard engineRunning else {
-            AppLogger.audio.debug("Resume called but engine not running — falling back to full start()")
-            lock.withLock { _isPaused = false }
-            try await start()
-            return
-        }
-
-        AppLogger.audio.debug("Resuming transcription from paused state")
-
-        // Reuse existing partialContinuation — STTStartTool is still iterating over its stream.
-        // Creating a new stream would orphan the consumer.
-        lock.withLock {
-            _isPaused = false
-            _isListening = true
-            accumulatedText = ""
-            #if canImport(WhisperKit)
-            audioBuffers = []
-            lastPartialSampleCount = 0
-            partialTranscriptionTask?.cancel()
-            partialTranscriptionTask = nil
-            partialTranscriptionInFlight = false
-            #endif
-        }
-
-        lock.withLock {
-            partialContinuation?.yield("Listening…")
-        }
-    }
-
     private func computeAudioLevelDB(from samples: [Float]) -> Float {
         guard !samples.isEmpty else { return -160.0 }
         let sumSquares = samples.reduce(Float.zero) { $0 + ($1 * $1) }
@@ -373,20 +326,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         return output
     }
 
-    /// Maximum audio window for partial transcription (seconds).
-    /// Keeps decode time bounded instead of growing with total recording length.
-    private let partialWindowSeconds: Double = 10.0
-
-    private func isWhisperHallucination(_ text: String) -> Bool {
-        let lower = text.lowercased()
-        return lower.hasPrefix("[silence")
-            || lower.hasPrefix("[blank_audio")
-            || lower == "listening…"
-            || lower == "you"
-            || lower == "thank you."
-            || lower == "thanks for watching."
-    }
-
     private func transcribePartial() async {
         let snapshot = lock.withLock {
             () -> (
@@ -398,20 +337,11 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             )? in
             guard _isListening, !isTornDown, !partialTranscriptionInFlight else { return nil }
             let sampleCount = audioBuffers.count
-            let minNewSamples = max(Int(inputSampleRate * 0.2), 1600)
+            let minNewSamples = max(Int(inputSampleRate * partialMinimumNewAudioSeconds), 1600)
             guard sampleCount - lastPartialSampleCount >= minNewSamples else { return nil }
 
-            // Use a sliding window: only the last N seconds of audio
-            let maxSamples = Int(inputSampleRate * partialWindowSeconds)
-            let windowedSamples: [Float]
-            if audioBuffers.count > maxSamples {
-                windowedSamples = Array(audioBuffers.suffix(maxSamples))
-            } else {
-                windowedSamples = audioBuffers
-            }
-
             partialTranscriptionInFlight = true
-            return (whisperKit, windowedSamples, inputSampleRate, sampleCount, partialContinuation)
+            return (whisperKit, audioBuffers, inputSampleRate, sampleCount, partialContinuation)
         }
 
         guard let snapshot else { return }
@@ -433,30 +363,38 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         let minSamplesAtInputRate = Int(snapshot.inputRate * 0.35)
         guard snapshot.samples.count > minSamplesAtInputRate else { return }
 
-        let forWhisper = resampleTo16k(snapshot.samples, sourceRate: snapshot.inputRate)
+        let partialInputSamples = boundedPartialSamples(
+            from: snapshot.samples,
+            sourceRate: snapshot.inputRate
+        )
+        let forWhisper = resampleTo16k(partialInputSamples, sourceRate: snapshot.inputRate)
         guard forWhisper.count > 3200 else { return }
 
         do {
             let results = try await whisper.transcribe(audioArray: forWhisper)
-            let rawText = results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            AppLogger.audio.debug("WhisperKit partial: \"\(rawText, privacy: .public)\" (\(rawText.count) chars)")
-            if rawText.count > 1, !isWhisperHallucination(rawText) {
-                let shouldYield = lock.withLock { () -> Bool in
-                    guard _isListening, !isTornDown else { return false }
-                    // Only update accumulatedText if the new transcript is at least as informative.
-                    // As speech slides out of the window, partials degrade ("List all..." → "Positories.").
-                    // Keep the best transcript seen so far.
-                    if rawText.count >= accumulatedText.count || accumulatedText.isEmpty {
-                        accumulatedText = rawText
+            if let text = results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines),
+               text.count > 1,
+               text != "Listening…" {
+                let mergedText = lock.withLock { () -> String? in
+                    guard _isListening, !isTornDown else { return nil }
+                    let nextText: String
+                    if usesFullContext(for: snapshot.samples.count, sourceRate: snapshot.inputRate) {
+                        nextText = Self.normalizeTranscript(text)
+                    } else {
+                        nextText = Self.mergePartialTranscript(existing: accumulatedText, trailing: text)
                     }
-                    return true
+
+                    guard !nextText.isEmpty, nextText != lastYieldedPartialText else { return nil }
+                    accumulatedText = nextText
+                    lastYieldedPartialText = nextText
+                    return nextText
                 }
-                if shouldYield {
-                    snapshot.continuation?.yield(rawText)
+                if let mergedText {
+                    snapshot.continuation?.yield(mergedText)
                 }
             }
         } catch is CancellationError {
-            // Expected when pause() cancels in-flight transcription
+            AppLogger.audio.debug("Partial transcription cancelled before completion")
         } catch {
             AppLogger.audio.error("Partial transcription failed: \(error.localizedDescription, privacy: .public)")
         }
@@ -482,6 +420,64 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         lock.withLock {
             partialTranscriptionTask = task
         }
+    }
+
+    private func boundedPartialSamples(from samples: [Float], sourceRate: Double) -> [Float] {
+        guard !samples.isEmpty else { return samples }
+        guard !usesFullContext(for: samples.count, sourceRate: sourceRate) else { return samples }
+
+        let maxWindowSamples = Int(sourceRate * partialTrailingWindowSeconds)
+        guard maxWindowSamples > 0, samples.count > maxWindowSamples else { return samples }
+        return Array(samples.suffix(maxWindowSamples))
+    }
+
+    private func usesFullContext(for sampleCount: Int, sourceRate: Double) -> Bool {
+        guard sourceRate > 0 else { return true }
+        return Double(sampleCount) / sourceRate <= partialFullContextLimitSeconds
+    }
+
+    static func normalizeTranscript(_ text: String) -> String {
+        text
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func mergePartialTranscript(existing: String, trailing: String) -> String {
+        let normalizedExisting = normalizeTranscript(existing)
+        let normalizedTrailing = normalizeTranscript(trailing)
+
+        guard !normalizedExisting.isEmpty else { return normalizedTrailing }
+        guard !normalizedTrailing.isEmpty else { return normalizedExisting }
+
+        if normalizedExisting.hasSuffix(normalizedTrailing) {
+            return normalizedExisting
+        }
+
+        if normalizedTrailing.hasPrefix(normalizedExisting) {
+            return normalizedTrailing
+        }
+
+        let existingChars = Array(normalizedExisting)
+        let trailingChars = Array(normalizedTrailing)
+        let maxOverlap = min(existingChars.count, trailingChars.count)
+        let minOverlap = min(12, maxOverlap)
+
+        if maxOverlap >= minOverlap {
+            for overlap in stride(from: maxOverlap, through: minOverlap, by: -1) {
+                let existingSuffix = existingChars.suffix(overlap)
+                let trailingPrefix = trailingChars.prefix(overlap)
+                if existingSuffix.elementsEqual(trailingPrefix) {
+                    return normalizedExisting + String(trailingChars.dropFirst(overlap))
+                }
+            }
+        }
+
+        if normalizedExisting.contains(normalizedTrailing) {
+            return normalizedExisting
+        }
+
+        return normalizedExisting + " " + normalizedTrailing
     }
     #endif
 }

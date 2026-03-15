@@ -3,7 +3,8 @@
 WebSocket conductor service for the Abyss iOS app.
 
 - Accepts event envelopes over `ws://.../ws`
-- Uses `MODEL_PROVIDER=bedrock` by default (Amazon Nova on Bedrock)
+- Uses `MODEL_PROVIDER=bedrock` by default (Amazon Nova 2 Lite on Bedrock)
+- Uses `VOICE_PROVIDER=nova-sonic` by default for hands-free live conversation
 - Emits ordered tool-driven events (`tool.call`, `assistant.speech.partial/final`)
 - Accepts `tool.result` from iOS and logs call outcomes
 - Keeps per-session history + pending tool calls in memory
@@ -75,16 +76,16 @@ SMOKE_WS_URL=ws://localhost:8080/ws SMOKE_TEXT="hello" npm run smoke
 
 - `PORT` (default `8080`)
 - `MODEL_PROVIDER` (`bedrock` or `anthropic`, default `bedrock`)
-- `VOICE_PROVIDER` (`local` or `nova-sonic`, default `local`)
+- `VOICE_PROVIDER` (`local` or `nova-sonic`, default `nova-sonic`)
 - `MAX_EVENT_BYTES` (default `65536`)
 - `MAX_TURNS` (default `20`)
 - `SESSION_RATE_LIMIT_PER_MIN` (default `30`)
 - `TRANSCRIPT_TRACE_MAX_ENTRIES` (default `120`)
 - `VERBOSE_TOOL_ROUTING_LOGS` (default `false`)
-- `BEDROCK_TEXT_MODEL_ID` (default `us.amazon.nova-2-lite-v1:0`)
+- `BEDROCK_TEXT_MODEL_ID` (default `us.amazon.nova-2-lite-v1:0`, used for push-to-talk + typed text turns)
 - `BEDROCK_MAX_TOKENS` (default `512`)
 - `BEDROCK_PARTIAL_DELAY_MS` (default `60`)
-- `BEDROCK_SONIC_MODEL_ID` (default `us.amazon.nova-2-sonic-v1:0`)
+- `BEDROCK_SONIC_MODEL_ID` (default `amazon.nova-sonic-v1:0`)
 - `BEDROCK_SONIC_VOICE_ID` (default `tiffany`)
 - `AWS_REGION` (default `us-east-1`)
 - `AWS_PROFILE` (optional)
@@ -115,7 +116,9 @@ When debugging server tool routing/fallback behavior, grep server logs for:
 - Bedrock / Nova (default): `MODEL_PROVIDER=bedrock`
 - Anthropic compatibility fallback: `MODEL_PROVIDER=anthropic`
 
-Voice mode is separate from text provider selection:
+Recommended split for the iOS app:
 
-- Local iOS audio path (default): `VOICE_PROVIDER=local`
-- Experimental Nova Sonic server path: `VOICE_PROVIDER=nova-sonic`
+- Push-to-talk and typed text: `MODEL_PROVIDER=bedrock` with `BEDROCK_TEXT_MODEL_ID=us.amazon.nova-2-lite-v1:0`
+- Hands-free live conversation: `VOICE_PROVIDER=nova-sonic`
+
+`VOICE_PROVIDER=local` is still supported as a server fallback, but the current iOS hands-free mode expects Nova Sonic streaming.

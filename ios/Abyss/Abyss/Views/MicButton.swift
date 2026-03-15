@@ -94,28 +94,34 @@ struct MicButton: View {
     }
 
     private var pushToTalkButton: some View {
-        HStack(spacing: 8) {
-            Image(systemName: isRecording ? "waveform" : "mic.fill")
-                .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-            Text(isRecording ? "Recording…" : "Hold to Speak")
-                .font(.subheadline.weight(.semibold))
-            Spacer()
-        }
-        .foregroundStyle(isRecording ? .white : AppTheme.actionBarIconTint(for: colorScheme))
-        .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
-        .frame(maxWidth: .infinity)
-        .frame(height: UIConstants.actionBarControlHeight)
-        .pttButtonBackground(isRecording: isRecording,
-                             cornerRadius: UIConstants.actionBarControlHeight / 2,
-                             colorScheme: colorScheme)
-        // DragGesture(minimumDistance: 0) was replaced because iOS's system gesture gate
-        // fires spurious .onEnded events (visible as "System gesture gate timed out" in logs).
-        // onLongPressGesture with minimumDuration: .infinity never fires perform(), so
-        // pressing: false is the only release signal — reliable for PTT.
-        .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
-            if isPressing { onMicPressed() } else { onMicReleased() }
-        }, perform: {})
-        .accessibilityLabel(isRecording ? "Recording, release to send" : "Hold to speak")
+        // The gesture target is a RoundedRectangle whose structural identity never
+        // changes regardless of isRecording. The visual content is overlaid on top.
+        // isRecording is derived from appState (set asynchronously inside the Task),
+        // NOT from a synchronous @Published flag, so the view doesn't re-render
+        // until after the gesture's pressing callback has already fired.
+        RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+            .fill(isRecording ? Color.red : AppTheme.pillBackground(for: colorScheme))
+            .overlay(
+                HStack(spacing: 8) {
+                    Image(systemName: isRecording ? "waveform" : "mic.fill")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                    Text(isRecording ? "Recording…" : "Hold to Speak")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                }
+                .foregroundStyle(isRecording ? .white : AppTheme.actionBarIconTint(for: colorScheme))
+                .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: UIConstants.actionBarControlHeight)
+            .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
+                if isPressing { onMicPressed() } else { onMicReleased() }
+            }, perform: {})
+            .accessibilityLabel(isRecording ? "Recording, release to send" : "Hold to speak")
     }
 
     private var typingBar: some View {
@@ -167,6 +173,9 @@ struct MicButton: View {
                             #selector(UIResponder.resignFirstResponder),
                             to: nil, from: nil, for: nil
                         )
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isTypingMode = false
+                        }
                     }
                 }
         )

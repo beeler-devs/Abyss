@@ -63,7 +63,7 @@ struct ContentView: View {
                             chatList.createChat()
                         } label: {
                             Image(systemName: "square.and.pencil")
-                                .offset(y: -2)
+                                .offset(y: -1)
                                 .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                         }
                     }
@@ -319,7 +319,7 @@ private struct ChatContentView: View {
 
     private func isPTTRecording(viewModel: ConversationViewModel, recordingMode: RecordingMode) -> Bool {
         if recordingMode == .pushToTalk {
-            return viewModel.isPTTHeld
+            return viewModel.appState == .listening || viewModel.appState == .transcribing
         }
         return viewModel.appState == .listening
     }

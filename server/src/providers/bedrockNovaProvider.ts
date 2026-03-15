@@ -31,6 +31,15 @@ interface FetchResult {
   toolCalls: ToolCallRequest[];
 }
 
+interface ResponseContentBlock {
+  text?: string;
+  toolUse?: {
+    toolUseId?: string;
+    name?: string;
+    input?: Record<string, unknown>;
+  };
+}
+
 type BedrockConversationRole = "user" | "assistant";
 
 interface BedrockClientLike {
@@ -76,8 +85,11 @@ export class BedrockNovaProvider implements ModelProvider {
   private readonly config: BedrockConfig;
   private readonly client: BedrockClientLike;
 
+  private readonly bearerToken: string | undefined;
+
   constructor(config: BedrockConfig, client?: BedrockClientLike) {
     this.config = config;
+    this.bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
     this.client = client ?? new BedrockRuntimeClient({ region: config.region });
   }
 
@@ -264,18 +276,12 @@ export class BedrockNovaProvider implements ModelProvider {
     const messages = this.buildMessages(conversation);
     const { toolConfig, toolNameToOriginal } = this.buildTools(tools);
 
-    const response = await this.client.send(new ConverseCommand({
-      modelId: this.config.modelId,
-      system: this.buildSystemPrompt(),
-      messages,
-      inferenceConfig: {
-        maxTokens: toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens,
-        temperature: 0.3,
-      },
-      ...(toolConfig ? { toolConfig } : {}),
-    }));
+    const maxTokens = toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens;
 
-    const contentBlocks = response.output?.message?.content ?? [];
+    const contentBlocks: ResponseContentBlock[] = this.bearerToken
+      ? await this.fetchWithBearer(messages, toolConfig, maxTokens)
+      : await this.fetchWithSdk(messages, toolConfig, maxTokens);
+
     const textParts: string[] = [];
     const toolCalls: ToolCallRequest[] = [];
 
@@ -300,5 +306,64 @@ export class BedrockNovaProvider implements ModelProvider {
       fullText: textParts.join("").trim(),
       toolCalls,
     };
+  }
+
+  private async fetchWithSdk(
+    messages: Message[],
+    toolConfig: ToolConfiguration | undefined,
+    maxTokens: number,
+  ): Promise<ResponseContentBlock[]> {
+    const response = await this.client.send(new ConverseCommand({
+      modelId: this.config.modelId,
+      system: this.buildSystemPrompt(),
+      messages,
+      inferenceConfig: { maxTokens, temperature: 0.3 },
+      ...(toolConfig ? { toolConfig } : {}),
+    }));
+    return (response.output?.message?.content ?? []) as ResponseContentBlock[];
+  }
+
+  private async fetchWithBearer(
+    messages: Message[],
+    toolConfig: ToolConfiguration | undefined,
+    maxTokens: number,
+  ): Promise<ResponseContentBlock[]> {
+    const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(this.config.modelId)}/converse`;
+
+    const body: Record<string, unknown> = {
+      system: this.buildSystemPrompt().map((b) => ({ text: b.text })),
+      messages: messages.map((m) => ({
+        role: m.role,
+        content: m.content?.map((c) => {
+          if ("text" in c && c.text) return { text: c.text };
+          if ("toolUse" in c && c.toolUse) return { toolUse: c.toolUse };
+          if ("toolResult" in c && c.toolResult) return { toolResult: c.toolResult };
+          return c;
+        }),
+      })),
+      inferenceConfig: { maxTokens, temperature: 0.3 },
+    };
+    if (toolConfig) {
+      body.toolConfig = toolConfig;
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.bearerToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Bedrock API error ${res.status}: ${errorText}`);
+    }
+
+    const json = (await res.json()) as Record<string, unknown>;
+    const output = json.output as Record<string, unknown> | undefined;
+    const message = output?.message as Record<string, unknown> | undefined;
+    return (message?.content ?? []) as ResponseContentBlock[];
   }
 }

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>BACKEND_WS_URL</key>
-	<string>$(BACKEND_WS_URL)</string>
+	<string>ws://192.168.1.87:8080/ws</string>
 	<key>CFBundleDisplayName</key>
 	<string>Abyss</string>
 	<key>CFBundleExecutable</key>
@@ -37,6 +37,16 @@
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>elb.amazonaws.com</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Abyss uses the microphone to listen to your voice for speech-to-text and voice commands.</string>

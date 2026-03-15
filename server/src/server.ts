@@ -19,7 +19,7 @@ import { VoiceProvider } from "./voice/types.js";
 
 const PORT = parseInteger(process.env.PORT, 8080);
 const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "bedrock").toLowerCase() === "anthropic" ? "anthropic" : "bedrock";
-const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "local").toLowerCase();
+const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "nova-sonic").toLowerCase();
 const MAX_EVENT_BYTES = parseInteger(process.env.MAX_EVENT_BYTES, 65_536);
 const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
@@ -48,9 +48,10 @@ const provider = buildProvider({
 });
 const voiceProvider: VoiceProvider | null = VOICE_PROVIDER === "nova-sonic"
   ? new BedrockNovaSonicVoiceProvider({
-    modelId: process.env.BEDROCK_SONIC_MODEL_ID ?? "us.amazon.nova-2-sonic-v1:0",
+    modelId: process.env.BEDROCK_SONIC_MODEL_ID ?? "amazon.nova-sonic-v1:0",
     region: process.env.AWS_REGION ?? "us-east-1",
     voiceId: process.env.BEDROCK_SONIC_VOICE_ID ?? "tiffany",
+    enableTools: process.env.BEDROCK_SONIC_ENABLE_TOOLS !== "false",
   })
   : null;
 
@@ -161,17 +162,6 @@ wss.on("connection", (socket, request) => {
   socket.on("message", async (raw) => {
     const text = Buffer.isBuffer(raw) ? raw.toString("utf8") : String(raw);
 
-    if (!limiter.allow()) {
-      const context = socketContexts.get(socket);
-      const fallbackSessionId = context?.sessionId ?? "unknown";
-      safeSend(socket, makeEvent("error", fallbackSessionId, {
-        code: "rate_limited",
-        message: "Too many events for this session in the last minute.",
-      }));
-      logger.warn("rate limit hit for socket");
-      return;
-    }
-
     const parsed = parseIncomingEvent(text, MAX_EVENT_BYTES);
     if (!parsed.event) {
       const context = socketContexts.get(socket);
@@ -184,6 +174,20 @@ wss.on("connection", (socket, request) => {
     }
 
     const event = parsed.event;
+
+    // Audio stream chunks are high-frequency by design (~10/sec); exempt them from rate limiting.
+    const isAudioStream = event.type.startsWith("user.audio.stream.");
+    if (!isAudioStream && !limiter.allow()) {
+      const context = socketContexts.get(socket);
+      const fallbackSessionId = context?.sessionId ?? "unknown";
+      safeSend(socket, makeEvent("error", fallbackSessionId, {
+        code: "rate_limited",
+        message: "Too many events for this session in the last minute.",
+      }));
+      logger.warn("rate limit hit for socket");
+      return;
+    }
+
     const context = socketContexts.get(socket) ?? { kind: "unknown" };
 
     if (event.type === "bridge.register") {
@@ -222,10 +226,12 @@ wss.on("connection", (socket, request) => {
     socketContexts.set(socket, context);
     iosSocketsBySession.set(event.sessionId, socket);
 
-    logger.info(`inbound ${event.type}`, {
-      sessionId: event.sessionId,
-      eventId: event.id,
-    });
+    if (!isAudioStream) {
+      logger.info(`inbound ${event.type}`, {
+        sessionId: event.sessionId,
+        eventId: event.id,
+      });
+    }
 
     if (event.type === "session.start") {
       emitBridgeStatusSnapshot(event.sessionId, socket);

@@ -7,6 +7,8 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
     private let lock = NSLock()
     private var _isSpeaking = false
     private let fallbackSynth = AVSpeechSynthesizer()
+    private var elevenLabsDisabledForSession = false
+    private var didLogElevenLabsDisableReason = false
 
     var voiceId: String
     var modelId: String
@@ -38,13 +40,14 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         }
 
         do {
-            if let apiKey, !apiKey.isEmpty {
+            let shouldTryElevenLabs = lock.withLock { !elevenLabsDisabledForSession }
+            if let apiKey, !apiKey.isEmpty, shouldTryElevenLabs {
                 try await speakWithElevenLabs(normalized, apiKey: apiKey)
                 return
             }
             try await speakWithSystemVoice(normalized)
         } catch {
-            AppLogger.audio.error("ElevenLabs playback failed; falling back to system voice: \(error.localizedDescription, privacy: .public)")
+            handleElevenLabsFailure(error)
             try await speakWithSystemVoice(normalized)
         }
     }
@@ -53,11 +56,36 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         lock.withLock { _isSpeaking = false }
 
         await MainActor.run {
-            StreamingPCMPlayer.shared.stop()
-            fallbackSynth.stopSpeaking(at: .immediate)
+            if StreamingPCMPlayer.shared.hasActivePlaybackSession {
+                StreamingPCMPlayer.shared.stop()
+            }
+            if fallbackSynth.isSpeaking || fallbackSynth.isPaused {
+                fallbackSynth.stopSpeaking(at: .immediate)
+            }
         }
 
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+
+    private func handleElevenLabsFailure(_ error: Error) {
+        if case TTSError.httpError(let code) = error, code == 401 || code == 403 {
+            let shouldLog = lock.withLock { () -> Bool in
+                elevenLabsDisabledForSession = true
+                if didLogElevenLabsDisableReason {
+                    return false
+                }
+                didLogElevenLabsDisableReason = true
+                return true
+            }
+            if shouldLog {
+                AppLogger.audio.warning(
+                    "ElevenLabs authorization failed (HTTP \(code, privacy: .public)); using system voice for the rest of this app session"
+                )
+            }
+            return
+        }
+
+        AppLogger.audio.error("ElevenLabs playback failed; falling back to system voice: \(error.localizedDescription, privacy: .public)")
     }
 
     private func speakWithElevenLabs(_ text: String, apiKey: String) async throws {
@@ -188,6 +216,10 @@ final class StreamingPCMPlayer {
     private var completionContinuation: CheckedContinuation<Void, Error>?
 
     private init() {}
+
+    var hasActivePlaybackSession: Bool {
+        engine != nil || playerNode != nil || completionContinuation != nil || !pendingAudio.isEmpty || scheduledBufferCount > 0
+    }
 
     func prepareForPlayback(sampleRate: Double) throws {
         stop()

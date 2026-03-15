@@ -12,7 +12,7 @@ struct SettingsView: View {
     @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
-    @AppStorage("voiceMode") private var voiceModeRaw = VoiceMode.local.rawValue
+    @AppStorage("backendWSURL") private var backendWSURL = ""
 
     @State private var availableModels: [String] = []
     @State private var isLoadingModels = false
@@ -36,29 +36,37 @@ struct SettingsView: View {
                     .pickerStyle(.menu)
                 }
 
-                Section("Recording") {
-                    Picker("Voice Backend", selection: $voiceModeRaw) {
-                        ForEach(VoiceMode.allCases, id: \.rawValue) { mode in
-                            Text(mode.displayName).tag(mode.rawValue)
-                        }
-                    }
-                    .pickerStyle(.menu)
+                Section("Server") {
+                    TextField("ws://host:8080/ws", text: $backendWSURL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(.system(.body, design: .monospaced))
 
+                    if backendWSURL.isEmpty {
+                        Text("Using default from Secrets.plist or Info.plist.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if Config.backendWSURL != nil {
+                        Label("Connected", systemImage: "checkmark.circle.fill")
+                            .font(.caption).foregroundStyle(.green)
+                    } else {
+                        Label("Invalid URL — must start with ws:// or wss://", systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                }
+
+                Section("Recording") {
                     Picker("Input Mode", selection: $recordingModeRaw) {
                         Text("Hands-free (VAD)").tag(RecordingMode.vadAuto.rawValue)
                         Text("Push to Talk").tag(RecordingMode.pushToTalk.rawValue)
                     }
                     .pickerStyle(.segmented)
 
-                    if voiceModeRaw == VoiceMode.novaSonic.rawValue {
-                        Text("Nova Sonic streams microphone audio to the backend. Keep BACKEND_WS_URL pointed at a server with VOICE_PROVIDER=nova-sonic.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else if recordingModeRaw == RecordingMode.vadAuto.rawValue {
-                        Text("Microphone is always open. Speech is detected automatically.")
+                    if recordingModeRaw == RecordingMode.vadAuto.rawValue {
+                        Text("Hands-free mode streams microphone audio to the backend with Nova Sonic. Keep BACKEND_WS_URL pointed at a server with VOICE_PROVIDER=nova-sonic.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else {
-                        Text("Hold the mic button to record. Release to send.")
+                        Text("Push to Talk records locally, then sends the final transcript to Nova 2 Lite when you release.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

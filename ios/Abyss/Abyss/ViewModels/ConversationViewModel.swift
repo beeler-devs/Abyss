@@ -23,7 +23,6 @@ final class ConversationViewModel: ObservableObject {
     private weak var gmailAuthManager: GmailAuthManager?
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
-    @AppStorage("voiceMode") private var voiceModeRaw: String = VoiceMode.local.rawValue
 
     let eventBus = EventBus()
     let conversationStore = ConversationStore()
@@ -40,6 +39,8 @@ final class ConversationViewModel: ObservableObject {
     private let sessionId: String
     private var activeConductorClient: ConductorClient?
     private var inboundEventsTask: Task<Void, Never>?
+    private var conductorConnectionTask: Task<ConductorClient, Error>?
+    private var conductorConnectionAttempt = 0
     private var isUsingServerClient = false
 
     private var audioPipeline: ConversationAudioPipeline!
@@ -53,10 +54,6 @@ final class ConversationViewModel: ObservableObject {
 
     private var recordingMode: RecordingMode {
         RecordingMode(rawValue: recordingModeRaw) ?? .vadAuto
-    }
-
-    private var voiceMode: VoiceMode {
-        VoiceMode(rawValue: voiceModeRaw) ?? .local
     }
 
     init(sessionId: String = UUID().uuidString) {
@@ -130,6 +127,7 @@ final class ConversationViewModel: ObservableObject {
     }
 
     deinit {
+        conductorConnectionTask?.cancel()
         inboundEventsTask?.cancel()
     }
 
@@ -146,8 +144,8 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func setChatActive(_ isActive: Bool) {
-        audioPipeline.setChatActive(isActive)
         syncRecordingMode()
+        audioPipeline.setChatActive(isActive)
     }
 
     func toggleMute() {
@@ -157,25 +155,23 @@ final class ConversationViewModel: ObservableObject {
     func setMuted(_ muted: Bool) {
         guard isMuted != muted else { return }
         isMuted = muted
-        audioPipeline.setMuted(muted)
         syncRecordingMode()
+        audioPipeline.setMuted(muted)
     }
 
     func interruptAssistantSpeech() {
-        audioPipeline.interruptAssistantSpeech()
         syncRecordingMode()
+        audioPipeline.interruptAssistantSpeech()
     }
 
     func micPressed() {
-        isPTTHeld = true
-        audioPipeline.micPressed()
         syncRecordingMode()
+        audioPipeline.micPressed()
     }
 
     func micReleased() {
-        isPTTHeld = false
-        audioPipeline.micReleased()
         syncRecordingMode()
+        audioPipeline.micReleased()
     }
 
     func sendTypedMessage(_ text: String) {
@@ -332,24 +328,31 @@ final class ConversationViewModel: ObservableObject {
             .store(in: &cancellables)
 
         audioPipeline.$appState
+            .receive(on: RunLoop.main)
             .assign(to: &$appState)
 
         audioPipeline.$partialTranscript
+            .receive(on: RunLoop.main)
             .assign(to: &$partialTranscript)
 
         eventCoordinator.$assistantPartialSpeech
+            .receive(on: RunLoop.main)
             .assign(to: &$assistantPartialSpeech)
 
         eventCoordinator.$pairedBridgeDevices
+            .receive(on: RunLoop.main)
             .assign(to: &$pairedBridgeDevices)
 
         eventCoordinator.$bridgePairingMessage
+            .receive(on: RunLoop.main)
             .assign(to: &$bridgePairingMessage)
 
         agentManager.$cards
+            .receive(on: RunLoop.main)
             .assign(to: &$agentProgressCards)
 
         emailManager.$emailCards
+            .receive(on: RunLoop.main)
             .assign(to: &$emailCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
@@ -361,7 +364,6 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func syncRecordingMode() {
-        audioPipeline.updateVoiceMode(voiceMode)
         audioPipeline.updateRecordingMode(recordingMode)
     }
 
@@ -370,25 +372,66 @@ final class ConversationViewModel: ObservableObject {
             if let client {
                 await attachConductorClient(client)
             } else {
-                await configureConductorClient(forceReconnect: true)
+                _ = await configureConductorClient(forceReconnect: true)
             }
         }
     }
 
-    private func configureConductorClient(forceReconnect: Bool) async {
+    @discardableResult
+    private func configureConductorClient(forceReconnect: Bool) async -> ConductorClient? {
         let shouldUseServer = useServerConductor && Config.isBackendWSConfigured
-        if !forceReconnect, shouldUseServer == isUsingServerClient, activeConductorClient != nil {
-            return
+        if !forceReconnect,
+           shouldUseServer == isUsingServerClient,
+           let client = activeConductorClient {
+            return client
         }
 
-        await disconnectConductorClient()
+        if let existingTask = conductorConnectionTask {
+            if forceReconnect {
+                existingTask.cancel()
+                conductorConnectionTask = nil
+            } else {
+                do {
+                    return try await existingTask.value
+                } catch {
+                    conductorConnectionTask = nil
+                }
+            }
+        }
+
+        conductorConnectionAttempt += 1
+        let attempt = conductorConnectionAttempt
+        let task = Task<ConductorClient, Error> { [weak self] in
+            guard let self else {
+                throw CancellationError()
+            }
+            return try await self.establishConductorClient(shouldUseServer: shouldUseServer)
+        }
+        conductorConnectionTask = task
+
+        do {
+            let client = try await task.value
+            if conductorConnectionAttempt == attempt {
+                conductorConnectionTask = nil
+            }
+            return client
+        } catch {
+            if conductorConnectionAttempt == attempt {
+                conductorConnectionTask = nil
+            }
+            return nil
+        }
+    }
+
+    private func establishConductorClient(shouldUseServer: Bool) async throws -> ConductorClient {
+        await disconnectActiveConductorClient()
 
         if shouldUseServer, let backendURL = Config.backendWSURL {
             let wsClient = WebSocketConductorClient(backendURL: backendURL)
             do {
-                isUsingServerClient = true
                 try await connectConductorClient(wsClient)
-                return
+                isUsingServerClient = true
+                return wsClient
             } catch {
                 eventBus.emit(Event.error(
                     code: "conductor_connect_failed",
@@ -402,21 +445,24 @@ final class ConversationViewModel: ObservableObject {
         let localClient = LocalConductorClient(conductor: localConductor)
         do {
             try await connectConductorClient(localClient)
-            activeConductorClient = localClient
+            isUsingServerClient = false
+            return localClient
         } catch {
             eventBus.emit(Event.error(
                 code: "local_conductor_failed",
                 message: "Failed to start local conductor: \(error.localizedDescription)",
                 sessionId: sessionId
             ))
+            throw error
         }
     }
 
     private func attachConductorClient(_ client: ConductorClient) async {
-        await disconnectConductorClient()
+        conductorConnectionTask?.cancel()
+        conductorConnectionTask = nil
+        await disconnectActiveConductorClient()
         do {
             try await connectConductorClient(client)
-            activeConductorClient = client
         } catch {
             eventBus.emit(Event.error(
                 code: "conductor_connect_failed",
@@ -427,7 +473,6 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func connectConductorClient(_ client: ConductorClient) async throws {
-        activeConductorClient = client
         let githubToken = GitHubAuthManager.loadToken()
         let gmailAccessToken = GmailAuthManager.loadAccessToken()
         let gmailRefreshToken = GmailAuthManager.loadRefreshToken()
@@ -447,9 +492,10 @@ final class ConversationViewModel: ObservableObject {
                 await self.handleInboundEvent(event)
             }
         }
+        activeConductorClient = client
     }
 
-    private func disconnectConductorClient() async {
+    private func disconnectActiveConductorClient() async {
         inboundEventsTask?.cancel()
         inboundEventsTask = nil
 
@@ -460,12 +506,18 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func sendEventToConductor(_ event: Event, surfaceErrors: Bool = true) async {
+        let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "pending"
         if case .userAudioStreamChunk = event.kind {} else {
-            let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "nil"
             AppLogger.conductor.debug("Sending \(event.kind.displayName, privacy: .public) via \(clientType, privacy: .public)")
         }
 
-        guard let client = activeConductorClient else {
+        let client: ConductorClient?
+        if let activeConductorClient {
+            client = activeConductorClient
+        } else {
+            client = await configureConductorClient(forceReconnect: false)
+        }
+        guard let client else {
             if surfaceErrors {
                 eventBus.emit(Event.error(
                     code: "conductor_missing",
@@ -482,12 +534,28 @@ final class ConversationViewModel: ObservableObject {
             AppLogger.conductor.error("Send failed: \(error.localizedDescription, privacy: .public)")
 
             if isUsingServerClient {
+                if await retryServerSend(event: event, because: error.localizedDescription) {
+                    return
+                }
+
+                if isLiveAudioStreamEvent(event) {
+                    await audioPipeline.applyRemoteState(.error)
+                    if surfaceErrors {
+                        eventBus.emit(Event.error(
+                            code: "conductor_send_failed",
+                            message: "Live conversation lost its server connection: \(error.localizedDescription)",
+                            sessionId: sessionId
+                        ))
+                    }
+                    return
+                }
+
                 AppLogger.conductor.notice("Falling back to local conductor after server send failure")
                 isUsingServerClient = false
-                useServerConductor = false
 
                 let localClient = LocalConductorClient(conductor: localConductor)
                 do {
+                    await disconnectActiveConductorClient()
                     try await connectConductorClient(localClient)
                     try await localClient.send(event: event)
                 } catch {
@@ -506,6 +574,39 @@ final class ConversationViewModel: ObservableObject {
                     sessionId: sessionId
                 ))
             }
+        }
+    }
+
+    private func retryServerSend(event: Event, because reason: String) async -> Bool {
+        guard useServerConductor,
+              Config.isBackendWSConfigured,
+              Config.backendWSURL != nil else {
+            return false
+        }
+
+        AppLogger.conductor.notice("Retrying server conductor after failure: \(reason, privacy: .public)")
+        conductorConnectionTask?.cancel()
+        conductorConnectionTask = nil
+
+        do {
+            guard let client = await configureConductorClient(forceReconnect: true) else {
+                throw WebSocketConductorClient.Error.notConnected
+            }
+            try await client.send(event: event)
+            return true
+        } catch {
+            AppLogger.conductor.error("Server retry failed: \(error.localizedDescription, privacy: .public)")
+            isUsingServerClient = false
+            return false
+        }
+    }
+
+    private func isLiveAudioStreamEvent(_ event: Event) -> Bool {
+        switch event.kind {
+        case .userAudioStreamStart, .userAudioStreamChunk, .userAudioStreamEnd:
+            return true
+        default:
+            return false
         }
     }
 

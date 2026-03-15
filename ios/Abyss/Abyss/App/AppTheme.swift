@@ -219,28 +219,13 @@ extension View {
     @ViewBuilder
     func glassButtonBackground(cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
         if #available(iOS 26, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
+            self.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: cornerRadius))
         } else {
             self
                 .background(RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(AppTheme.pillBackground(for: colorScheme)))
                 .overlay(RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1))
-        }
-    }
-
-    /// Liquid glass panel on iOS 26+; solid rounded card on earlier OS versions.
-    @ViewBuilder
-    func glassTimelineBackground(cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
-        if #available(iOS 26, *) {
-            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
-        } else {
-            self
-                .background(RoundedRectangle(cornerRadius: cornerRadius)
-                    .fill(AppTheme.eventTimelineBackground(for: colorScheme)))
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-                .overlay(RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(AppTheme.eventTimelineBorder(for: colorScheme), lineWidth: 0.5))
         }
     }
 
