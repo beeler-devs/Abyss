@@ -2,7 +2,6 @@ import SwiftUI
 
 /// Settings sheet for configuring app/network/provider options.
 struct SettingsView: View {
-    @Binding var useServerConductor: Bool
     let pairedBridgeDevices: [PairedBridgeDevice]
     let bridgePairingMessage: String?
     let onPairComputer: ((String, String?) -> Void)?
@@ -11,8 +10,6 @@ struct SettingsView: View {
     @AppStorage("recordingMode") private var recordingModeRaw = RecordingMode.vadAuto.rawValue
     @AppStorage("appAppearance") private var appAppearanceRaw = AppAppearance.system.rawValue
     @AppStorage("cursorAPIKey") private var cursorAPIKey = ""
-    @AppStorage("elevenLabsVoiceId") private var voiceId = "21m00Tcm4TlvDq8ikWAM"
-    @AppStorage("elevenLabsModelId") private var modelId = "eleven_turbo_v2_5"
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
     @AppStorage("voiceMode") private var voiceModeRaw = VoiceMode.local.rawValue
 
@@ -28,15 +25,6 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section("App") {
-                    NavigationLink {
-                        AppLanguagePickerView()
-                    } label: {
-                        Label("App language", systemImage: "globe")
-                        Spacer()
-                        Text("English")
-                            .foregroundStyle(.secondary)
-                    }
-
                     Picker(selection: $appAppearanceRaw) {
                         ForEach(AppAppearance.allCases, id: \.rawValue) { mode in
                             Text(mode.displayName).tag(mode.rawValue)
@@ -45,27 +33,6 @@ struct SettingsView: View {
                         Label("Appearance", systemImage: "sun.max")
                     }
                     .pickerStyle(.menu)
-
-                    Toggle(isOn: $useServerConductor) {
-                        Label("Use Server Conductor", systemImage: "server.rack")
-                    }
-                    .disabled(!Config.isBackendWSConfigured)
-
-                    if Config.isBackendWSConfigured {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("BACKEND_WS_URL")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text(Config.backendWSURLString ?? "")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(.secondary)
-                                .textSelection(.enabled)
-                        }
-                    } else {
-                        Label("Set BACKEND_WS_URL in Secrets.plist or Info.plist to enable server mode.", systemImage: "network.slash")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
 
                 Section("Recording") {
@@ -95,37 +62,7 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("ElevenLabs TTS") {
-                    HStack {
-                        Text("API Key")
-                        Spacer()
-                        if Config.isElevenLabsAPIKeyConfigured {
-                            Label("Configured", systemImage: "checkmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.green)
-                        } else {
-                            Label("Not Set", systemImage: "xmark.circle.fill")
-                                .font(.caption)
-                                .foregroundStyle(.red)
-                        }
-                    }
-
-                    TextField("Voice ID", text: $voiceId)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-
-                    TextField("Model ID", text: $modelId)
-                        .font(.system(.body, design: .monospaced))
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-
                 Section("Cursor Cloud Agents") {
-                    Text("Optional if server provides Cursor integration.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
                     HStack {
                         if Config.isCursorAPIKeyConfigured {
                             Label("Configured", systemImage: "checkmark.circle.fill")
@@ -150,7 +87,7 @@ struct SettingsView: View {
                             Text(model).tag(model)
                         }
                     }
-                    .pickerStyle(.navigationLink)
+                    .pickerStyle(.menu)
                     .disabled(!Config.isCursorAPIKeyConfigured)
 
                     if isLoadingModels {
@@ -198,19 +135,6 @@ struct SettingsView: View {
                                     .font(.caption)
                                     .foregroundStyle(device.status == "online" ? .green : .secondary)
                             }
-                        }
-                    }
-                }
-
-                if !Config.isElevenLabsAPIKeyConfigured {
-                    Section {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Label("Setup Required", systemImage: "info.circle")
-                                .font(.subheadline.bold())
-
-                            Text("Create a file at ios/Abyss/Abyss/App/Secrets.plist with your ELEVENLABS_API_KEY. See README for details.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -307,22 +231,6 @@ private struct PairComputerSheet: View {
                 }
             }
         }
-    }
-}
-
-// MARK: - App Language Picker (placeholder for future localization)
-private struct AppLanguagePickerView: View {
-    @AppStorage("appLanguage") private var appLanguage = "en"
-
-    var body: some View {
-        Form {
-            Picker("App language", selection: $appLanguage) {
-                Text("English").tag("en")
-            }
-            .pickerStyle(.inline)
-        }
-        .navigationTitle("App language")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }
 

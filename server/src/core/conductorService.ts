@@ -530,6 +530,7 @@ export class ConductorService {
       toolArguments: toolCall.input,
     });
     emit(envelope);
+    logger.info(`tool.client.call tool=${toolCall.name}`, { sessionId, callId });
     return waitForToolResult(session, callId, 30_000);
   }
 
@@ -781,6 +782,10 @@ export class ConductorService {
 
       emit(envelope);
       tracePush(`tool.call:${toolName}`);
+      logger.info(`tool.client.call tool=${toolName}`, {
+        sessionId: session.sessionId,
+        callId,
+      });
     };
 
     this.sessions.appendTurn(session, {
@@ -897,8 +902,18 @@ export class ConductorService {
 
           emit(envelope);
           tracePush(`tool.call:${toolCall.name}`);
+          logger.info(`tool.client.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}`, {
+            sessionId: session.sessionId,
+            eventId: sourceEventId,
+            callId,
+          });
 
           const { result, error } = await waitForToolResult(session, callId, 30_000);
+          logger.info(`tool.client.result tool=${toolCall.name} outcome=${error ? "error" : "ok"}`, {
+            sessionId: session.sessionId,
+            eventId: sourceEventId,
+            callId,
+          });
 
           this.sessions.appendTurn(session, {
             role: "tool",
@@ -926,6 +941,10 @@ export class ConductorService {
 
       emit(makeEvent("assistant.speech.final", session.sessionId, { text: responseText }));
       tracePush("assistant.speech.final");
+      logger.info(`assistant.speech.final: "${responseText.length > 160 ? responseText.slice(0, 160) + "…" : responseText}"`, {
+        sessionId: session.sessionId,
+        eventId: sourceEventId,
+      });
 
       this.sessions.appendTurn(session, {
         role: "assistant",
