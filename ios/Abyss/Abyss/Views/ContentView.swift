@@ -60,10 +60,6 @@ struct ContentView: View {
             .sheet(isPresented: $showSettings) {
                 if let vm = viewModel {
                     SettingsView(
-                        useServerConductor: Binding(
-                            get: { vm.useServerConductor },
-                            set: { vm.setUseServerConductor($0) }
-                        ),
                         pairedBridgeDevices: vm.pairedBridgeDevices,
                         bridgePairingMessage: vm.bridgePairingMessage,
                         onPairComputer: { code, deviceName in
@@ -72,7 +68,6 @@ struct ContentView: View {
                     )
                 } else {
                     SettingsView(
-                        useServerConductor: .constant(false),
                         pairedBridgeDevices: [],
                         bridgePairingMessage: nil,
                         onPairComputer: nil

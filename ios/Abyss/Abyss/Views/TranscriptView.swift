@@ -88,9 +88,13 @@ struct MessageBubble: View {
             if isUser { Spacer(minLength: 60) }
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 8) {
-                Text(message.text)
-                    .font(.body)
-                    .foregroundStyle(textColor)
+                if isUser {
+                    Text(message.text)
+                        .font(.body)
+                        .foregroundStyle(textColor)
+                } else {
+                    MarkdownTextView(text: message.text, foregroundColor: textColor)
+                }
 
                 if showsAssistantActions {
                     assistantActions

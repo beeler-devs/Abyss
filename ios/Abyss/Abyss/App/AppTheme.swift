@@ -184,4 +184,30 @@ enum AppTheme {
 
     /// Auth button background (loading).
     static let authButtonBackgroundLoading = Color.white.opacity(0.7)
+
+    // MARK: - Code Blocks
+
+    /// Fenced code block background (dark terminal-like).
+    static func codeBlockBackground(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color(red: 18 / 255, green: 18 / 255, blue: 18 / 255)
+            : Color(red: 38 / 255, green: 38 / 255, blue: 38 / 255)
+    }
+
+    /// Fenced code block text color.
+    static func codeBlockText(for colorScheme: ColorScheme) -> Color {
+        Color(red: 220 / 255, green: 220 / 255, blue: 220 / 255)
+    }
+
+    /// Fenced code block language label text.
+    static func codeBlockLabelText(for colorScheme: ColorScheme) -> Color {
+        Color.white.opacity(0.4)
+    }
+
+    /// Inline code background.
+    static func inlineCodeBackground(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.1)
+            : Color.black.opacity(0.06)
+    }
 }
