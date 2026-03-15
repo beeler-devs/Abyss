@@ -6,16 +6,18 @@ import {
   InvokeModelWithBidirectionalStreamInput,
   InvokeModelWithBidirectionalStreamOutput,
 } from "@aws-sdk/client-bedrock-runtime";
+import { NodeHttp2Handler } from "@smithy/node-http-handler";
 
 import { makeEvent } from "../core/events.js";
 import { logger } from "../core/logger.js";
-import { ToolCallRequest } from "../core/types.js";
+import { ToolCallRequest, ToolDefinition } from "../core/types.js";
 import { VoiceProvider, VoiceProviderContext } from "./types.js";
 
 export interface BedrockNovaSonicVoiceProviderConfig {
   modelId: string;
   region: string;
   voiceId: string;
+  enableTools?: boolean;
 }
 
 interface BidirectionalClientLike {
@@ -70,6 +72,32 @@ function parseAdditionalModelFields(value: unknown): Record<string, unknown> {
   }
 }
 
+const VOICE_PIPELINE_TOOL_PREFIXES = ["stt.", "tts.", "convo."] as const;
+
+function convertToolsForSonic(tools: ToolDefinition[]): Record<string, unknown> | undefined {
+  const eligible = tools.filter(
+    (t) => !VOICE_PIPELINE_TOOL_PREFIXES.some((prefix) => t.name.startsWith(prefix)),
+  );
+  if (eligible.length === 0) {
+    return undefined;
+  }
+  return {
+    tools: eligible.map((t) => ({
+      toolSpec: {
+        name: t.name,
+        description: t.description,
+        inputSchema: {
+          json: JSON.stringify({
+            type: t.input_schema.type,
+            properties: t.input_schema.properties,
+            ...(t.input_schema.required ? { required: t.input_schema.required } : {}),
+          }),
+        },
+      },
+    })),
+  };
+}
+
 export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
   readonly name = "nova-sonic";
 
@@ -81,7 +109,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
   constructor(config: BedrockNovaSonicVoiceProviderConfig, client?: BidirectionalClientLike) {
     this.config = config;
-    this.client = client ?? new BedrockRuntimeClient({ region: config.region });
+    this.client = client ?? new BedrockRuntimeClient({
+      region: config.region,
+      requestHandler: new NodeHttp2Handler({
+        requestTimeout: 300_000,
+        sessionTimeout: 300_000,
+        disableConcurrentStreams: false,
+        maxConcurrentStreams: 20,
+      }),
+    });
   }
 
   async startStream(sessionId: string, context: VoiceProviderContext): Promise<void> {
@@ -105,55 +141,69 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     };
     this.sessions.set(sessionId, session);
 
-    const response = await this.client.send(new InvokeModelWithBidirectionalStreamCommand({
-      modelId: this.config.modelId,
-      body: outgoing,
-    }));
-
-    session.responseTask = this.consumeResponseStream(session, response.body);
-
+    // Queue ALL setup events BEFORE calling send() — the SDK starts consuming
+    // the iterator immediately and expects sessionStart as the first event.
     this.sendEvent(session, {
       sessionStart: {
         inferenceConfiguration: {
           maxTokens: 1024,
-          temperature: 0.3,
+          temperature: 0.7,
           topP: 0.9,
         },
-        turnDetectionConfiguration: {
-          endOfSpeechSensitivity: "MEDIUM",
-        },
       },
     });
-    this.sendEvent(session, {
-      promptStart: {
-        promptName,
-        textOutputConfiguration: {
-          mediaType: "text/plain",
-        },
-        audioOutputConfiguration: {
-          mediaType: "audio/lpcm",
-          sampleRateHertz: 16000,
-          sampleSizeBits: 16,
-          channelCount: 1,
-          voiceId: this.config.voiceId,
-        },
+
+    const rawTools = context.listTools(sessionId);
+    const toolConfiguration = this.config.enableTools !== false
+      ? convertToolsForSonic(rawTools)
+      : undefined;
+
+    const promptStartPayload: Record<string, unknown> = {
+      promptName,
+      textOutputConfiguration: {
+        mediaType: "text/plain",
       },
-    });
+      audioOutputConfiguration: {
+        audioType: "SPEECH",
+        encoding: "base64",
+        mediaType: "audio/lpcm",
+        sampleRateHertz: 24000,
+        sampleSizeBits: 16,
+        channelCount: 1,
+        voiceId: this.config.voiceId,
+      },
+    };
+    if (toolConfiguration) {
+      promptStartPayload.toolConfiguration = toolConfiguration;
+    }
+    this.sendEvent(session, { promptStart: promptStartPayload });
+
+    const toolCount = toolConfiguration
+      ? (toolConfiguration.tools as unknown[]).length
+      : 0;
+    const toolsLine = toolCount > 0
+      ? ` You have access to ${toolCount} tools including code execution, file operations, git, and agent spawning. Call them one at a time.`
+      : "";
+    const systemPrompt = `You are the Abyss voice-first coding assistant. Keep responses concise, practical, and voice-friendly.${toolsLine}`;
 
     const systemContentName = `system-${crypto.randomUUID()}`;
     this.sendEvent(session, {
       contentStart: {
         promptName,
         contentName: systemContentName,
-        type: "SYSTEM",
+        type: "TEXT",
+        interactive: false,
         role: "SYSTEM",
+        textInputConfiguration: {
+          mediaType: "text/plain",
+        },
       },
     });
     this.sendEvent(session, {
       textInput: {
         promptName,
         contentName: systemContentName,
-        content: "You are the Abyss voice-first coding assistant. Keep responses concise, practical, and voice-friendly.",
+        content: systemPrompt,
       },
     });
     this.sendEvent(session, {
@@ -168,8 +218,11 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         promptName,
         contentName: audioContentName,
         type: "AUDIO",
+        interactive: true,
         role: "USER",
         audioInputConfiguration: {
+          audioType: "SPEECH",
+          encoding: "base64",
           mediaType: "audio/lpcm",
           sampleRateHertz: 16000,
           sampleSizeBits: 16,
@@ -177,6 +230,14 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         },
       },
     });
+
+    // NOW start the bidirectional stream — events are already queued
+    const response = await this.client.send(new InvokeModelWithBidirectionalStreamCommand({
+      modelId: this.config.modelId,
+      body: outgoing,
+    }));
+
+    session.responseTask = this.consumeResponseStream(session, response.body);
 
     context.emit(makeEvent("tool.call", sessionId, {
       callId: crypto.randomUUID(),
@@ -354,7 +415,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       session.context.emit(makeEvent("assistant.audio.chunk", session.sessionId, {
         audio,
         encoding: "pcm_s16le",
-        sampleRateHertz: 16000,
+        sampleRateHertz: 24000,
         channelCount: 1,
       }));
       return;
@@ -476,11 +537,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       contentStart: {
         promptName: session.promptName,
         contentName,
+        interactive: false,
         type: "TOOL",
         role: "TOOL",
         toolResultInputConfiguration: {
           toolUseId: toolCall.id,
           type: "TEXT",
+          textInputConfiguration: {
+            mediaType: "text/plain",
+          },
         },
       },
     });
