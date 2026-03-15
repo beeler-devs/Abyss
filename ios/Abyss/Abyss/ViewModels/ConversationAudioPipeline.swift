@@ -72,7 +72,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func preloadTranscriber() {
-        guard recordingMode == .pushToTalk else { return }
+        guard recordingMode == .pushToTalk, isChatActive else { return }
         let transcriber = self.transcriber
         Task {
             await transcriber.preload()
