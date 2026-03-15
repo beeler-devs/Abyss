@@ -77,11 +77,16 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func updateRecordingMode(_ mode: RecordingMode) {
-        guard recordingMode != mode else { return }
+        guard recordingMode != mode else {
+            AppLogger.audio.debug("updateRecordingMode(\(mode.rawValue, privacy: .public)) — no change, skipping")
+            return
+        }
+        AppLogger.audio.debug("updateRecordingMode(\(mode.rawValue, privacy: .public)) — was \(self.recordingMode.rawValue, privacy: .public)")
         recordingMode = mode
         if mode == .pushToTalk {
             voiceActivityDetector.stopMonitoring()
         }
+        Task { await refreshLiveConversationState() }
     }
 
     func updateVoiceMode(_ mode: VoiceMode) {
@@ -91,13 +96,21 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func setChatActive(_ isActive: Bool) {
-        guard isChatActive != isActive else { return }
+        guard isChatActive != isActive else {
+            AppLogger.audio.debug("setChatActive(\(isActive)) — no change, skipping")
+            return
+        }
+        AppLogger.audio.debug("setChatActive(\(isActive))")
         isChatActive = isActive
         Task { await refreshLiveConversationState() }
     }
 
     func setMuted(_ muted: Bool) {
-        guard isMuted != muted else { return }
+        guard isMuted != muted else {
+            AppLogger.audio.debug("setMuted(\(muted)) — no change, skipping")
+            return
+        }
+        AppLogger.audio.debug("setMuted(\(muted))")
         isMuted = muted
         Task {
             if muted {
@@ -114,8 +127,15 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func micPressed() {
-        guard recordingMode == .pushToTalk else { return }
-        guard isChatActive else { return }
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("micPressed() — not in PTT mode, ignoring")
+            return
+        }
+        guard isChatActive else {
+            AppLogger.audio.debug("micPressed() — chat not active, ignoring")
+            return
+        }
+        AppLogger.audio.debug("micPressed() — starting PTT capture")
         if voiceMode == .novaSonic {
             Task { await startRemoteVoiceCapture() }
             return
@@ -130,7 +150,11 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func micReleased() {
-        guard recordingMode == .pushToTalk else { return }
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("micReleased() — not in PTT mode, ignoring")
+            return
+        }
+        AppLogger.audio.debug("micReleased()")
         if voiceMode == .novaSonic {
             Task { await stopRemoteVoiceCapture() }
             return
@@ -215,6 +239,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func refreshLiveConversationState() async {
+        AppLogger.audio.debug("refreshLiveConversationState() — chatActive=\(self.isChatActive) muted=\(self.isMuted) appState=\(self.appState.rawValue, privacy: .public) recordingMode=\(self.recordingMode.rawValue, privacy: .public)")
         if voiceMode == .novaSonic {
             await refreshRemoteVoiceConversationState()
             return
@@ -259,11 +284,27 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func startListening() async {
-        guard voiceMode == .local else { return }
-        guard recordingMode == .vadAuto else { return }
-        guard canRunLiveConversation else { return }
-        guard !isStoppingRecording else { return }
-        guard !isStartingRecording else { return }
+        guard voiceMode == .local else {
+            AppLogger.audio.debug("startListening() — not local voice mode, skipping")
+            return
+        }
+        guard recordingMode == .vadAuto else {
+            AppLogger.audio.debug("startListening() — not vadAuto mode, skipping")
+            return
+        }
+        guard canRunLiveConversation else {
+            AppLogger.audio.debug("startListening() — canRunLiveConversation=false, skipping")
+            return
+        }
+        guard !isStoppingRecording else {
+            AppLogger.audio.debug("startListening() — isStoppingRecording, skipping")
+            return
+        }
+        guard !isStartingRecording else {
+            AppLogger.audio.debug("startListening() — isStartingRecording, skipping")
+            return
+        }
+        AppLogger.audio.debug("startListening() — proceeding")
         isStartingRecording = true
         defer { isStartingRecording = false }
 

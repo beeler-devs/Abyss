@@ -74,8 +74,6 @@ final class ConversationEventCoordinator: ObservableObject {
     }
 
     func handleInboundEvent(_ event: Event) async {
-        AppLogger.conductor.debug("Inbound event: \(event.kind.displayName, privacy: .public)")
-
         switch event.kind {
         case .assistantSpeechPartial(let partial):
             guard assistantPartialSpeech != partial.text else { return }

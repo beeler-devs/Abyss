@@ -219,7 +219,7 @@ extension View {
     @ViewBuilder
     func glassButtonBackground(cornerRadius: CGFloat, colorScheme: ColorScheme) -> some View {
         if #available(iOS 26, *) {
-            self.glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: cornerRadius))
+            self.glassEffect(.regular, in: RoundedRectangle(cornerRadius: cornerRadius))
         } else {
             self
                 .background(RoundedRectangle(cornerRadius: cornerRadius)

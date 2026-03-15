@@ -143,11 +143,13 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func setChatActive(_ isActive: Bool) {
+        AppLogger.interaction.debug("setChatActive(\(isActive))")
         syncRecordingMode()
         audioPipeline.setChatActive(isActive)
     }
 
     func toggleMute() {
+        AppLogger.interaction.debug("toggleMute() — current isMuted=\(self.isMuted)")
         setMuted(!isMuted)
     }
 
@@ -164,12 +166,14 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func micPressed() {
+        AppLogger.interaction.debug("micPressed()")
         isPTTHeld = true
         syncRecordingMode()
         audioPipeline.micPressed()
     }
 
     func micReleased() {
+        AppLogger.interaction.debug("micReleased()")
         isPTTHeld = false
         syncRecordingMode()
         audioPipeline.micReleased()
@@ -332,9 +336,17 @@ final class ConversationViewModel: ObservableObject {
         agentManager.$cards
             .receive(on: RunLoop.main)
             .assign(to: &$agentProgressCards)
+
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.syncRecordingMode()
+            }
+            .store(in: &cancellables)
     }
 
     private func syncRecordingMode() {
+        AppLogger.interaction.debug("syncRecordingMode() — voiceMode=\(self.voiceMode.rawValue, privacy: .public) recordingMode=\(self.recordingMode.rawValue, privacy: .public)")
         audioPipeline.updateVoiceMode(voiceMode)
         audioPipeline.updateRecordingMode(recordingMode)
     }
