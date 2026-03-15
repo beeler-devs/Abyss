@@ -101,12 +101,13 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         try session.setActive(true)
 
         let engine = AVAudioEngine()
+        // Access inputNode before prepare/start so the engine configures its audio graph
+        // with hardware I/O nodes — otherwise start() crashes with "inputNode != nullptr".
+        let inputNode = engine.inputNode
+        let hwFormat = inputNode.inputFormat(forBus: 0)
         engine.prepare()
         try engine.start()
         audioEngine = engine
-
-        let inputNode = engine.inputNode
-        let hwFormat = inputNode.inputFormat(forBus: 0)
         #if canImport(WhisperKit)
         let sampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48_000
         lock.withLock {
