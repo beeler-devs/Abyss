@@ -43,6 +43,13 @@ cd mac/AbyssBridge && swift run
 cd mac/BridgeCLI && swift run abyss-bridge --server ws://localhost:8080/ws --workspace . --name "My Mac"
 ```
 
+### iOS App
+```bash
+# Build via Xcode CLI (requires xcode-select pointing to Xcode.app, not CommandLineTools)
+# If xcodebuild fails, run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+cd ios/Abyss && xcodebuild -scheme Abyss -destination 'platform=iOS Simulator,name=iPhone 16' build
+```
+
 ## Architecture
 
 ### Event System
@@ -71,6 +78,33 @@ Selected via `MODEL_PROVIDER` env var:
 
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
+
+### iOS UI Architecture
+
+#### Key iOS Files
+- `ios/.../App/AbyssApp.swift` — App entry point; injects `@EnvironmentObject`s
+- `ios/.../Views/ContentView.swift` — Root view with `NavigationStack`, sidebar panel (`ChatSidebarPanel`), and `ChatContentView`
+- `ios/.../Views/TranscriptView.swift` — Scrolling conversation transcript; `MessageBubble` renders each message
+- `ios/.../Views/MarkdownTextView.swift` — Markdown renderer used for all assistant messages
+- `ios/.../Views/AgentProgressCardView.swift` — Cursor agent progress card UI
+- `ios/.../Views/EventTimelineView.swift` — Debug event timeline
+- `ios/.../Views/InAppBrowserView.swift` — WKWebView in-app browser + `InAppBrowserCoordinator`
+- `ios/.../App/AppTheme.swift` — Centralized theme colors (all UI colors live here)
+- `ios/.../ViewModels/ConversationViewModel.swift` — Primary VM; owns messages, appState, audio pipeline
+
+#### iOS Patterns
+- Shared state uses `@StateObject` in `AbyssApp` + `@EnvironmentObject` in child views
+- Theming via `AppTheme` static methods that take `colorScheme` parameter
+- `@AppStorage` for persisted user preferences
+
+#### Markdown Rendering
+Assistant messages are rendered via `MarkdownTextView` (not plain `Text`). It parses the raw string into `Block` values:
+- `.text` — rendered with `AttributedString(markdown:)` for inline formatting (bold, italic, inline code)
+- `.codeBlock(language, code)` — rendered by `CodeBlockView` with a dark terminal-style background, language label, horizontal scroll, and a copy button
+
+`AppTheme` provides `codeBlockBackground`, `codeBlockText`, and `codeBlockLabelText` for code block styling. All colors are theme-aware (`colorScheme` parameter).
+
+User messages are plain `Text`; only assistant messages use `MarkdownTextView`.
 
 ## Environment Configuration
 
