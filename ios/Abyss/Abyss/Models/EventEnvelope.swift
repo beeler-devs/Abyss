@@ -228,10 +228,10 @@ struct EventEnvelope: Codable, Sendable {
         switch type {
         case "session.start":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil))
         case "session.started":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil))
         case "user.audio.transcript.partial":
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":
