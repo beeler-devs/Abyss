@@ -403,6 +403,9 @@ final class BridgeAppModel: ObservableObject {
 struct BridgeStatusView: View {
     @ObservedObject var model: BridgeAppModel
 
+    @State private var transientMessage: String? = nil
+    @State private var transientTask: Task<Void, Never>? = nil
+
     private var connectionDotColor: Color {
         switch model.connectionState {
         case .connected:    return .green
@@ -565,20 +568,44 @@ struct BridgeStatusView: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .onChange(of: model.statusMessage) {
+                guard !model.statusMessage.isEmpty else { return }
+                transientTask?.cancel()
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    transientMessage = model.statusMessage
+                }
+                transientTask = Task {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    guard !Task.isCancelled else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        transientMessage = nil
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Button(action: {}) {
                         HStack(spacing: 6) {
-                            Circle()
-                                .fill(connectionDotColor)
-                                .frame(width: 8, height: 8)
-                            Text(model.connectionStateLabel.capitalized)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
+                            if let msg = transientMessage {
+                                Text(msg)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            } else {
+                                Circle()
+                                    .fill(connectionDotColor)
+                                    .frame(width: 8, height: 8)
+                                Text(model.connectionStateLabel.capitalized)
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.92)))
+                            }
                         }
+                        .animation(.easeInOut(duration: 0.15), value: transientMessage)
                     }
                     .buttonStyle(.glass)
                     .allowsHitTesting(false)
+                    .animation(.spring(duration: 0.25), value: transientMessage)
                 }
 
                 ToolbarItem(placement: .primaryAction) {
@@ -594,14 +621,6 @@ struct BridgeStatusView: View {
                     }
                 }
                 .sharedBackgroundVisibility(.hidden)
-            }
-
-            if model.connectionState == .connected && !model.statusMessage.isEmpty {
-                Text(model.statusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
             }
         }
     }
