@@ -117,7 +117,7 @@ export class BedrockNovaProvider implements ModelProvider {
         "If gmail.inbox, gmail.search, gmail.read, gmail.send, or gmail.reply tools are available, use them when the user asks about email.",
         "For gmail.search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
         "CRITICAL: Before calling gmail.send or gmail.reply, you MUST present the full draft (To, Subject, Body) to the user and wait for explicit confirmation. Never send or reply without the user saying yes.",
-        "If Gmail tools are not available, tell the user to connect their Gmail account in the Settings screen.",
+        "If gmail.authenticate is available, call it when the user asks about email but hasn't connected Gmail yet — this will pop up the sign-in screen on their device.",
       ].join(" "),
     }];
   }

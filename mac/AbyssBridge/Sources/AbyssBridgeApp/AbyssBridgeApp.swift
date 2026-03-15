@@ -581,15 +581,14 @@ struct BridgeStatusView: View {
                         if model.pairingCode.isEmpty {
                             Button("Get Pairing Code") { model.generatePairingCode() }
                                 .buttonStyle(.glass)
-                                .sharedBackgroundVisibility(.hidden)
                         }
                         Button("", systemImage: "arrow.clockwise") {
                             model.reconnect()
                         }
                         .buttonStyle(.glass)
-                        .sharedBackgroundVisibility(.hidden)
                     }
                 }
+                .sharedBackgroundVisibility(.hidden)
             }
 
             if model.connectionState == .connected && !model.statusMessage.isEmpty {

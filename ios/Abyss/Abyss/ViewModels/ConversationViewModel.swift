@@ -20,6 +20,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var isPTTHeld: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
+    private weak var gmailAuthManager: GmailAuthManager?
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
     @AppStorage("voiceMode") private var voiceModeRaw: String = VoiceMode.local.rawValue
@@ -214,6 +215,18 @@ final class ConversationViewModel: ObservableObject {
 
     func cancelRepositorySelection() {
         repositorySelectionManager.cancelSelection()
+    }
+
+    func setGmailAuthManager(_ manager: GmailAuthManager) {
+        guard gmailAuthManager == nil else { return }
+        gmailAuthManager = manager
+        toolRegistry.register(GmailAuthenticateTool(
+            authManager: manager,
+            onAuthenticated: { [weak self] in
+                guard let self else { return }
+                await self.configureConductorClient(forceReconnect: true)
+            }
+        ))
     }
 
     func toggleEmailCardExpanded(cardID: UUID) {

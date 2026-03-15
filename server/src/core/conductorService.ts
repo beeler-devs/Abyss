@@ -822,6 +822,16 @@ export class ConductorService {
       const session = this.sessions.getOrCreate(sessionId);
       if (session.gmailAccessToken) {
         tools.push(...SERVER_GMAIL_TOOLS);
+      } else {
+        tools.push({
+          name: "gmail.authenticate",
+          description:
+            "Prompt the user to connect their Gmail account. Call this when the user wants to use email features but hasn't connected Gmail yet. This opens the Google sign-in screen on their device.",
+          input_schema: {
+            type: "object",
+            properties: {},
+          },
+        });
       }
     }
 
@@ -833,7 +843,7 @@ export class ConductorService {
       return Boolean(this.bridgeToolExecutor);
     }
 
-    if (toolName.startsWith("gmail.")) {
+    if (toolName.startsWith("gmail.") && toolName !== "gmail.authenticate") {
       return true;
     }
 

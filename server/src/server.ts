@@ -588,12 +588,16 @@ async function handleGoogleExchange(
   }
 
   let code: string;
+  let redirectUri: string;
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
     if (typeof parsed.code !== "string" || !parsed.code) {
       throw new Error("missing code");
     }
     code = parsed.code;
+    redirectUri = typeof parsed.redirectUri === "string" && parsed.redirectUri
+      ? parsed.redirectUri
+      : "abyss://oauth-callback";
   } catch {
     res.writeHead(400, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "invalid_request", message: "Body must be JSON with a 'code' string." }));
@@ -605,7 +609,7 @@ async function handleGoogleExchange(
       code,
       GOOGLE_CLIENT_ID,
       GOOGLE_CLIENT_SECRET,
-      "abyss://oauth-callback",
+      redirectUri,
     );
 
     logger.info("google token exchange successful");
