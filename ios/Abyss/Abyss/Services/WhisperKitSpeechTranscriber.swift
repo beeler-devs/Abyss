@@ -60,6 +60,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
     }
 
     private var _isWarmedUp = false
+    private var _isWarmingUp = false
 
     init() {}
 
@@ -67,6 +68,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
             _isListening = false
             _isWarmedUp = false
+            _isWarmingUp = false
             isTornDown = true
             #if canImport(WhisperKit)
             partialTranscriptionTask?.cancel()
@@ -94,7 +96,19 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
     /// Prepare the audio engine once. Keeps it running so start()/stop() are near-instant.
     func warmUp() async throws {
-        guard !lock.withLock({ _isWarmedUp }) else { return }
+        let shouldProceed = lock.withLock {
+            guard !_isWarmedUp, !_isWarmingUp else { return false }
+            _isWarmingUp = true
+            return true
+        }
+        guard shouldProceed else { return }
+
+        defer {
+            lock.withLock { _isWarmingUp = false }
+        }
+
+        // Bail out if torn down between the guard and here
+        guard !lock.withLock({ isTornDown }) else { return }
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: .duckOthers)
@@ -107,6 +121,13 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         let hwFormat = inputNode.inputFormat(forBus: 0)
         engine.prepare()
         try engine.start()
+
+        // Check torn down again — tearDown() could have run while we were awaiting
+        guard !lock.withLock({ isTornDown }) else {
+            engine.stop()
+            return
+        }
+
         audioEngine = engine
         #if canImport(WhisperKit)
         let sampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48_000
@@ -312,6 +333,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
             _isListening = false
             _isWarmedUp = false
+            _isWarmingUp = false
             isTornDown = true
             #if canImport(WhisperKit)
             partialTranscriptionTask?.cancel()
