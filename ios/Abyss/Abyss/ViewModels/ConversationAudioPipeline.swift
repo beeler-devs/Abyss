@@ -110,36 +110,67 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func micPressed() {
-        guard recordingMode == .pushToTalk else { return }
-        guard isChatActive else { return }
-        guard !transcriber.isListening, !isStartingRecording else { return }
+        AppLogger.audio.debug("[PTT] micPressed — mode=\(self.recordingMode.rawValue, privacy: .public) chatActive=\(self.isChatActive) listening=\(self.transcriber.isListening) isStarting=\(self.isStartingRecording) isStopping=\(self.isStoppingRecording) state=\(self.appState.rawValue, privacy: .public)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] micPressed SKIP: not pushToTalk")
+            return
+        }
+        guard isChatActive else {
+            AppLogger.audio.debug("[PTT] micPressed SKIP: chat not active")
+            return
+        }
+        guard !transcriber.isListening, !isStartingRecording else {
+            AppLogger.audio.debug("[PTT] micPressed SKIP: already listening or starting")
+            return
+        }
         isStartingRecording = true
         pendingPTTRelease = false
+        AppLogger.audio.debug("[PTT] micPressed — set isStartingRecording=true, launching start task")
         Task {
-            defer { isStartingRecording = false }
+            defer {
+                isStartingRecording = false
+                AppLogger.audio.debug("[PTT] micPressed task defer — isStartingRecording=false")
+            }
             if appState == .speaking {
+                AppLogger.audio.debug("[PTT] micPressed — barging in (was speaking)")
                 await bargeIn(reason: "ptt_barge_in")
             }
+            AppLogger.audio.debug("[PTT] micPressed — calling startListeningPTT")
             await startListeningPTT()
+            AppLogger.audio.debug("[PTT] micPressed — startListeningPTT returned, pendingRelease=\(self.pendingPTTRelease) transcriber.isListening=\(self.transcriber.isListening)")
             if pendingPTTRelease {
                 pendingPTTRelease = false
+                AppLogger.audio.debug("[PTT] micPressed — handling pending release, calling stopListeningAndProcess")
                 await stopListeningAndProcess()
             }
         }
     }
 
     func micReleased() {
-        guard recordingMode == .pushToTalk else { return }
-        guard !isStoppingRecording else { return }
-        if isStartingRecording {
-            pendingPTTRelease = true
+        AppLogger.audio.debug("[PTT] micReleased — mode=\(self.recordingMode.rawValue, privacy: .public) isStarting=\(self.isStartingRecording) isStopping=\(self.isStoppingRecording) listening=\(self.transcriber.isListening) state=\(self.appState.rawValue, privacy: .public)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] micReleased SKIP: not pushToTalk")
             return
         }
-        guard transcriber.isListening else { return }
+        guard !isStoppingRecording else {
+            AppLogger.audio.debug("[PTT] micReleased SKIP: already stopping")
+            return
+        }
+        if isStartingRecording {
+            pendingPTTRelease = true
+            AppLogger.audio.debug("[PTT] micReleased — start in progress, set pendingPTTRelease=true")
+            return
+        }
+        guard transcriber.isListening else {
+            AppLogger.audio.debug("[PTT] micReleased SKIP: transcriber not listening")
+            return
+        }
+        AppLogger.audio.debug("[PTT] micReleased — transcriber is listening, launching stop task")
         Task { await stopListeningAndProcess() }
     }
 
     func applyRemoteState(_ requestedState: AppState) async {
+        AppLogger.audio.debug("[PTT] applyRemoteState — requested=\(requestedState.rawValue, privacy: .public) mode=\(self.recordingMode.rawValue, privacy: .public) listening=\(self.transcriber.isListening) isStarting=\(self.isStartingRecording) state=\(self.appState.rawValue, privacy: .public)")
         let effectiveState: AppState
         if isMuted && (requestedState == .listening || requestedState == .transcribing) {
             effectiveState = .idle
@@ -153,7 +184,10 @@ final class ConversationAudioPipeline: ObservableObject {
             && effectiveState != .listening
             && effectiveState != .transcribing
 
-        guard !preservePTTRecording else { return }
+        guard !preservePTTRecording else {
+            AppLogger.audio.debug("[PTT] applyRemoteState — preserving PTT recording, ignoring state change to \(effectiveState.rawValue, privacy: .public)")
+            return
+        }
 
         setState(effectiveState)
 
@@ -264,11 +298,19 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func startListeningPTT() async {
-        guard recordingMode == .pushToTalk else { return }
-        guard !isStoppingRecording else { return }
+        AppLogger.audio.debug("[PTT] startListeningPTT — mode=\(self.recordingMode.rawValue, privacy: .public) isStopping=\(self.isStoppingRecording)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] startListeningPTT SKIP: not pushToTalk")
+            return
+        }
+        guard !isStoppingRecording else {
+            AppLogger.audio.debug("[PTT] startListeningPTT SKIP: currently stopping")
+            return
+        }
 
         partialTranscript = ""
         setState(.listening)
+        AppLogger.audio.debug("[PTT] startListeningPTT — state set to listening, dispatching convo.setState")
 
         let setStateEvent = Event.toolCall(
             name: ConvoSetStateTool.name,
@@ -280,8 +322,12 @@ final class ConversationAudioPipeline: ObservableObject {
             await toolRouter.dispatch(toolCall)
         }
 
-        guard !transcriber.isListening else { return }
+        guard !transcriber.isListening else {
+            AppLogger.audio.debug("[PTT] startListeningPTT — transcriber already listening, skipping STT start")
+            return
+        }
 
+        AppLogger.audio.debug("[PTT] startListeningPTT — dispatching stt.start")
         let sttEvent = Event.toolCall(
             name: STTStartTool.name,
             arguments: encode(STTStartTool.Arguments()),
@@ -291,15 +337,20 @@ final class ConversationAudioPipeline: ObservableObject {
         if case .toolCall(let toolCall) = sttEvent.kind {
             let result = await toolRouter.dispatch(toolCall)
             if case .toolResult(let toolResult) = result.kind, toolResult.isError {
+                AppLogger.audio.error("[PTT] startListeningPTT — STT start FAILED: \(toolResult.error ?? "unknown", privacy: .public)")
                 await handleError(toolResult.error ?? "STT start failed")
+            } else {
+                AppLogger.audio.debug("[PTT] startListeningPTT — STT started OK, transcriber.isListening=\(self.transcriber.isListening)")
             }
         }
     }
 
     private func stopListeningSilently() async {
+        AppLogger.audio.debug("[PTT] stopListeningSilently — mode=\(self.recordingMode.rawValue, privacy: .public) listening=\(self.transcriber.isListening)")
         guard recordingMode == .pushToTalk else { return }
         guard transcriber.isListening else { return }
 
+        AppLogger.audio.debug("[PTT] stopListeningSilently — stopping transcriber without processing")
         isStoppingRecording = true
         defer { isStoppingRecording = false }
 
@@ -316,12 +367,22 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func stopListeningAndProcess() async {
-        guard recordingMode == .pushToTalk else { return }
-        guard transcriber.isListening else { return }
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — mode=\(self.recordingMode.rawValue, privacy: .public) listening=\(self.transcriber.isListening) isStopping=\(self.isStoppingRecording) state=\(self.appState.rawValue, privacy: .public)")
+        guard recordingMode == .pushToTalk else {
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess SKIP: not pushToTalk")
+            return
+        }
+        guard transcriber.isListening else {
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess SKIP: transcriber not listening")
+            return
+        }
 
-        AppLogger.conversation.debug("Stopping recording; state=\(self.appState.rawValue, privacy: .public)")
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — proceeding with stop")
         isStoppingRecording = true
-        defer { isStoppingRecording = false }
+        defer {
+            isStoppingRecording = false
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess defer — isStopping=false")
+        }
 
         voiceActivityDetector.stopMonitoring()
         setState(.transcribing)
@@ -370,7 +431,9 @@ final class ConversationAudioPipeline: ObservableObject {
         }
 
         let normalizedTranscript = transcriptFormatter.normalizeForAgent(finalTranscript)
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — finalTranscript='\(finalTranscript, privacy: .public)' normalized='\(normalizedTranscript, privacy: .public)'")
         guard !normalizedTranscript.isEmpty else {
+            AppLogger.audio.debug("[PTT] stopListeningAndProcess — empty transcript, resetting to idle")
             let resetEvent = Event.toolCall(
                 name: ConvoSetStateTool.name,
                 arguments: encode(ConvoSetStateTool.Arguments(state: AppState.idle.rawValue)),
@@ -386,9 +449,11 @@ final class ConversationAudioPipeline: ObservableObject {
             return
         }
 
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — sending transcript to conductor: '\(normalizedTranscript, privacy: .public)'")
         let transcriptEvent = Event.transcriptFinal(normalizedTranscript, sessionId: sessionId)
         eventBus.emit(transcriptEvent)
         await sendConductorEvent(transcriptEvent, true)
+        AppLogger.audio.debug("[PTT] stopListeningAndProcess — transcript sent, done")
 
         partialTranscript = ""
     }
