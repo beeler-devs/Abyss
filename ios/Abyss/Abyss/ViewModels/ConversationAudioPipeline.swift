@@ -107,7 +107,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func interruptAssistantSpeech() {
-        guard appState == .speaking else { return }
+        guard appState == .speaking || tts.isSpeaking else { return }
         Task { await bargeIn(reason: "button_interrupt") }
     }
 

@@ -376,7 +376,7 @@ private struct ChatContentView: View {
             HStack(alignment: .center, spacing: UIConstants.actionBarSpacing) {
                 MicButton(
                     isMuted: viewModel.isMuted,
-                    isSpeaking: viewModel.appState == .speaking,
+                    isSpeaking: viewModel.appState == .speaking || viewModel.isTTSSpeaking,
                     isTypingMode: $isTypingMode,
                     typedText: $typedMessage,
                     recordingMode: recordingMode,

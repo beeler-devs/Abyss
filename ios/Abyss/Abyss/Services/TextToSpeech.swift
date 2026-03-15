@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Protocol for text-to-speech engines.
@@ -11,4 +12,7 @@ protocol TextToSpeech: AnyObject, Sendable {
 
     /// Whether speech is currently being played.
     var isSpeaking: Bool { get }
+
+    /// Publishes `true` when playback starts and `false` when it stops.
+    var isSpeakingPublisher: AnyPublisher<Bool, Never> { get }
 }

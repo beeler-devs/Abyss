@@ -17,6 +17,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
     @Published var isPTTHeld: Bool = false
+    @Published var isTTSSpeaking: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
@@ -308,6 +309,10 @@ final class ConversationViewModel: ObservableObject {
         audioPipeline.$appState
             .receive(on: RunLoop.main)
             .assign(to: &$appState)
+
+        tts.isSpeakingPublisher
+            .receive(on: RunLoop.main)
+            .assign(to: &$isTTSSpeaking)
 
         audioPipeline.$partialTranscript
             .receive(on: RunLoop.main)
