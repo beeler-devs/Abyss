@@ -432,4 +432,5 @@ private struct ChatContentView: View {
 
 #Preview {
     ContentView(chatList: ChatListViewModel())
+        .environmentObject(InAppBrowserCoordinator())
 }
