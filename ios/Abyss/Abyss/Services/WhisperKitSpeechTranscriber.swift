@@ -289,12 +289,11 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
         AppLogger.audio.debug("Resuming transcription from paused state")
 
-        let (stream, continuation) = AsyncStream<String>.makeStream()
+        // Reuse existing partialContinuation — STTStartTool is still iterating over its stream.
+        // Creating a new stream would orphan the consumer.
         lock.withLock {
             _isPaused = false
             _isListening = true
-            _partials = stream
-            partialContinuation = continuation
             accumulatedText = ""
             #if canImport(WhisperKit)
             audioBuffers = []
@@ -305,11 +304,9 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             #endif
         }
 
-        #if canImport(WhisperKit)
-        continuation.yield("Listening…")
-        #else
-        continuation.yield("Listening… (no transcription)")
-        #endif
+        lock.withLock {
+            partialContinuation?.yield("Listening…")
+        }
     }
 
     private func computeAudioLevelDB(from samples: [Float]) -> Float {
@@ -376,6 +373,20 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         return output
     }
 
+    /// Maximum audio window for partial transcription (seconds).
+    /// Keeps decode time bounded instead of growing with total recording length.
+    private let partialWindowSeconds: Double = 10.0
+
+    private func isWhisperHallucination(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        return lower.hasPrefix("[silence")
+            || lower.hasPrefix("[blank_audio")
+            || lower == "listening…"
+            || lower == "you"
+            || lower == "thank you."
+            || lower == "thanks for watching."
+    }
+
     private func transcribePartial() async {
         let snapshot = lock.withLock {
             () -> (
@@ -390,8 +401,17 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             let minNewSamples = max(Int(inputSampleRate * 0.2), 1600)
             guard sampleCount - lastPartialSampleCount >= minNewSamples else { return nil }
 
+            // Use a sliding window: only the last N seconds of audio
+            let maxSamples = Int(inputSampleRate * partialWindowSeconds)
+            let windowedSamples: [Float]
+            if audioBuffers.count > maxSamples {
+                windowedSamples = Array(audioBuffers.suffix(maxSamples))
+            } else {
+                windowedSamples = audioBuffers
+            }
+
             partialTranscriptionInFlight = true
-            return (whisperKit, audioBuffers, inputSampleRate, sampleCount, partialContinuation)
+            return (whisperKit, windowedSamples, inputSampleRate, sampleCount, partialContinuation)
         }
 
         guard let snapshot else { return }
@@ -418,18 +438,25 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
         do {
             let results = try await whisper.transcribe(audioArray: forWhisper)
-            if let text = results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines),
-               text.count > 1,
-               text != "Listening…" {
+            let rawText = results.first?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            AppLogger.audio.debug("WhisperKit partial: \"\(rawText, privacy: .public)\" (\(rawText.count) chars)")
+            if rawText.count > 1, !isWhisperHallucination(rawText) {
                 let shouldYield = lock.withLock { () -> Bool in
                     guard _isListening, !isTornDown else { return false }
-                    accumulatedText = text
+                    // Only update accumulatedText if the new transcript is at least as informative.
+                    // As speech slides out of the window, partials degrade ("List all..." → "Positories.").
+                    // Keep the best transcript seen so far.
+                    if rawText.count >= accumulatedText.count || accumulatedText.isEmpty {
+                        accumulatedText = rawText
+                    }
                     return true
                 }
                 if shouldYield {
-                    snapshot.continuation?.yield(text)
+                    snapshot.continuation?.yield(rawText)
                 }
             }
+        } catch is CancellationError {
+            // Expected when pause() cancels in-flight transcription
         } catch {
             AppLogger.audio.error("Partial transcription failed: \(error.localizedDescription, privacy: .public)")
         }

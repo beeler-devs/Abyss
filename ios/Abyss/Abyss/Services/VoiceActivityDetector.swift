@@ -111,6 +111,8 @@ final class VoiceActivityDetector: NSObject, ObservableObject {
     }
 
     private func log(_ message: String) {
+        AppLogger.audio.debug("VAD: \(message, privacy: .public)")
+
         let timestamp = DateFormatter.localizedString(
             from: Date(),
             dateStyle: .none,

@@ -37,7 +37,9 @@ final class LocalConductorClient: ConductorClient, @unchecked Sendable {
     }
 
     func send(event: Event) async throws {
-        AppLogger.conductor.debug("Local conductor send: \(event.kind.displayName, privacy: .public)")
+        if case .userAudioStreamChunk = event.kind {} else {
+            AppLogger.conductor.debug("Local conductor send: \(event.kind.displayName, privacy: .public)")
+        }
         switch event.kind {
         case .userAudioTranscriptFinal(let final):
             let events = await conductor.handleTranscript(final.text)

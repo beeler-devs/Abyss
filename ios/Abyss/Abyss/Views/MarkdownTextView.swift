@@ -19,8 +19,40 @@ struct MarkdownTextView: View {
                     renderText(content)
                 case .codeBlock(let language, let code):
                     CodeBlockView(language: language, code: code)
+                case .list(let items, let ordered):
+                    renderList(items, ordered: ordered)
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func renderList(_ items: [String], ordered: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(ordered ? "\(index + 1)." : "•")
+                        .font(.body)
+                        .foregroundStyle(foregroundColor)
+                        .frame(minWidth: ordered ? 20 : 12, alignment: .leading)
+                    renderInlineText(item)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func renderInlineText(_ content: String) -> some View {
+        if let attributed = try? AttributedString(markdown: content, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)) {
+            Text(attributed)
+                .font(.body)
+                .foregroundStyle(foregroundColor)
+                .textSelection(.enabled)
+        } else {
+            Text(content)
+                .font(.body)
+                .foregroundStyle(foregroundColor)
+                .textSelection(.enabled)
         }
     }
 
@@ -44,6 +76,7 @@ struct MarkdownTextView: View {
     enum Block {
         case text(String)
         case codeBlock(language: String?, code: String)
+        case list(items: [String], ordered: Bool)
     }
 
     static func parse(_ text: String) -> [Block] {
@@ -77,6 +110,32 @@ struct MarkdownTextView: View {
 
                 let code = codeLines.joined(separator: "\n")
                 blocks.append(.codeBlock(language: language, code: code))
+            } else if let item = unorderedListItem(from: line) {
+                // Flush accumulated text
+                if !currentText.isEmpty {
+                    blocks.append(.text(currentText.trimmingTrailingNewlines()))
+                    currentText = ""
+                }
+                var items = [item]
+                i += 1
+                while i < lines.count, let next = unorderedListItem(from: lines[i]) {
+                    items.append(next)
+                    i += 1
+                }
+                blocks.append(.list(items: items, ordered: false))
+            } else if let item = orderedListItem(from: line) {
+                // Flush accumulated text
+                if !currentText.isEmpty {
+                    blocks.append(.text(currentText.trimmingTrailingNewlines()))
+                    currentText = ""
+                }
+                var items = [item]
+                i += 1
+                while i < lines.count, let next = orderedListItem(from: lines[i]) {
+                    items.append(next)
+                    i += 1
+                }
+                blocks.append(.list(items: items, ordered: true))
             } else {
                 if !currentText.isEmpty { currentText += "\n" }
                 currentText += line
@@ -89,6 +148,24 @@ struct MarkdownTextView: View {
         }
 
         return blocks
+    }
+
+    private static func unorderedListItem(from line: String) -> String? {
+        for prefix in ["- ", "* ", "+ "] {
+            if line.hasPrefix(prefix) {
+                return String(line.dropFirst(prefix.count))
+            }
+        }
+        return nil
+    }
+
+    private static func orderedListItem(from line: String) -> String? {
+        // Matches "1. ", "2. ", etc.
+        let parts = line.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2,
+              let _ = Int(parts[0]),
+              parts[1].hasPrefix(" ") else { return nil }
+        return String(parts[1].dropFirst())
     }
 }
 

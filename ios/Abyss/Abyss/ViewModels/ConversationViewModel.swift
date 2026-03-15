@@ -143,13 +143,11 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func setChatActive(_ isActive: Bool) {
-        AppLogger.interaction.debug("setChatActive(\(isActive))")
         audioPipeline.setChatActive(isActive)
         syncRecordingMode()
     }
 
     func toggleMute() {
-        AppLogger.interaction.debug("toggleMute() — current isMuted=\(self.isMuted)")
         setMuted(!isMuted)
     }
 
@@ -166,14 +164,12 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func micPressed() {
-        AppLogger.interaction.debug("micPressed()")
         isPTTHeld = true
         audioPipeline.micPressed()
         syncRecordingMode()
     }
 
     func micReleased() {
-        AppLogger.interaction.debug("micReleased()")
         isPTTHeld = false
         audioPipeline.micReleased()
         syncRecordingMode()
@@ -340,7 +336,6 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func syncRecordingMode() {
-        AppLogger.interaction.debug("syncRecordingMode() — voiceMode=\(self.voiceMode.rawValue, privacy: .public) recordingMode=\(self.recordingMode.rawValue, privacy: .public)")
         audioPipeline.updateVoiceMode(voiceMode)
         audioPipeline.updateRecordingMode(recordingMode)
     }
@@ -431,8 +426,10 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func sendEventToConductor(_ event: Event, surfaceErrors: Bool = true) async {
-        let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "nil"
-        AppLogger.conductor.debug("Sending \(event.kind.displayName, privacy: .public) via \(clientType, privacy: .public)")
+        if case .userAudioStreamChunk = event.kind {} else {
+            let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "nil"
+            AppLogger.conductor.debug("Sending \(event.kind.displayName, privacy: .public) via \(clientType, privacy: .public)")
+        }
 
         guard let client = activeConductorClient else {
             if surfaceErrors {
