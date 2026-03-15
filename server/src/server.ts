@@ -11,6 +11,7 @@ import { logger } from "./core/logger.js";
 import { EventEnvelope } from "./core/types.js";
 import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
+import { CanvasClient } from "./integrations/canvasClient.js";
 import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
 import { buildProvider } from "./providers/index.js";
@@ -102,6 +103,7 @@ const conductor = new ConductorService(
       googleClientId: GOOGLE_CLIENT_ID,
       googleClientSecret: GOOGLE_CLIENT_SECRET,
     }),
+    canvasClient: new CanvasClient(),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
       const devices = bridgeState

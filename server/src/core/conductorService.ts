@@ -748,6 +748,12 @@ export class ConductorService {
         if (typeof event.payload.gmailTokenExpiresAt === "number") {
           session.gmailTokenExpiresAt = event.payload.gmailTokenExpiresAt;
         }
+        if (typeof event.payload.canvasAccessToken === "string" && event.payload.canvasAccessToken) {
+          session.canvasAccessToken = event.payload.canvasAccessToken;
+        }
+        if (typeof event.payload.canvasBaseURL === "string" && event.payload.canvasBaseURL) {
+          session.canvasBaseURL = event.payload.canvasBaseURL;
+        }
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;
@@ -932,6 +938,10 @@ export class ConductorService {
     }
 
     if (toolName.startsWith("gmail.") && toolName !== "gmail.authenticate") {
+      return true;
+    }
+
+    if (toolName.startsWith("canvas.") && toolName !== "canvas.authenticate") {
       return true;
     }
 
@@ -1665,6 +1675,67 @@ export class ConductorService {
 
           const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
           return { result: stableJSONStringify(replyResult), error: null };
+        }
+
+        // Canvas LMS tools
+        case "canvas.courses": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courses = await this.canvasClient.courses(session);
+          return { result: stableJSONStringify(courses), error: null };
+        }
+
+        case "canvas.assignments": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courseId = stringFromRecord(args, "courseId");
+          if (!courseId) {
+            return { result: null, error: "canvas_missing_course_id" };
+          }
+          const assignments = await this.canvasClient.assignments(session, courseId);
+          return { result: stableJSONStringify(assignments), error: null };
+        }
+
+        case "canvas.todo": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const todoItems = await this.canvasClient.todo(session);
+          return { result: stableJSONStringify(todoItems), error: null };
+        }
+
+        case "canvas.upcoming": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const events = await this.canvasClient.upcomingEvents(session);
+          return { result: stableJSONStringify(events), error: null };
+        }
+
+        case "canvas.grades": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courseId = stringFromRecord(args, "courseId");
+          if (!courseId) {
+            return { result: null, error: "canvas_missing_course_id" };
+          }
+          const grades = await this.canvasClient.grades(session, courseId);
+          return { result: stableJSONStringify(grades), error: null };
+        }
+
+        case "canvas.announcements": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courseId = stringFromRecord(args, "courseId");
+          if (!courseId) {
+            return { result: null, error: "canvas_missing_course_id" };
+          }
+          const announcements = await this.canvasClient.announcements(session, courseId);
+          return { result: stableJSONStringify(announcements), error: null };
         }
 
         default:

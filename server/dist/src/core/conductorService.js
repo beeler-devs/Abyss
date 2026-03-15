@@ -451,6 +451,65 @@ const SERVER_GMAIL_TOOLS = [
         },
     },
 ];
+const SERVER_CANVAS_TOOLS = [
+    {
+        name: "canvas.courses",
+        description: "List the user's active Canvas LMS courses. Returns course names, IDs, and enrollment info.",
+        input_schema: {
+            type: "object",
+            properties: {},
+        },
+    },
+    {
+        name: "canvas.assignments",
+        description: "List assignments for a Canvas course, ordered by due date. Returns assignment names, due dates, points, and submission status.",
+        input_schema: {
+            type: "object",
+            properties: {
+                courseId: { type: "string", description: "The Canvas course ID." },
+            },
+            required: ["courseId"],
+        },
+    },
+    {
+        name: "canvas.todo",
+        description: "Get the user's Canvas TODO items across all courses. Returns upcoming assignments and grading tasks.",
+        input_schema: {
+            type: "object",
+            properties: {},
+        },
+    },
+    {
+        name: "canvas.upcoming",
+        description: "Get upcoming calendar events from Canvas. Returns event titles, dates, and course associations.",
+        input_schema: {
+            type: "object",
+            properties: {},
+        },
+    },
+    {
+        name: "canvas.grades",
+        description: "Get the user's grades/enrollment for a specific Canvas course. Returns current score, grade, and enrollment details.",
+        input_schema: {
+            type: "object",
+            properties: {
+                courseId: { type: "string", description: "The Canvas course ID." },
+            },
+            required: ["courseId"],
+        },
+    },
+    {
+        name: "canvas.announcements",
+        description: "Get announcements for a Canvas course. Returns announcement titles, messages, and post dates.",
+        input_schema: {
+            type: "object",
+            properties: {
+                courseId: { type: "string", description: "The Canvas course ID." },
+            },
+            required: ["courseId"],
+        },
+    },
+];
 const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 function waitForToolResult(session, callId, timeoutMs) {
     return new Promise((resolve) => {
@@ -470,6 +529,7 @@ export class ConductorService {
     sessions;
     cursorClient;
     gmailClient;
+    canvasClient;
     webhookPendingTtlMs;
     now;
     bridgeToolExecutor;
@@ -482,6 +542,7 @@ export class ConductorService {
         this.sessions = new SessionStore(config.maxTurns, config.rateLimitPerMinute, config.traceMaxEntries ?? 120);
         this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
         this.gmailClient = dependencies.gmailClient;
+        this.canvasClient = dependencies.canvasClient;
         this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
         this.now = dependencies.now ?? (() => new Date());
         this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -576,6 +637,12 @@ export class ConductorService {
                 }
                 if (typeof event.payload.gmailTokenExpiresAt === "number") {
                     session.gmailTokenExpiresAt = event.payload.gmailTokenExpiresAt;
+                }
+                if (typeof event.payload.canvasAccessToken === "string" && event.payload.canvasAccessToken) {
+                    session.canvasAccessToken = event.payload.canvasAccessToken;
+                }
+                if (typeof event.payload.canvasBaseURL === "string" && event.payload.canvasBaseURL) {
+                    session.canvasBaseURL = event.payload.canvasBaseURL;
                 }
                 emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
                 logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
@@ -705,6 +772,23 @@ export class ConductorService {
                 });
             }
         }
+        // Canvas tools: available when token is present, otherwise offer authenticate
+        {
+            const session = this.sessions.getOrCreate(sessionId);
+            if (session.canvasAccessToken) {
+                tools.push(...SERVER_CANVAS_TOOLS);
+            }
+            else {
+                tools.push({
+                    name: "canvas.authenticate",
+                    description: "Prompt the user to connect their Canvas LMS account. Call this when the user wants to check courses, assignments, or grades but hasn't connected Canvas yet. Directs the user to Settings → Connections → Canvas.",
+                    input_schema: {
+                        type: "object",
+                        properties: {},
+                    },
+                });
+            }
+        }
         return tools;
     }
     shouldExecuteServerTool(toolName) {
@@ -712,6 +796,9 @@ export class ConductorService {
             return Boolean(this.bridgeToolExecutor);
         }
         if (toolName.startsWith("gmail.") && toolName !== "gmail.authenticate") {
+            return true;
+        }
+        if (toolName.startsWith("canvas.") && toolName !== "canvas.authenticate") {
             return true;
         }
         if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
@@ -1325,6 +1412,61 @@ export class ConductorService {
                     }
                     const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
                     return { result: stableJSONStringify(replyResult), error: null };
+                }
+                // Canvas LMS tools
+                case "canvas.courses": {
+                    if (!this.canvasClient) {
+                        return { result: null, error: "canvas_not_configured" };
+                    }
+                    const courses = await this.canvasClient.courses(session);
+                    return { result: stableJSONStringify(courses), error: null };
+                }
+                case "canvas.assignments": {
+                    if (!this.canvasClient) {
+                        return { result: null, error: "canvas_not_configured" };
+                    }
+                    const courseId = stringFromRecord(args, "courseId");
+                    if (!courseId) {
+                        return { result: null, error: "canvas_missing_course_id" };
+                    }
+                    const assignments = await this.canvasClient.assignments(session, courseId);
+                    return { result: stableJSONStringify(assignments), error: null };
+                }
+                case "canvas.todo": {
+                    if (!this.canvasClient) {
+                        return { result: null, error: "canvas_not_configured" };
+                    }
+                    const todoItems = await this.canvasClient.todo(session);
+                    return { result: stableJSONStringify(todoItems), error: null };
+                }
+                case "canvas.upcoming": {
+                    if (!this.canvasClient) {
+                        return { result: null, error: "canvas_not_configured" };
+                    }
+                    const events = await this.canvasClient.upcomingEvents(session);
+                    return { result: stableJSONStringify(events), error: null };
+                }
+                case "canvas.grades": {
+                    if (!this.canvasClient) {
+                        return { result: null, error: "canvas_not_configured" };
+                    }
+                    const courseId = stringFromRecord(args, "courseId");
+                    if (!courseId) {
+                        return { result: null, error: "canvas_missing_course_id" };
+                    }
+                    const grades = await this.canvasClient.grades(session, courseId);
+                    return { result: stableJSONStringify(grades), error: null };
+                }
+                case "canvas.announcements": {
+                    if (!this.canvasClient) {
+                        return { result: null, error: "canvas_not_configured" };
+                    }
+                    const courseId = stringFromRecord(args, "courseId");
+                    if (!courseId) {
+                        return { result: null, error: "canvas_missing_course_id" };
+                    }
+                    const announcements = await this.canvasClient.announcements(session, courseId);
+                    return { result: stableJSONStringify(announcements), error: null };
                 }
                 default:
                     return { result: null, error: `unsupported_server_tool:${toolName}` };
