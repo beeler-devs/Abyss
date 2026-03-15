@@ -33,6 +33,12 @@ interface SonicContentInfo {
   text: string;
 }
 
+interface PendingToolUse {
+  toolName: string;
+  toolUseId: string;
+  content: string;
+}
+
 interface SonicSession {
   sessionId: string;
   promptName: string;
@@ -43,6 +49,7 @@ interface SonicSession {
   closed: boolean;
   sawAssistantAudio: boolean;
   contents: Map<string, SonicContentInfo>;
+  pendingToolUse: PendingToolUse | null;
 }
 
 interface SonicEventEnvelope {
@@ -145,6 +152,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       closed: false,
       sawAssistantAudio: false,
       contents: new Map(),
+      pendingToolUse: null,
     };
     this.sessions.set(sessionId, session);
 
@@ -181,6 +189,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       },
     };
     if (toolConfiguration) {
+      promptStartPayload.toolUseOutputConfiguration = {
+        mediaType: "application/json",
+      };
       promptStartPayload.toolConfiguration = toolConfiguration;
     }
     this.sendEvent(session, { promptStart: promptStartPayload });
@@ -268,24 +279,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     });
   }
 
-  async endStream(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session || session.closed) {
-      return;
-    }
-
-    // Send trailing silence so Nova Sonic's server-side VAD detects
-    // end-of-speech. The audio content stream stays open for future turns.
-    const silenceChunk = Buffer.alloc(3200).toString("base64"); // 100ms at 16kHz/16-bit/mono
-    for (let i = 0; i < 15; i++) {
-      this.sendEvent(session, {
-        audioInput: {
-          promptName: session.promptName,
-          contentName: session.audioContentName,
-          content: silenceChunk,
-        },
-      });
-    }
+  async endStream(_sessionId: string): Promise<void> {
+    // No-op — the client sends trailing silence before the end event to
+    // trigger Nova Sonic's server-side VAD. The audio content stream stays
+    // open for the duration of the session.
   }
 
   async interrupt(sessionId: string): Promise<void> {
@@ -447,7 +444,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
     if ("toolUse" in event) {
       const payload = asRecord(event.toolUse);
-      if (!payload || !session.context.executeTool) {
+      if (!payload) {
         return;
       }
       const toolName = asString(payload.toolName) ?? asString(payload.name);
@@ -457,27 +454,43 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         return;
       }
 
-      let input: Record<string, unknown> = {};
-      try {
-        const parsedInput = JSON.parse(content) as unknown;
-        if (parsedInput && typeof parsedInput === "object" && !Array.isArray(parsedInput)) {
-          input = parsedInput as Record<string, unknown>;
-        }
-      } catch {
-        input = {};
-      }
-
-      void this.handleToolUse(session, {
-        id: toolUseId,
-        name: toolName,
-        input,
-      });
+      // Store tool use data — execution happens on contentEnd with type "TOOL"
+      session.pendingToolUse = { toolName, toolUseId, content };
       return;
     }
 
     if ("contentEnd" in event) {
       const payload = asRecord(event.contentEnd);
       const contentId = payload ? (asString(payload.contentId) ?? asString(payload.contentName)) : undefined;
+      const contentType = payload ? asString(payload.type) : undefined;
+
+      // Handle tool use completion — execute the pending tool call
+      if (contentType === "TOOL" && asString(payload?.stopReason) === "TOOL_USE" && session.pendingToolUse) {
+        const pending = session.pendingToolUse;
+        session.pendingToolUse = null;
+
+        let input: Record<string, unknown> = {};
+        try {
+          const parsedInput = JSON.parse(pending.content) as unknown;
+          if (parsedInput && typeof parsedInput === "object" && !Array.isArray(parsedInput)) {
+            input = parsedInput as Record<string, unknown>;
+          }
+        } catch {
+          input = {};
+        }
+
+        void this.handleToolUse(session, {
+          id: pending.toolUseId,
+          name: pending.toolName,
+          input,
+        });
+        // Also clean up the content entry if it exists
+        if (contentId) {
+          session.contents.delete(contentId);
+        }
+        return;
+      }
+
       if (!contentId) {
         return;
       }
@@ -585,7 +598,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       },
     });
     this.sendEvent(session, {
-      textInput: {
+      toolResult: {
         promptName: session.promptName,
         contentName,
         content: result.error

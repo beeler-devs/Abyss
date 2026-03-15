@@ -547,6 +547,18 @@ final class ConversationAudioPipeline: ObservableObject {
     private func stopRemoteVoiceCapture() async {
         guard remoteVoiceCapture.isStreaming else { return }
         await remoteVoiceCapture.stop()
+
+        // Send trailing silence so Nova Sonic's server-side VAD detects
+        // end-of-speech. Sent inline (before the end event) to avoid a gap
+        // between real audio and silence that could cause false barge-in.
+        let silenceData = Data(repeating: 0, count: 3200) // 100ms at 16kHz/16-bit/mono
+        let silenceBase64 = silenceData.base64EncodedString()
+        for _ in 0..<10 {
+            let chunkEvent = Event.userAudioStreamChunk(audio: silenceBase64, sessionId: sessionId)
+            eventBus.emit(chunkEvent)
+            await sendConductorEvent(chunkEvent, false)
+        }
+
         let endEvent = Event.userAudioStreamEnd(sessionId: sessionId)
         eventBus.emit(endEvent)
         await sendConductorEvent(endEvent, false)
