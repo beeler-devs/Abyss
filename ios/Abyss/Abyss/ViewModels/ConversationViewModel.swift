@@ -159,13 +159,11 @@ final class ConversationViewModel: ObservableObject {
     }
 
     func micPressed() {
-        isPTTHeld = true
         syncRecordingMode()
         audioPipeline.micPressed()
     }
 
     func micReleased() {
-        isPTTHeld = false
         syncRecordingMode()
         audioPipeline.micReleased()
     }

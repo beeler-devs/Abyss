@@ -314,7 +314,7 @@ private struct ChatContentView: View {
 
     private func isPTTRecording(viewModel: ConversationViewModel, recordingMode: RecordingMode) -> Bool {
         if recordingMode == .pushToTalk {
-            return viewModel.isPTTHeld
+            return viewModel.appState == .listening || viewModel.appState == .transcribing
         }
         return viewModel.appState == .listening
     }

@@ -18,7 +18,6 @@ struct MicButton: View {
     let onToggleEventTimeline: () -> Void
 
     @Environment(\.colorScheme) private var colorScheme
-    @GestureState private var isPTTPressing = false
 
     var body: some View {
         Group {
@@ -95,43 +94,34 @@ struct MicButton: View {
     }
 
     private var pushToTalkButton: some View {
-        // PTT uses a DragGesture + @GestureState so that the press/release tracking
-        // lives entirely within the gesture system. This prevents SwiftUI view re-renders
-        // (from @Published state changes) from destroying the gesture recognizer mid-press.
-        // The visual state is driven by isPTTPressing (local @GestureState), not the
-        // external isRecording prop, so no parent re-render can interrupt the gesture.
-        let pressing = isPTTPressing
-        return HStack(spacing: 8) {
-            Image(systemName: pressing ? "waveform" : "mic.fill")
-                .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
-                .contentTransition(.identity)
-            Text(pressing ? "Recording…" : "Hold to Speak")
-                .font(.subheadline.weight(.semibold))
-                .contentTransition(.identity)
-            Spacer()
-        }
-        .foregroundStyle(pressing ? .white : AppTheme.actionBarIconTint(for: colorScheme))
-        .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
-        .frame(maxWidth: .infinity)
-        .frame(height: UIConstants.actionBarControlHeight)
-        .pttButtonBackground(isRecording: pressing,
-                             cornerRadius: UIConstants.actionBarControlHeight / 2,
-                             colorScheme: colorScheme)
-        .gesture(
-            DragGesture(minimumDistance: 0)
-                .updating($isPTTPressing) { _, state, _ in
-                    state = true
+        // The gesture target is a RoundedRectangle whose structural identity never
+        // changes regardless of isRecording. The visual content is overlaid on top.
+        // isRecording is derived from appState (set asynchronously inside the Task),
+        // NOT from a synchronous @Published flag, so the view doesn't re-render
+        // until after the gesture's pressing callback has already fired.
+        RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+            .fill(isRecording ? Color.red : AppTheme.pillBackground(for: colorScheme))
+            .overlay(
+                HStack(spacing: 8) {
+                    Image(systemName: isRecording ? "waveform" : "mic.fill")
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                    Text(isRecording ? "Recording…" : "Hold to Speak")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
                 }
-                .onEnded { _ in
-                    onMicReleased()
-                }
-        )
-        .onChange(of: isPTTPressing) { newValue in
-            if newValue {
-                onMicPressed()
-            }
-        }
-        .accessibilityLabel(pressing ? "Recording, release to send" : "Hold to speak")
+                .foregroundStyle(isRecording ? .white : AppTheme.actionBarIconTint(for: colorScheme))
+                .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIConstants.actionBarControlHeight / 2)
+                    .stroke(AppTheme.pillStroke(for: colorScheme), lineWidth: 1)
+            )
+            .frame(maxWidth: .infinity)
+            .frame(height: UIConstants.actionBarControlHeight)
+            .onLongPressGesture(minimumDuration: .infinity, pressing: { isPressing in
+                if isPressing { onMicPressed() } else { onMicReleased() }
+            }, perform: {})
+            .accessibilityLabel(isRecording ? "Recording, release to send" : "Hold to speak")
     }
 
     private var typingBar: some View {
