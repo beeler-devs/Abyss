@@ -59,7 +59,8 @@
       "properties": {
         "deviceId": { "type": "string" },
         "deviceName": { "type": "string" },
-        "status": { "type": "string", "enum": ["online", "offline"] }
+        "status": { "type": "string", "enum": ["online", "offline"] },
+        "workspaceRoot": { "type": "string" }
       },
       "additionalProperties": false
     },
