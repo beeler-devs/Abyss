@@ -239,12 +239,16 @@ if existing?.status != "online",
 
 `server.ts` handles `bridge.workspace.set` on the iOS WebSocket message handler — **not** routed through `ConductorService` or the LLM tool pipeline.
 
-**Authorization:** Use `bridgeState.resolveDeviceForTool(context.sessionId, deviceId)`. This method already handles the iOS session-churn case (when iOS reconnects with a new sessionId, the bridge is still online and `resolveDeviceForTool` finds it via the global-online-device fallback). The authorization model is: if `resolveDeviceForTool` returns a device for this session + deviceId, the request is permitted.
+**Authorization:** Retrieve the iOS session ID using `socketContexts.get(socket)?.sessionId` — the same `context` object already used throughout the iOS WS message handler in `server.ts`. Then use `bridgeState.resolveDeviceForTool(sessionId, deviceId)`, which handles the iOS session-churn case (after iOS reconnects with a new sessionId, `resolveDeviceForTool` still finds the bridge via the global-online-device fallback):
 
 ```ts
-const resolved = bridgeState.resolveDeviceForTool(context.sessionId, deviceId);
+const context = socketContexts.get(socket);
+const sessionId = context?.sessionId;
+if (!sessionId) return; // drop — session not established yet
+
+const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
 if (!resolved.device) {
-  return; // drop silently — device not found or not accessible to this session
+  return; // drop — device not found or not accessible to this session
 }
 ```
 
