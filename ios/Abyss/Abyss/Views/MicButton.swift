@@ -25,9 +25,9 @@ struct MicButton: View {
                 typingBar
             } else {
                 liveControls
+                    .frame(height: UIConstants.actionBarControlHeight)
             }
         }
-        .frame(height: UIConstants.actionBarControlHeight)
     }
 
     private var liveControls: some View {
@@ -176,7 +176,7 @@ struct MicButton: View {
             }
         }
         .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .frame(minHeight: UIConstants.actionBarControlHeight)
         .glassButtonBackground(cornerRadius: UIConstants.actionBarControlHeight / 2, colorScheme: colorScheme)
