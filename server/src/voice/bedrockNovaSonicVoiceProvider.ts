@@ -1023,17 +1023,19 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
-    // Circuit breaker: if the same tool has failed too many times in a row,
-    // return a hard stop error instead of executing again.
+    // Circuit breaker: if the same tool+args combo has failed too many times,
+    // return a hard stop error instead of executing again. Keyed by tool name +
+    // stable JSON of arguments so different arguments get a fresh count.
     const MAX_CONSECUTIVE_FAILURES = 3;
-    const priorFailures = session.toolFailureCounts.get(toolCall.name) ?? 0;
+    const circuitKey = `${toolCall.name}:${JSON.stringify(toolCall.input)}`;
+    const priorFailures = session.toolFailureCounts.get(circuitKey) ?? 0;
     if (priorFailures >= MAX_CONSECUTIVE_FAILURES) {
       logger.warn(
         `circuit breaker: ${toolCall.name} failed ${priorFailures} times consecutively, refusing to retry`,
         { sessionId: session.sessionId },
       );
       this.sendToolResult(session, toolCall.id, JSON.stringify({
-        error: `${toolCall.name} has failed ${priorFailures} times in a row. Do NOT retry this tool. Tell the user what went wrong and ask how they would like to proceed.`,
+        error: `${toolCall.name} has failed ${priorFailures} times in a row with the same arguments. Do NOT retry this tool with these arguments. Tell the user what went wrong and ask how they would like to proceed.`,
       }));
       return;
     }
@@ -1045,11 +1047,11 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         return;
       }
 
-      // Track consecutive failures per tool for circuit breaking.
+      // Track consecutive failures per tool+args for circuit breaking.
       if (result.error) {
-        session.toolFailureCounts.set(toolCall.name, priorFailures + 1);
+        session.toolFailureCounts.set(circuitKey, priorFailures + 1);
       } else {
-        session.toolFailureCounts.delete(toolCall.name);
+        session.toolFailureCounts.delete(circuitKey);
       }
 
       this.sendToolResult(session, toolCall.id, result.error
