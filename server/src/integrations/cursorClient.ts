@@ -85,7 +85,7 @@ export class CursorClient {
     const source: Record<string, unknown> = {};
 
     if (input.repoUrl?.trim()) {
-      source.repository = input.repoUrl.trim();
+      source.repository = normalizeRepoUrl(input.repoUrl.trim());
     }
     if (input.ref?.trim()) {
       source.ref = input.ref.trim();
@@ -263,6 +263,11 @@ function safeParseJSON(raw: string): unknown {
   } catch {
     return null;
   }
+}
+
+/** Strip GitHub URL prefix so "https://github.com/owner/repo" becomes "owner/repo". */
+function normalizeRepoUrl(url: string): string {
+  return url.replace(/^https?:\/\/github\.com\//, "");
 }
 
 function asString(value: unknown): string | undefined {
