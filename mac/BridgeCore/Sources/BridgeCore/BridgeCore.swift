@@ -205,6 +205,7 @@ public actor BridgeCore {
                 }
 
                 state = .connected
+                await emitLog("[connection] WebSocket connected to \(config.serverURL.absoluteString)")
                 await emitStatus()
 
                 try await sendRegisterIfPossible()
@@ -276,7 +277,10 @@ public actor BridgeCore {
 
     private func sendRegisterIfPossible() async throws {
         guard state == .connected else { return }
-        guard let pairingCode = config.pairingCode, !pairingCode.isEmpty else { return }
+        guard let pairingCode = config.pairingCode, !pairingCode.isEmpty else {
+            await emitLog("[pairing] skipping registration: no pairing code set")
+            return
+        }
 
         let payload = BridgeRegisterPayload(
             pairingCode: pairingCode,
@@ -288,6 +292,7 @@ public actor BridgeCore {
             protocolVersion: AbyssProtocol.version
         )
 
+        await emitLog("[pairing] sending bridge.register with code \(pairingCode)")
         try await sendEvent(type: "bridge.register", sessionId: config.deviceId, payload: payload)
     }
 
@@ -309,13 +314,18 @@ public actor BridgeCore {
 
         switch envelope.type {
         case "bridge.registered":
+            await emitLog("[pairing] registered successfully — paired=true")
             paired = true
             await emitStatus()
         case "error":
-            if let payload: [String: String] = try? decodePayloadObject(from: envelope.payload),
-               payload["code"] == "pairing_code_invalid_or_expired" {
-                paired = false
-                await emitStatus()
+            if let payload: [String: String] = try? decodePayloadObject(from: envelope.payload) {
+                let code = payload["code"] ?? "unknown"
+                let message = payload["message"] ?? ""
+                await emitLog("[error] code=\(code) message=\(message)")
+                if code == "pairing_code_invalid_or_expired" {
+                    paired = false
+                    await emitStatus()
+                }
             }
         case "tool.call":
             // Fire-and-forget so the receive loop isn't blocked during long-running tools

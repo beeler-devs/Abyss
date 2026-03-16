@@ -78,6 +78,7 @@ final class ConversationEventCoordinator: ObservableObject {
             return
         }
 
+        AppLogger.conductor.info("Bridge pairing: sending request with code \(normalizedCode, privacy: .public)")
         bridgePairingMessage = "Sending pairing request…"
         let event = Event.bridgePairRequest(
             code: normalizedCode,
@@ -224,10 +225,12 @@ final class ConversationEventCoordinator: ObservableObject {
             }
 
         case .bridgePairPending(let pending):
-            bridgePairingMessage = "Pairing code \(pending.pairingCode) accepted."
+            AppLogger.conductor.info("Bridge pairing: code \(pending.pairingCode, privacy: .public) accepted by server, waiting for bridge to register…")
+            bridgePairingMessage = "Pairing code \(pending.pairingCode) accepted — waiting for bridge…"
             eventBus.emit(event)
 
         case .bridgePaired(let paired):
+            AppLogger.conductor.info("Bridge pairing: paired with \(paired.deviceName, privacy: .public) (deviceId=\(paired.deviceId, privacy: .public), status=\(paired.status, privacy: .public))")
             bridgePairingMessage = "Paired with \(paired.deviceName)."
             let existingOverride = pairedBridgeDevices
                 .first(where: { $0.deviceId == paired.deviceId })?.workspaceOverride
@@ -245,6 +248,7 @@ final class ConversationEventCoordinator: ObservableObject {
             eventBus.emit(event)
 
         case .bridgeStatus(let status):
+            AppLogger.conductor.info("Bridge status: deviceId=\(status.deviceId, privacy: .public) status=\(status.status, privacy: .public)")
             let existing = pairedBridgeDevices.first(where: { $0.deviceId == status.deviceId })
             upsertPairedBridgeDevice(
                 deviceId: status.deviceId,
@@ -264,6 +268,10 @@ final class ConversationEventCoordinator: ObservableObject {
             eventBus.emit(event)
 
         case .error(let error):
+            AppLogger.conductor.error("Inbound error: code=\(error.code, privacy: .public) message=\(error.message, privacy: .public)")
+            if error.code.hasPrefix("bridge") || error.code.contains("pairing") {
+                bridgePairingMessage = "Error: \(error.message)"
+            }
             eventBus.emit(event)
             if audioPipeline.isHandsFreeLiveConversationMode,
                error.code == "voice_provider_failed" {

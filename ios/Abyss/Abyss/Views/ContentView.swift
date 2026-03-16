@@ -41,6 +41,7 @@ struct ContentView: View {
                     if let vm = viewModel {
                         ChatContentView(
                             viewModel: vm,
+                            showSettings: $showSettings,
                             showEventTimeline: $showEventTimeline,
                             isTypingMode: $isTypingMode,
                             typedMessage: $typedMessage
@@ -55,6 +56,14 @@ struct ContentView: View {
                         }
                     } else {
                         emptyState
+                            .sheet(isPresented: $showSettings) {
+                                SettingsView(
+                                    pairedBridgeDevices: [],
+                                    bridgePairingMessage: nil,
+                                    onPairComputer: nil,
+                                    onSetWorkspaceOverride: nil
+                                )
+                            }
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)
@@ -92,28 +101,6 @@ struct ContentView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showSettings) {
-                if let vm = viewModel {
-                    SettingsView(
-                        pairedBridgeDevices: vm.pairedBridgeDevices,
-                        bridgePairingMessage: vm.bridgePairingMessage,
-                        onPairComputer: { code, deviceName in
-                            vm.requestBridgePairing(pairingCode: code, deviceName: deviceName)
-                        },
-                        onSetWorkspaceOverride: { deviceId, path in
-                            vm.setWorkspaceOverride(deviceId: deviceId, path: path)
-                        }
-                    )
-                } else {
-                    SettingsView(
-                        pairedBridgeDevices: [],
-                        bridgePairingMessage: nil,
-                        onPairComputer: nil,
-                        onSetWorkspaceOverride: nil
-                    )
-                }
-            }
-
             // Dimming overlay when sidebar is open
             Color.black
                 .opacity(showSidebar ? 0.35 : 0)
@@ -332,6 +319,7 @@ private struct ChatRowButton: View {
 /// Chat content view that observes ConversationViewModel so UI updates propagate.
 private struct ChatContentView: View {
     @ObservedObject var viewModel: ConversationViewModel
+    @Binding var showSettings: Bool
     @Binding var showEventTimeline: Bool
     @Binding var isTypingMode: Bool
     @Binding var typedMessage: String
@@ -470,6 +458,18 @@ private struct ChatContentView: View {
             Button("OK") { viewModel.showError = false }
         } message: {
             Text(viewModel.errorMessage ?? "An unknown error occurred.")
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(
+                pairedBridgeDevices: viewModel.pairedBridgeDevices,
+                bridgePairingMessage: viewModel.bridgePairingMessage,
+                onPairComputer: { code, deviceName in
+                    viewModel.requestBridgePairing(pairingCode: code, deviceName: deviceName)
+                },
+                onSetWorkspaceOverride: { deviceId, path in
+                    viewModel.setWorkspaceOverride(deviceId: deviceId, path: path)
+                }
+            )
         }
     }
 }
