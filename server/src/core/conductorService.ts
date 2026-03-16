@@ -1085,6 +1085,7 @@ export class ConductorService {
 
         await this.runConductorLoop(session, text, emit, event.id);
         this.trySummarizeHistory(session);
+        this.tryGenerateTitle(session, text, emit);
         return;
       }
 
@@ -1486,6 +1487,30 @@ export class ConductorService {
    * Fire-and-forget: summarize history if it exceeds the threshold.
    * Runs after the conductor loop completes so it doesn't add latency.
    */
+  private tryGenerateTitle(
+    session: SessionState,
+    firstMessage: string,
+    emit: (event: EventEnvelope) => void,
+  ): void {
+    if (session.transcriptCount !== 1) return;
+
+    const titlePrompt: ConversationTurn[] = [
+      {
+        role: "user",
+        content: `Generate a short chat title (3-5 words, no quotes, no punctuation at end) for a conversation starting with: "${firstMessage.slice(0, 300)}"`,
+      },
+    ];
+
+    this.provider.generateResponse(titlePrompt, []).then((response) => {
+      const title = response.fullText.trim().replace(/^["']|["']$/g, "");
+      if (title) {
+        emit(makeEvent("session.title", session.sessionId, { title }));
+      }
+    }).catch((err) => {
+      logger.warn(`Title generation failed: ${err}`, { sessionId: session.sessionId });
+    });
+  }
+
   private trySummarizeHistory(session: SessionState): void {
     if (session.history.length <= this.summarizationConfig.summarizeAfter) {
       return;

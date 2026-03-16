@@ -32,6 +32,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var isTTSSpeaking: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
+    var onTitleGenerated: ((String) -> Void)?
     private weak var gmailAuthManager: GmailAuthManager?
     private weak var canvasManager: CanvasManager?
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
@@ -465,6 +466,9 @@ final class ConversationViewModel: ObservableObject {
                 await self?.sendEventToConductor(event, surfaceErrors: surfaceErrors)
             }
         )
+        eventCoordinator.onTitleGenerated = { [weak self] title in
+            self?.onTitleGenerated?(title)
+        }
 
         syncRecordingMode()
     }

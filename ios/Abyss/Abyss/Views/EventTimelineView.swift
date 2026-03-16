@@ -144,6 +144,8 @@ struct EventRow: View {
                 Image(systemName: "paperplane").foregroundStyle(.blue)
             case .gmailSendResult:
                 Image(systemName: "envelope.badge.fill").foregroundStyle(.green)
+            case .sessionTitle:
+                Image(systemName: "text.badge.star").foregroundStyle(.teal)
             }
         }
     }
@@ -215,6 +217,8 @@ struct EventRow: View {
             return "gmail.send.execute: \(payload.callId.prefix(8)) confirmed=\(payload.confirmed)"
         case .gmailSendResult(let payload):
             return "gmail.send.result: \(payload.callId.prefix(8)) success=\(payload.success)"
+        case .sessionTitle(let payload):
+            return "session.title: \(payload.title)"
         }
     }
 

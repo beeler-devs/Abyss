@@ -183,6 +183,12 @@ struct ContentView: View {
 
         activeChatId = newSelectedId
         vm.setChatActive(true)
+        vm.onTitleGenerated = { [weak chatList] newTitle in
+            guard let chatList else { return }
+            if chatList.chats.first(where: { $0.id == newSelectedId })?.title == "New Chat" {
+                chatList.renameChat(id: newSelectedId, title: newTitle)
+            }
+        }
     }
 
 }
@@ -235,6 +241,9 @@ private struct ChatSidebarPanel: View {
                             },
                             onDelete: {
                                 chatList.deleteChat(id: chat.id)
+                            },
+                            onRename: { newTitle in
+                                chatList.renameChat(id: chat.id, title: newTitle)
                             }
                         )
                     }
@@ -281,39 +290,76 @@ private struct ChatRowButton: View {
     let isSelected: Bool
     let onSelect: () -> Void
     let onDelete: () -> Void
+    let onRename: (String) -> Void
     @Environment(\.colorScheme) private var colorScheme
+    @State private var isEditing = false
+    @State private var editedTitle = ""
+    @FocusState private var isTitleFocused: Bool
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(spacing: 12) {
-                Image(systemName: "bubble.left")
-                    .font(.system(size: AppTheme.sidebarIconSize))
-                    .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .secondary)
-                    .frame(width: AppTheme.sidebarIconFrame)
+        HStack(spacing: 12) {
+            Image(systemName: "bubble.left")
+                .font(.system(size: AppTheme.sidebarIconSize))
+                .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .secondary)
+                .frame(width: AppTheme.sidebarIconFrame)
+
+            if isEditing {
+                TextField("Chat title", text: $editedTitle)
+                    .font(.body)
+                    .focused($isTitleFocused)
+                    .onSubmit { commitRename() }
+                    .onChange(of: isTitleFocused) { _, focused in
+                        if !focused { commitRename() }
+                    }
+            } else {
                 Text(chat.title)
                     .font(.body)
                     .lineLimit(1)
                     .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .primary)
-                Spacer()
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected
-                          ? AppTheme.sidebarSelectedRow(for: colorScheme)
-                          : Color.clear)
-            )
-            .padding(.horizontal, 10)
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            Button(role: .destructive) {
-                onDelete()
+
+            Spacer()
+
+            Menu {
+                Button {
+                    editedTitle = chat.title
+                    isEditing = true
+                    isTitleFocused = true
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             } label: {
-                Label("Delete", systemImage: "trash")
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
         }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isSelected
+                      ? AppTheme.sidebarSelectedRow(for: colorScheme)
+                      : Color.clear)
+        )
+        .padding(.horizontal, 10)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !isEditing { onSelect() }
+        }
+    }
+
+    private func commitRename() {
+        guard isEditing else { return }
+        isEditing = false
+        onRename(editedTitle)
     }
 }
 

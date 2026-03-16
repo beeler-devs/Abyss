@@ -84,6 +84,14 @@ final class ChatListViewModel: ObservableObject {
         persistChats()
     }
 
+    /// Renames a chat by ID. Empty/whitespace-only titles fall back to "New Chat".
+    func renameChat(id: UUID, title: String) {
+        guard let index = chats.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        chats[index].title = trimmed.isEmpty ? "New Chat" : trimmed
+        persistChats()
+    }
+
     private func loadPersistedChats() {
         guard let data = defaults.data(forKey: Self.persistedChatsKey),
               let decoded = try? JSONDecoder().decode([PersistedChatSession].self, from: data) else {

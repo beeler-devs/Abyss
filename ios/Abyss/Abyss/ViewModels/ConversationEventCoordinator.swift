@@ -20,6 +20,7 @@ final class ConversationEventCoordinator: ObservableObject {
     @Published private(set) var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published private(set) var bridgePairingMessage: String?
     @Published private(set) var assistantPartialSpeech: String = ""
+    var onTitleGenerated: ((String) -> Void)?
 
     private let conversationStore: ConversationStore
     private let eventBus: EventBus
@@ -314,6 +315,10 @@ final class ConversationEventCoordinator: ObservableObject {
                handlePendingInterruptTranscript(transcript) {
                 return
             }
+            eventBus.emit(event)
+
+        case .sessionTitle(let titlePayload):
+            onTitleGenerated?(titlePayload.title)
             eventBus.emit(event)
 
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult,

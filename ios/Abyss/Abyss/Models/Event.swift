@@ -47,6 +47,7 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeWorkspaceSet(BridgeWorkspaceSet)
         case gmailSendExecute(GmailSendExecute)
         case gmailSendResult(GmailSendResult)
+        case sessionTitle(SessionTitle)
     }
 
     // MARK: - Payloads
@@ -288,6 +289,10 @@ struct Event: Identifiable, Codable, Sendable {
         let success: Bool
         let error: String?
     }
+
+    struct SessionTitle: Codable, Sendable {
+        let title: String
+    }
 }
 
 // MARK: - Convenience Factories
@@ -518,6 +523,7 @@ extension Event.Kind {
         case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
         case .gmailSendExecute(let payload): return "gmail.send.execute: \(payload.callId.prefix(8))"
         case .gmailSendResult(let payload): return "gmail.send.result: \(payload.success ? "ok" : "failed")"
+        case .sessionTitle(let payload): return "session.title: \(payload.title)"
         }
     }
 }

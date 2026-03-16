@@ -262,6 +262,9 @@ struct EventEnvelope: Codable, Sendable {
             ]
             if let error = value.error { p["error"] = .string(error) }
             payload = p
+        case .sessionTitle(let value):
+            type = "session.title"
+            payload = ["title": .string(value.title)]
         }
     }
 
@@ -453,6 +456,8 @@ struct EventEnvelope: Codable, Sendable {
                 success: payload["success"]?.boolValue ?? false,
                 error: payload["error"]?.stringValue
             ))
+        case "session.title":
+            kind = .sessionTitle(Event.SessionTitle(title: try requireString("title")))
         default:
             throw ConversionError.unsupportedType(type)
         }
