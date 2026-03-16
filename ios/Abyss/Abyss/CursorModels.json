@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "displayName": "Default",
+      "modelId": ""
+    },
+    {
+      "displayName": "Composer 1.5",
+      "modelId": "claude-3-7-sonnet-20250219"
+    },
+    {
+      "displayName": "GPT 5.3 Codex",
+      "modelId": "gpt-4.1"
+    },
+    {
+      "displayName": "GPT 5.4",
+      "modelId": "gpt-4.5"
+    },
+    {
+      "displayName": "Opus 4.6",
+      "modelId": "claude-opus-4-5"
+    }
+  ]
+}

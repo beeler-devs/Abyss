@@ -15,10 +15,6 @@ struct SettingsView: View {
     @AppStorage("cursorAgentModel") private var cursorAgentModel = ""
     @AppStorage("backendWSURL") private var backendWSURL = ""
 
-    @State private var availableModels: [String] = []
-    @State private var isLoadingModels = false
-    @State private var modelsLoadError: String? = nil
-
     @State private var showCursorAPIKeyModal = false
     @State private var cursorAPIKeyInput = ""
     @State private var showPairComputerSheet = false
@@ -100,26 +96,11 @@ struct SettingsView: View {
                     }
 
                     Picker("Default Model", selection: $cursorAgentModel) {
-                        Text("Cursor's default").tag("")
-                        ForEach(availableModels, id: \.self) { model in
-                            Text(model).tag(model)
+                        ForEach(CursorModelRegistry.shared.models, id: \.modelId) { entry in
+                            Text(entry.displayName).tag(entry.modelId)
                         }
                     }
                     .pickerStyle(.menu)
-                    .disabled(!Config.isCursorAPIKeyConfigured)
-
-                    if isLoadingModels {
-                        HStack {
-                            ProgressView().scaleEffect(0.8)
-                            Text("Loading models…")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else if let error = modelsLoadError {
-                        Label(error, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
                 }
 
                 Section("Connections") {
@@ -262,8 +243,6 @@ struct SettingsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .task { await loadModels() }
-            .onChange(of: cursorAPIKey) { _, _ in Task { await loadModels() } }
             .sheet(isPresented: $showCursorAPIKeyModal) {
                 CursorAPIKeyModalView(
                     apiKey: $cursorAPIKeyInput,
@@ -324,24 +303,6 @@ struct SettingsView: View {
         }
     }
 
-    private func loadModels() async {
-        guard Config.isCursorAPIKeyConfigured else {
-            modelsLoadError = "Configure Cursor API Key first."
-            return
-        }
-        isLoadingModels = true
-        modelsLoadError = nil
-        do {
-            let response = try await CursorCloudAgentsClient().models()
-            availableModels = response.models
-            if !cursorAgentModel.isEmpty && !availableModels.contains(cursorAgentModel) {
-                cursorAgentModel = ""
-            }
-        } catch {
-            modelsLoadError = error.localizedDescription
-        }
-        isLoadingModels = false
-    }
 }
 
 private struct PairComputerSheet: View {
