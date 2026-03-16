@@ -17,6 +17,7 @@ export interface BridgeCapabilities {
   gitPush?: boolean;
   claudeRun?: boolean;
   novaAct?: boolean;
+  screenshot?: boolean;
 }
 
 export interface PairingRequest {

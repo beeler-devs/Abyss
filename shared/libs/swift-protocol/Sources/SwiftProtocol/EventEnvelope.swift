@@ -153,6 +153,7 @@ public struct BridgeCapabilities: Codable, Sendable {
     public var gitPush: Bool
     public var claudeRun: Bool
     public var novaAct: Bool
+    public var screenshot: Bool
 
     public init(
         execRun: Bool = true,
@@ -170,7 +171,8 @@ public struct BridgeCapabilities: Codable, Sendable {
         gitCommit: Bool = true,
         gitPush: Bool = true,
         claudeRun: Bool = true,
-        novaAct: Bool = true
+        novaAct: Bool = true,
+        screenshot: Bool = true
     ) {
         self.execRun = execRun
         self.readFile = readFile
@@ -188,6 +190,7 @@ public struct BridgeCapabilities: Codable, Sendable {
         self.gitPush = gitPush
         self.claudeRun = claudeRun
         self.novaAct = novaAct
+        self.screenshot = screenshot
     }
 }
 
@@ -672,5 +675,15 @@ public struct BridgeNovaStopResult: Codable, Sendable {
 
     public init(stopped: Bool) {
         self.stopped = stopped
+    }
+}
+
+public struct BridgeScreenshotResult: Codable, Sendable {
+    public let imageBase64: String
+    public let mimeType: String
+
+    public init(imageBase64: String, mimeType: String) {
+        self.imageBase64 = imageBase64
+        self.mimeType = mimeType
     }
 }

@@ -45,6 +45,7 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeExecFinished(BridgeExecFinished)
         case preferencesSync(PreferencesSync)
         case bridgeWorkspaceSet(BridgeWorkspaceSet)
+        case assistantImage(AssistantImage)
     }
 
     // MARK: - Payloads
@@ -269,6 +270,11 @@ struct Event: Identifiable, Codable, Sendable {
     struct BridgeWorkspaceSet: Codable, Sendable {
         let deviceId: String
         let workspacePath: String
+    }
+
+    struct AssistantImage: Codable, Sendable {
+        let imageBase64: String
+        let mimeType: String
     }
 }
 
@@ -498,6 +504,7 @@ extension Event.Kind {
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
         case .preferencesSync: return "preferences.sync"
         case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
+        case .assistantImage: return "assistant.image"
         }
     }
 }

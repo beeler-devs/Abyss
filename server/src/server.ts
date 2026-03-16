@@ -842,6 +842,7 @@ function readCapabilities(value: unknown): BridgeCapabilities | undefined {
     gitPush: optionalBoolean(raw.gitPush),
     claudeRun,
     novaAct: optionalBoolean(raw.novaAct),
+    screenshot: optionalBoolean(raw.screenshot),
   };
 }
 
@@ -905,6 +906,8 @@ function bridgeDeviceSupportsTool(capabilities: BridgeCapabilities, toolName: st
     case "bridge.nova.act":
     case "bridge.nova.stop":
       return capabilities.novaAct ?? false;
+    case "bridge.screenshot":
+      return capabilities.screenshot ?? false;
     default:
       return false;
   }

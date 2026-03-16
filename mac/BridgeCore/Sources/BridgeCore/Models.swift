@@ -14,6 +14,7 @@ public struct BridgePermissions: Codable, Equatable, Sendable {
     public var requireGitPushConfirmation: Bool
     public var allowClaudeRun: Bool
     public var allowNovaAct: Bool
+    public var allowScreenshot: Bool
 
     public init(
         allowExecRun: Bool = true,
@@ -21,7 +22,8 @@ public struct BridgePermissions: Codable, Equatable, Sendable {
         allowGitPush: Bool = false,
         requireGitPushConfirmation: Bool = true,
         allowClaudeRun: Bool = false,
-        allowNovaAct: Bool = false
+        allowNovaAct: Bool = false,
+        allowScreenshot: Bool = true
     ) {
         self.allowExecRun = allowExecRun
         self.allowWritesApplyPatch = allowWritesApplyPatch
@@ -29,6 +31,7 @@ public struct BridgePermissions: Codable, Equatable, Sendable {
         self.requireGitPushConfirmation = requireGitPushConfirmation
         self.allowClaudeRun = allowClaudeRun
         self.allowNovaAct = allowNovaAct
+        self.allowScreenshot = allowScreenshot
     }
 }
 

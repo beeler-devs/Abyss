@@ -493,6 +493,17 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: "bridge.screenshot",
+    description:
+      "Take a screenshot of the paired Mac's screen and send it to the iOS app for display. Use when the user asks to 'show me', 'take a screenshot', 'what does it look like', or similar. The image will appear in the conversation automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+      },
+    },
+  },
 ];
 
 const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
@@ -2271,6 +2282,39 @@ export class ConductorService {
             args,
             timeoutMs: 15_000,
           }, emit);
+        }
+
+        case "bridge.screenshot": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          const screenshotResult = await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 30_000,
+          }, emit);
+
+          // Intercept base64 blob: emit image to iOS, give LLM a clean text result
+          if (screenshotResult.result) {
+            try {
+              const parsed = JSON.parse(screenshotResult.result) as Record<string, unknown>;
+              if (typeof parsed.imageBase64 === "string") {
+                emit(makeEvent("assistant.image", session.sessionId, {
+                  imageBase64: parsed.imageBase64,
+                  mimeType: typeof parsed.mimeType === "string" ? parsed.mimeType : "image/png",
+                }));
+                return {
+                  result: JSON.stringify({ success: true, message: "Screenshot captured and displayed in the iOS app." }),
+                  error: null,
+                };
+              }
+            } catch {
+              // If parsing fails, pass through as-is
+            }
+          }
+          return screenshotResult;
         }
 
         case "gmail.inbox": {
