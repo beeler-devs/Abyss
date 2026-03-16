@@ -318,6 +318,9 @@ Server runs on ECS Fargate in **us-east-1** (cluster `abyss`, service `abyss-ser
 
 **WebSocket stickiness:** The ALB keeps existing WebSocket connections pinned to the old task even after a new deployment. The iOS app must be killed and reopened after a deploy to reconnect to the new container.
 
+### Top-Level README
+`README.md` is judge-facing and product-forward: lead with the voice-first/iPhone-native/security positioning, keep a compact architecture-diagram slot near the top, show concrete "built today" proof early, and clearly label optional AWS memory/context infrastructure (for example Neptune/Titan-backed retrieval) as optional/configuration-dependent rather than always on.
+
 ## Claude Code Instructions
 
 - Never add Claude as a co-author on git commits. Do not include `Co-Authored-By: Claude` or any similar trailer in commit messages.
