@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 
+import { logger } from "../core/logger.js";
 import { MemoryService, MemoryDocument, WorkingContextSnapshot } from "../core/memory/memoryService.js";
 import { ConversationTurn } from "../core/types.js";
 import { EmbeddingService } from "./embedding/embeddingService.js";
@@ -52,6 +53,7 @@ export class ContextGraphService {
     this.graphStore = deps.graphStore;
     this.embeddingService = deps.embeddingService;
     this.memoryService = deps.memoryService;
+    logger.info(`[contextGraph] initialized — graphStore=${!!deps.graphStore} embeddingService=${!!deps.embeddingService} memoryService=${!!deps.memoryService} retrieveTimeoutMs=${config.retrieveTimeoutMs}`);
   }
 
   /**
@@ -60,6 +62,7 @@ export class ContextGraphService {
    */
   async apply(update: ContextGraphUpdate): Promise<void> {
     if (!this.graphStore) return;
+    const start = Date.now();
     try {
       switch (update.type) {
         case "session.start":
@@ -72,8 +75,10 @@ export class ContextGraphService {
           await this.handleSessionFinalized(update);
           break;
       }
+      logger.info(`[contextGraph] apply(${update.type}) ok durationMs=${Date.now() - start}`, { sessionId: update.sessionId });
     } catch (err) {
-      console.error(`[contextGraph] apply(${update.type}) failed:`, err);
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[contextGraph] apply(${update.type}) failed durationMs=${Date.now() - start}: ${msg}`, { sessionId: update.sessionId });
     }
   }
 
@@ -81,28 +86,49 @@ export class ContextGraphService {
    * Retrieve resume context: tries hybrid graph query first, falls back to MemoryService.
    */
   async retrieveResumeContext(input: { memoryUserKey: string; transcript?: string }): Promise<string | null> {
+    const start = Date.now();
+    logger.info(`[contextGraph] retrieveResumeContext start — user=${input.memoryUserKey} hasTranscript=${!!input.transcript} graphStore=${!!this.graphStore} embeddingService=${!!this.embeddingService}`);
+
     // Try graph-based retrieval first
     if (this.graphStore && this.embeddingService && input.transcript) {
       try {
+        const embedStart = Date.now();
         const embedding = await this.embeddingService.embed(input.transcript);
+        logger.info(`[contextGraph] embed ok durationMs=${Date.now() - embedStart} dims=${embedding.length}`);
+
+        const queryStart = Date.now();
         const neighborhood = await withTimeout(
           this.graphStore.hybridResumeQuery(embedding, input.memoryUserKey, 5),
           this.config.retrieveTimeoutMs,
         );
+
         if (neighborhood) {
+          const counts = `goals=${neighborhood.goals.length} sessions=${neighborhood.sessions.length} episodes=${neighborhood.episodes.length} repos=${neighborhood.repos.length} blockers=${neighborhood.blockers.length} nextSteps=${neighborhood.nextSteps.length} decisions=${neighborhood.decisions.length}`;
+          logger.info(`[contextGraph] hybridResumeQuery ok durationMs=${Date.now() - queryStart} ${counts}`);
           const formatted = this.formatResumeContext(neighborhood);
-          if (formatted) return formatted;
+          if (formatted) {
+            logger.info(`[contextGraph] retrieveResumeContext done source=graph durationMs=${Date.now() - start} chars=${formatted.length}`);
+            return formatted;
+          }
+          logger.info(`[contextGraph] graph returned results but formatted to empty — falling back to memoryService`);
+        } else {
+          logger.warn(`[contextGraph] hybridResumeQuery timed out after ${this.config.retrieveTimeoutMs}ms — falling back to memoryService`);
         }
       } catch (err) {
-        console.error("[contextGraph] retrieveResumeContext graph query failed:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[contextGraph] retrieveResumeContext graph query failed durationMs=${Date.now() - start}: ${msg}`);
       }
     }
 
     // Fall back to existing MemoryService
     if (this.memoryService) {
-      return this.memoryService.retrieveContext(input);
+      logger.info(`[contextGraph] falling back to memoryService.retrieveContext`);
+      const result = await this.memoryService.retrieveContext(input);
+      logger.info(`[contextGraph] retrieveResumeContext done source=memoryService durationMs=${Date.now() - start} chars=${result?.length ?? 0}`);
+      return result;
     }
 
+    logger.info(`[contextGraph] retrieveResumeContext done source=none durationMs=${Date.now() - start} — no graph or memory service`);
     return null;
   }
 
@@ -115,8 +141,15 @@ export class ContextGraphService {
     history: ConversationTurn[],
     workingContext?: WorkingContextSnapshot,
   ): Promise<MemoryDocument | null> {
-    if (!this.memoryService) return null;
-    return this.memoryService.summarizeAndStore(memoryUserKey, sessionId, history, workingContext);
+    if (!this.memoryService) {
+      logger.info(`[contextGraph] summarizeAndStore skipped — no memoryService`, { sessionId });
+      return null;
+    }
+    const start = Date.now();
+    logger.info(`[contextGraph] summarizeAndStore start turns=${history.length} user=${memoryUserKey}`, { sessionId });
+    const doc = await this.memoryService.summarizeAndStore(memoryUserKey, sessionId, history, workingContext);
+    logger.info(`[contextGraph] summarizeAndStore done durationMs=${Date.now() - start} result=${doc ? "doc" : "null"}`, { sessionId });
+    return doc;
   }
 
   // --- Private handlers ---
@@ -124,6 +157,8 @@ export class ContextGraphService {
   private async handleSessionStart(update: Extract<ContextGraphUpdate, { type: "session.start" }>): Promise<void> {
     const now = update.timestamp;
     const { memoryUserKey } = update.payload;
+
+    logger.info(`[contextGraph] session.start — upsert User(${memoryUserKey}) + Session(${update.sessionId})`, { sessionId: update.sessionId });
 
     const userNode: UserNode = {
       id: `user:${memoryUserKey}`,
@@ -145,12 +180,15 @@ export class ContextGraphService {
     await this.graphStore!.upsertNode(sessionNode);
 
     await this.graphStore!.upsertEdge(userNode.id, sessionNode.id, "STARTED");
+    logger.info(`[contextGraph] session.start — User->STARTED->Session edge created`, { sessionId: update.sessionId });
   }
 
   private async handleGoalStarted(update: Extract<ContextGraphUpdate, { type: "goal.started" }>): Promise<void> {
     const now = update.timestamp;
     const { goalText, memoryUserKey } = update.payload;
     const goalId = `goal:${this.hashShort(goalText)}:${update.sessionId}`;
+
+    logger.info(`[contextGraph] goal.started — upsert Goal(${goalId}) text="${goalText.slice(0, 80)}"`, { sessionId: update.sessionId });
 
     const goalNode: GoalNode = {
       id: goalId,
@@ -163,13 +201,16 @@ export class ContextGraphService {
     await this.graphStore!.upsertNode(goalNode);
     await this.graphStore!.upsertEdge(`session:${update.sessionId}`, goalId, "HAS_GOAL");
 
-    // Embed goal text async (fire-and-forget within the already-fire-and-forget apply)
+    // Embed goal text
     if (this.embeddingService) {
       try {
+        const embedStart = Date.now();
         const embedding = await this.embeddingService.embed(goalText);
         await this.graphStore!.upsertEmbedding(goalId, "Goal", embedding);
+        logger.info(`[contextGraph] goal embedding upserted durationMs=${Date.now() - embedStart} dims=${embedding.length}`, { sessionId: update.sessionId });
       } catch (err) {
-        console.error("[contextGraph] goal embedding failed:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[contextGraph] goal embedding failed: ${msg}`, { sessionId: update.sessionId });
       }
     }
   }
@@ -178,6 +219,8 @@ export class ContextGraphService {
     const now = update.timestamp;
     const { memoryUserKey, workingContext, summary, decisions, blockers, nextSteps } = update.payload;
     const sessionNodeId = `session:${update.sessionId}`;
+
+    logger.info(`[contextGraph] session.finalized — user=${memoryUserKey} repo=${workingContext?.repo ?? "none"} branch=${workingContext?.branch ?? "none"} decisions=${decisions?.length ?? 0} blockers=${blockers?.length ?? 0} nextSteps=${nextSteps?.length ?? 0} summaryLen=${summary.length}`, { sessionId: update.sessionId });
 
     // Create MemoryEpisode node
     const episodeId = `episode:${update.sessionId}`;
@@ -192,14 +235,18 @@ export class ContextGraphService {
     };
     await this.graphStore!.upsertNode(episodeNode);
     await this.graphStore!.upsertEdge(episodeId, sessionNodeId, "IN_SESSION");
+    logger.info(`[contextGraph] MemoryEpisode(${episodeId}) created`, { sessionId: update.sessionId });
 
     // Embed the episode summary
     if (this.embeddingService) {
       try {
+        const embedStart = Date.now();
         const embedding = await this.embeddingService.embed(summary);
         await this.graphStore!.upsertEmbedding(episodeId, "MemoryEpisode", embedding);
+        logger.info(`[contextGraph] episode embedding upserted durationMs=${Date.now() - embedStart}`, { sessionId: update.sessionId });
       } catch (err) {
-        console.error("[contextGraph] episode embedding failed:", err);
+        const msg = err instanceof Error ? err.message : String(err);
+        logger.error(`[contextGraph] episode embedding failed: ${msg}`, { sessionId: update.sessionId });
       }
     }
 
@@ -215,6 +262,7 @@ export class ContextGraphService {
       };
       await this.graphStore!.upsertNode(repoNode);
       await this.graphStore!.upsertEdge(sessionNodeId, repoId, "USED_REPO");
+      logger.info(`[contextGraph] Repo(${workingContext.repo}) linked`, { sessionId: update.sessionId });
 
       if (workingContext.branch) {
         const branchId = `branch:${workingContext.repo}:${workingContext.branch}`;
@@ -228,6 +276,7 @@ export class ContextGraphService {
         };
         await this.graphStore!.upsertNode(branchNode);
         await this.graphStore!.upsertEdge(sessionNodeId, branchId, "ON_BRANCH");
+        logger.info(`[contextGraph] Branch(${workingContext.branch}) linked`, { sessionId: update.sessionId });
       }
     }
 
@@ -239,6 +288,7 @@ export class ContextGraphService {
         await this.graphStore!.upsertNode(node);
         await this.graphStore!.upsertEdge(id, sessionNodeId, "IN_SESSION");
       }
+      logger.info(`[contextGraph] ${decisions.length} Decision node(s) created`, { sessionId: update.sessionId });
     }
 
     // Blocker nodes
@@ -249,6 +299,7 @@ export class ContextGraphService {
         await this.graphStore!.upsertNode(node);
         await this.graphStore!.upsertEdge(id, sessionNodeId, "IN_SESSION");
       }
+      logger.info(`[contextGraph] ${blockers.length} Blocker node(s) created`, { sessionId: update.sessionId });
     }
 
     // NextStep nodes
@@ -259,6 +310,7 @@ export class ContextGraphService {
         await this.graphStore!.upsertNode(node);
         await this.graphStore!.upsertEdge(id, sessionNodeId, "IN_SESSION");
       }
+      logger.info(`[contextGraph] ${nextSteps.length} NextStep node(s) created`, { sessionId: update.sessionId });
     }
   }
 
