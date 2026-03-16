@@ -119,7 +119,8 @@ final class ConversationViewModel: ObservableObject {
             self.lastPersistedCount = persisted.filter { !$0.isPartial && $0.role != .system }.count
         }
 
-        startSession()
+        // Don't connect WebSocket here — wait until setChatActive(true)
+        // to avoid opening N connections for N saved chats on app launch.
     }
 
     init(
@@ -187,8 +188,16 @@ final class ConversationViewModel: ObservableObject {
         audioPipeline.setChatActive(isActive)
         if isActive {
             audioPipeline.preloadTranscriber()
+            // Connect WebSocket only when this chat becomes active
+            if activeConductorClient == nil {
+                startSession()
+            }
         } else {
             audioPipeline.tearDownTranscriber()
+            // Disconnect WebSocket when switching away from this chat
+            Task {
+                await disconnectActiveConductorClient()
+            }
         }
     }
 
