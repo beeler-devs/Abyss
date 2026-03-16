@@ -73,14 +73,31 @@ final class VoiceActivityDetector: NSObject, ObservableObject {
 
         guard !isSpeaking else { return }
 
+        // Track when sustained speech started; don't fire onSpeechStarted
+        // until minSpeechDuration has elapsed. This prevents brief noise
+        // spikes from triggering barge-in.
+        if speechStartTime == nil {
+            speechStartTime = Date()
+        }
+
+        guard let startTime = speechStartTime,
+              Date().timeIntervalSince(startTime) >= config.minSpeechDuration else {
+            return
+        }
+
         isSpeaking = true
-        speechStartTime = Date()
         log("Speech detected")
         onSpeechStarted?()
     }
 
     private func handleSilenceDetected() {
-        guard isSpeaking else { return }
+        // If speech hasn't been confirmed yet, reset the accumulator
+        // so non-contiguous noise spikes don't add up.
+        if !isSpeaking {
+            speechStartTime = nil
+            return
+        }
+
         guard silenceTimer == nil else { return }
 
         silenceTimer = Timer.scheduledTimer(

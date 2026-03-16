@@ -19,7 +19,12 @@ final class VoiceActivityDetectorTests: XCTestCase {
         }
 
         vad.startMonitoring()
+        // First call sets speechStartTime; second call after minSpeechDuration
+        // confirms sustained speech and fires onSpeechStarted.
         vad.processAudioLevel(-30)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            vad.processAudioLevel(-30)
+        }
 
         wait(for: [started], timeout: 0.2)
         XCTAssertTrue(vad.isSpeaking)
