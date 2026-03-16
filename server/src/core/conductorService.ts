@@ -1796,9 +1796,14 @@ export class ConductorService {
         text: responseText,
         isPartial: false,
       });
-      emitToolCall("convo.setState", { state: "speaking" });
-      emitToolCall("tts.speak", { text: responseText });
-      emitToolCall("convo.setState", { state: "idle" });
+      if (!session.isLiveSession) {
+        // In PTT mode, iOS handles TTS playback. In live (Nova Sonic) mode,
+        // the bidirectional audio stream handles speech — emitting tts.speak
+        // would conflict with the hands-free audio engine.
+        emitToolCall("convo.setState", { state: "speaking" });
+        emitToolCall("tts.speak", { text: responseText });
+        emitToolCall("convo.setState", { state: "idle" });
+      }
 
       emittedFinalResponse = true;
       break;
