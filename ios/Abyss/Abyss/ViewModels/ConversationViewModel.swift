@@ -185,14 +185,20 @@ final class ConversationViewModel: ObservableObject {
 
     func setChatActive(_ isActive: Bool) {
         syncRecordingMode()
-        audioPipeline.setChatActive(isActive)
         if isActive {
-            audioPipeline.preloadTranscriber()
-            // Connect WebSocket only when this chat becomes active
+            // Connect WebSocket first, then start audio pipeline once connected
             if activeConductorClient == nil {
-                startSession()
+                Task {
+                    _ = await configureConductorClient(forceReconnect: true)
+                    audioPipeline.setChatActive(true)
+                    audioPipeline.preloadTranscriber()
+                }
+            } else {
+                audioPipeline.setChatActive(true)
+                audioPipeline.preloadTranscriber()
             }
         } else {
+            audioPipeline.setChatActive(false)
             audioPipeline.tearDownTranscriber()
             // Disconnect WebSocket when switching away from this chat
             Task {
