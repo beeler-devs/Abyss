@@ -1900,13 +1900,32 @@ export class ConductorService {
             return { result: null, error: "bridge_not_configured" };
           }
 
+          // Resolve allowedTools: explicit arg > user preference > prompt user
+          const explicitTools = typeof args.allowedTools === "string" ? args.allowedTools : undefined;
+          const prefTools = session.userPreferences?.["bridge.claude.allowedTools"];
+          if (!explicitTools && !prefTools) {
+            return {
+              result: "The user has not configured their Claude Code tool permissions yet. "
+                + "Before running this task, ask the user which Claude Code tools they want to allow. "
+                + "Available tools: Bash (shell commands), Read (read files), Edit (edit files), "
+                + "Write (create files), LS (list directories), Glob (find files by pattern), "
+                + "Grep (search file contents), MultiEdit (batch edits). "
+                + "Explain what each tool does in plain language and ask which ones to enable. "
+                + "Once they decide, save their choice with preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...') "
+                + "and then retry this bridge.claude.run call.",
+              error: null,
+            };
+          }
+
+          const resolvedArgs = { ...args, allowedTools: explicitTools ?? prefTools };
+
           const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
           const claudeTimeoutMs = Math.max(1, Math.min(660, Math.trunc(claudeTimeoutRaw ?? 660))) * 1_000;
           return await this.bridgeToolExecutor({
             callId,
             sessionId: session.sessionId,
             toolName,
-            args,
+            args: resolvedArgs,
             timeoutMs: claudeTimeoutMs,
           }, emit);
         }
