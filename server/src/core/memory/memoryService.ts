@@ -239,14 +239,20 @@ Respond with JSON only:
     const deadline = Date.now() + this.config.retrieveTimeoutMs;
 
     try {
-      // Fast path: list recent S3 objects for user
-      const listResult = await this.s3.send(
-        new ListObjectsV2Command({
-          Bucket: this.config.s3Bucket,
-          Prefix: `${this.config.s3Prefix}${input.memoryUserKey}/`,
-          MaxKeys: 100,
-        }),
-      );
+      // Fast path: list recent S3 objects for user (respect timeout)
+      const listTimeoutMs = deadline - Date.now();
+      const listResultOrTimeout = await Promise.race([
+        this.s3.send(
+          new ListObjectsV2Command({
+            Bucket: this.config.s3Bucket,
+            Prefix: `${this.config.s3Prefix}${input.memoryUserKey}/`,
+            MaxKeys: 100,
+          }),
+        ),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), listTimeoutMs)),
+      ]);
+      if (listResultOrTimeout === null) return null;
+      const listResult = listResultOrTimeout;
 
       const objects = (listResult.Contents ?? [])
         .filter((o) => o.Key && o.LastModified)

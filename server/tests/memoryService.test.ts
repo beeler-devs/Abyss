@@ -194,3 +194,17 @@ test("retrieveContext returns null when S3 list is empty", async () => {
   const result = await service.retrieveContext({ memoryUserKey: "user1" });
   assert.equal(result, null);
 });
+
+test("retrieveContext returns null when S3 list exceeds timeout", async () => {
+  const mockS3 = {
+    send: async () => new Promise<never>(() => { /* never resolves */ }),
+  };
+
+  const service = new MemoryService(makeConfig({ retrieveTimeoutMs: 50 }), { s3: mockS3 as never });
+  const start = Date.now();
+  const result = await service.retrieveContext({ memoryUserKey: "user1" });
+  const elapsed = Date.now() - start;
+
+  assert.equal(result, null, "should return null on timeout");
+  assert.ok(elapsed < 500, `should resolve within 500ms, took ${elapsed}ms`);
+});

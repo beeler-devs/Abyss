@@ -93,10 +93,15 @@ test("on first user turn, injects memory as user turn when available", async () 
   );
 
   // The provider should have received a conversation with a [Prior context from previous sessions] user turn
-  const memoryTurn = capturedConversation.find(
+  const memIdx = capturedConversation.findIndex(
     (t) => t.role === "user" && typeof t.content === "string" && (t.content as string).includes("[Prior context from previous sessions]"),
   );
-  assert.ok(memoryTurn !== undefined, "should inject prior context as user turn");
+  const speechIdx = capturedConversation.findIndex(
+    (t) => t.role === "user" && typeof t.content === "string" && (t.content as string).includes("What should I do next?"),
+  );
+  assert.ok(memIdx !== -1, "memory context turn should be present");
+  assert.ok(speechIdx !== -1, "user speech turn should be present");
+  assert.ok(memIdx < speechIdx, "memory context turn should precede the user speech turn");
   assert.ok(events.includes("session.memory.loaded"), "should emit session.memory.loaded");
 });
 
@@ -155,6 +160,32 @@ test("finalizeSession no-ops when session has no memoryUserKey", async () => {
 
   await conductor.finalizeSession("sess-nomem");
   assert.equal(summarizeCalled, false, "should not summarize when no memoryUserKey");
+});
+
+test("finalizeSession does not write to S3 for session with fewer than 3 user turns", async () => {
+  let putObjectCalled = false;
+  const mockS3 = {
+    send: async (cmd: unknown) => {
+      const c = cmd as { constructor: { name: string } };
+      if (c.constructor.name === "PutObjectCommand") putObjectCalled = true;
+      return {};
+    },
+  };
+  const mockBedrock = { send: async () => ({}) };
+  const memService = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+
+  const conductor = new ConductorService(
+    new StubProvider("hi"),
+    { maxTurns: 10, rateLimitPerMinute: 300 },
+    { memoryService: memService },
+  );
+
+  const emit = () => {};
+  await conductor.handleEvent(makeEvent("session.start", "sess-short", { memoryUserKey: "dave" }), emit);
+  await conductor.handleEvent(makeEvent("user.audio.transcript.final", "sess-short", { text: "hello" }), emit);
+
+  await conductor.finalizeSession("sess-short");
+  assert.equal(putObjectCalled, false, "should not write to S3 for a short session");
 });
 
 test("finalizeSession calls summarizeAndStore for meaningful session", async () => {
