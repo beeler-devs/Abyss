@@ -759,15 +759,16 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           try { JSON.parse(text); return; } catch { /* treat as speech */ }
         }
 
-        // Accumulate speculative text across blocks (reset when FINAL arrives)
+        // Seed speculative accumulation from confirmed text if starting fresh,
+        // so the preview includes everything said so far.
+        if (!session.accumulatedSpeculativeText && session.accumulatedAssistantText) {
+          session.accumulatedSpeculativeText = session.accumulatedAssistantText;
+        }
         session.accumulatedSpeculativeText = session.accumulatedSpeculativeText
           ? session.accumulatedSpeculativeText + " " + text
           : text;
 
-        // Preview = confirmed FINAL text + accumulated speculative text
-        const previewText = session.accumulatedAssistantText
-          ? session.accumulatedAssistantText + " " + session.accumulatedSpeculativeText
-          : session.accumulatedSpeculativeText;
+        const previewText = session.accumulatedSpeculativeText;
 
         // Create/update the grey transcript bubble BEFORE audio plays
         session.context.emit(makeEvent("tool.call", session.sessionId, {
@@ -795,25 +796,26 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           }
         }
 
-        // FINAL confirms text — reset speculative accumulation since it's now canonical.
-        session.accumulatedSpeculativeText = "";
-
         // Accumulate sentences — the full message is only finalized when audio ends.
         session.accumulatedAssistantText = session.accumulatedAssistantText
           ? session.accumulatedAssistantText + " " + text
           : text;
 
-        // Emit a growing partial message so the UI shows one expanding bubble.
-        session.context.emit(makeEvent("tool.call", session.sessionId, {
-          callId: crypto.randomUUID(),
-          name: "convo.appendMessage",
-          arguments: JSON.stringify({
-            role: "assistant",
-            text: session.accumulatedAssistantText,
-            isPartial: true,
-            liveResponseId: this.ensureLiveResponseId(session),
-          }),
-        }));
+        // Only emit a bubble update if speculative text isn't already showing
+        // a longer preview — otherwise the bubble would regress to just the
+        // confirmed text, losing the read-ahead the user already saw.
+        if (!session.accumulatedSpeculativeText) {
+          session.context.emit(makeEvent("tool.call", session.sessionId, {
+            callId: crypto.randomUUID(),
+            name: "convo.appendMessage",
+            arguments: JSON.stringify({
+              role: "assistant",
+              text: session.accumulatedAssistantText,
+              isPartial: true,
+              liveResponseId: this.ensureLiveResponseId(session),
+            }),
+          }));
+        }
       }
 
       if (info.role === "ASSISTANT" && info.type === "AUDIO" && !session.bargedIn) {

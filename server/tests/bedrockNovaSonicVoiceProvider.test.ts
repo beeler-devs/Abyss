@@ -1478,12 +1478,11 @@ test("speculative contentEnd emits convo.appendMessage ahead of audio", async (t
 
   await waitForTicks();
 
-  // FINAL should also emit convo.appendMessage with the same liveResponseId
+  // FINAL should NOT emit a new convo.appendMessage — speculative preview is already ahead.
+  // The bubble should stay at the speculative text, not regress.
   const allAppends = findToolCalls(harness.emitted, "convo.appendMessage");
-  const finalAppend = allAppends[allAppends.length - 1];
-  assertAssistantAppend(finalAppend, { text: "Hello world", isPartial: true });
-  const finalLiveId = JSON.parse(String(finalAppend.payload.arguments)).liveResponseId;
-  assert.equal(finalLiveId, specLiveId, "FINAL and SPECULATIVE should share the same liveResponseId");
+  assert.equal(allAppends.length, specAppends.length, "FINAL should not emit when speculative is ahead");
+  assertAssistantAppend(allAppends[allAppends.length - 1], { text: "Hello world", isPartial: true });
 });
 
 test("multiple speculative blocks accumulate before FINAL arrives", async (t) => {
@@ -1531,7 +1530,8 @@ test("multiple speculative blocks accumulate before FINAL arrives", async (t) =>
   const appendsAfterSecond = findToolCalls(harness.emitted, "convo.appendMessage");
   assertAssistantAppend(appendsAfterSecond[appendsAfterSecond.length - 1], { text: "Hello world. How are you?", isPartial: true });
 
-  // Now FINAL arrives — should reset speculative and use FINAL accumulation
+  // Now FINAL arrives — should NOT regress the bubble; speculative preview is ahead
+  const appendCountBeforeFinal = findToolCalls(harness.emitted, "convo.appendMessage").length;
   harness.client.emitEvent({
     contentStart: {
       contentId: "final-a",
@@ -1547,7 +1547,9 @@ test("multiple speculative blocks accumulate before FINAL arrives", async (t) =>
   await waitForTicks();
 
   const appendsAfterFinal = findToolCalls(harness.emitted, "convo.appendMessage");
-  assertAssistantAppend(appendsAfterFinal[appendsAfterFinal.length - 1], { text: "Hello world.", isPartial: true });
+  assert.equal(appendsAfterFinal.length, appendCountBeforeFinal, "FINAL should not emit when speculative is ahead");
+  // Last bubble still shows the full speculative preview
+  assertAssistantAppend(appendsAfterFinal[appendsAfterFinal.length - 1], { text: "Hello world. How are you?", isPartial: true });
 });
 
 test("speculative preview includes accumulated text from prior FINAL sentences", async (t) => {
