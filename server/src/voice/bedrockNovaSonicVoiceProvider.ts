@@ -508,6 +508,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
     this.finalizeAccumulatedAssistantText(session);
 
+    // Clear tracked content entries so late-arriving FINAL contentEnd events
+    // cannot create a duplicate grey message with a new liveResponseId.
+    session.contents.clear();
+
     if (options.emitIdle) {
       session.context.emit(makeEvent("tool.call", session.sessionId, {
         callId: crypto.randomUUID(),
@@ -917,7 +921,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     // Finalize any accumulated text as a completed (white) message before
     // clearing state. iOS removePartialMessage() only deletes partial messages,
     // so a finalized message survives the subsequent interrupted event.
-    this.finalizeAccumulatedAssistantText(session);
+    const didFinalize = this.finalizeAccumulatedAssistantText(session);
 
     this.resetAssistantTurnState(session);
     session.bargedIn = true;
@@ -925,7 +929,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if (liveResponseId) {
       session.context.emit(makeEvent("assistant.audio.interrupted", session.sessionId, {
         reason,
-        liveResponseId,
+        // Omit liveResponseId when text was finalized to prevent iOS from
+        // deleting the just-finalized message via removePartialMessage race.
+        ...(didFinalize ? {} : { liveResponseId }),
       }));
     }
     this.emitListeningState(session);

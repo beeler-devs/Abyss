@@ -939,7 +939,8 @@ test("nova-sonic interrupt drops stale events on same stream and accepts fresh r
   assert.equal(harness.client.sendCallCount, 1); // Same stream, no restart
 
   const interruptedEvent = eventsOfType(harness.emitted, "assistant.audio.interrupted")[0];
-  assert.equal(interruptedEvent?.payload.liveResponseId, firstPartial.liveResponseId);
+  // liveResponseId is omitted when text was finalized during barge-in
+  assert.equal(interruptedEvent?.payload.liveResponseId, undefined);
 
   // Barge-in finalizes the interrupted text (1 assistant.speech.final from the barge-in)
   assert.equal(eventsOfType(harness.emitted, "assistant.speech.final").length, 1);
@@ -1734,7 +1735,8 @@ test("barge-in finalizes assistant text before clearing state", async (t) => {
   // Interrupted event should still be emitted
   const interrupted = harness.emitted.filter((e) => e.type === "assistant.audio.interrupted");
   assert.equal(interrupted.length, 1);
-  assert.equal(interrupted[0].payload.liveResponseId, specLiveId);
+  // liveResponseId is omitted when text was finalized during barge-in
+  assert.equal(interrupted[0].payload.liveResponseId, undefined);
 
   // Finalization should come BEFORE the interrupted event
   const finalizeIdx = harness.emitted.indexOf(finalizedAppends[0]);
@@ -1797,6 +1799,127 @@ test("user speech finalizes prior speculative-only assistant message", async (t)
   const finalizeIdx = appends.indexOf(assistantFinals[0]);
   const userIdx = appends.indexOf(userAppends[0]);
   assert.ok(finalizeIdx < userIdx, "assistant finalization must precede user message");
+});
+
+test("late FINAL contentEnd after completionEnd does not create duplicate grey message", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  // SPECULATIVE text
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "spec-dup-1",
+      completionId: "comp-dup",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "SPECULATIVE" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "spec-dup-1", content: "Hello world." } });
+  harness.client.emitEvent({ contentEnd: { contentId: "spec-dup-1", type: "TEXT", stopReason: "END_TURN" } });
+
+  // FINAL text — contentStart and textOutput arrive, but contentEnd is delayed
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "final-dup-1",
+      completionId: "comp-dup",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "final-dup-1", content: "Hello world." } });
+
+  await waitForTicks();
+
+  // completionEnd arrives BEFORE the FINAL contentEnd
+  harness.client.emitEvent({
+    completionEnd: {
+      completionId: "comp-dup",
+      stopReason: "END_TURN",
+    },
+  });
+
+  await waitForTicks();
+
+  // Late FINAL contentEnd — should be a no-op (contents cleared)
+  harness.client.emitEvent({
+    contentEnd: {
+      contentId: "final-dup-1",
+      type: "TEXT",
+      stopReason: "END_TURN",
+    },
+  });
+
+  await waitForTicks();
+
+  const allAppends = findToolCalls(harness.emitted, "convo.appendMessage");
+  const finalizedAppends = allAppends.filter((e) => {
+    const args = JSON.parse(String(e.payload.arguments));
+    return args.isPartial === false && args.role === "assistant";
+  });
+  assert.equal(finalizedAppends.length, 1, "should have exactly one finalized assistant message");
+
+  // No partial messages after the finalized one
+  const finalIdx = allAppends.indexOf(finalizedAppends[0]);
+  const partialsAfterFinal = allAppends.slice(finalIdx + 1).filter((e) => {
+    const args = JSON.parse(String(e.payload.arguments));
+    return args.role === "assistant";
+  });
+  assert.equal(partialsAfterFinal.length, 0, "no assistant messages should appear after finalization");
+});
+
+test("barge-in without accumulated text includes liveResponseId in interrupted event", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  // Only audio, no text
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "audio-only-1",
+      completionId: "comp-audio-only",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
+    audioOutput: {
+      contentId: "audio-only-1",
+      content: "AAAA",
+    },
+  });
+
+  await waitForTicks();
+
+  const audioChunks = eventsOfType(harness.emitted, "assistant.audio.chunk");
+  assert.ok(audioChunks.length >= 1);
+  const audioLiveId = audioChunks[0].payload.liveResponseId;
+  assert.equal(typeof audioLiveId, "string");
+
+  // Barge-in with no accumulated text
+  harness.client.emitEvent({
+    completionEnd: {
+      completionId: "comp-audio-only",
+      stopReason: "BARGE_IN",
+    },
+  });
+
+  await waitForTicks();
+
+  const interrupted = eventsOfType(harness.emitted, "assistant.audio.interrupted");
+  assert.equal(interrupted.length, 1);
+  // liveResponseId SHOULD be present since no text was finalized
+  assert.equal(interrupted[0].payload.liveResponseId, audioLiveId);
 });
 
 function createHarness(options?: {
