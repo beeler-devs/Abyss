@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
 
-        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: url) {
             NSApplication.shared.applicationIconImage = icon
         }
