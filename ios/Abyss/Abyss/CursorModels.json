@@ -1,0 +1,24 @@
+{
+  "models": [
+    {
+      "displayName": "Default",
+      "modelId": "composer-1.5"
+    },
+    {
+      "displayName": "Composer 1.5",
+      "modelId": "composer-1.5"
+    },
+    {
+      "displayName": "GPT 5.3 Codex",
+      "modelId": "gpt-5.3-codex"
+    },
+    {
+      "displayName": "GPT 5.4",
+      "modelId": "gpt-5.4"
+    },
+    {
+      "displayName": "Opus 4.6",
+      "modelId": "claude-opus-4-6"
+    }
+  ]
+}

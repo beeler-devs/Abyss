@@ -8,9 +8,14 @@ final class ConversationCalendarManager: ObservableObject {
 
     private let eventBus: EventBus
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
+    private var lastAssistantMessageID: UUID?
 
     init(eventBus: EventBus) {
         self.eventBus = eventBus
+    }
+
+    func updateLastAssistantMessageID(_ id: UUID) {
+        lastAssistantMessageID = id
     }
 
     func handleEventStream(_ event: Event) {
@@ -59,7 +64,9 @@ final class ConversationCalendarManager: ObservableObject {
                 description: event.description,
                 attendees: event.attendees,
                 htmlLink: event.htmlLink,
-                isAllDay: event.isAllDay
+                isAllDay: event.isAllDay,
+                anchorMessageID: lastAssistantMessageID,
+                serverCardId: event.cardId
             ))
         }
     }
@@ -68,6 +75,7 @@ final class ConversationCalendarManager: ObservableObject {
         guard let event = try? JSONDecoder().decode(CalendarEventPayload.self, from: data) else { return }
         if let index = calendarCards.firstIndex(where: { $0.eventId == event.eventId }) {
             calendarCards[index].isExpanded = true
+            if let cardId = event.cardId { calendarCards[index].serverCardId = cardId }
         } else {
             calendarCards.append(CalendarEventCard(
                 eventId: event.eventId,
@@ -79,7 +87,9 @@ final class ConversationCalendarManager: ObservableObject {
                 attendees: event.attendees,
                 htmlLink: event.htmlLink,
                 isAllDay: event.isAllDay,
-                isExpanded: true
+                isExpanded: true,
+                anchorMessageID: lastAssistantMessageID,
+                serverCardId: event.cardId
             ))
         }
     }
@@ -101,9 +111,10 @@ private struct CalendarEventPayload: Decodable {
     let attendees: [String]
     let htmlLink: String?
     let isAllDay: Bool
+    let cardId: String?
 
     private enum CodingKeys: String, CodingKey {
-        case eventId, summary, start, end, location, description, attendees, htmlLink, isAllDay
+        case eventId, summary, start, end, location, description, attendees, htmlLink, isAllDay, cardId
     }
 
     init(from decoder: Decoder) throws {
@@ -117,5 +128,6 @@ private struct CalendarEventPayload: Decodable {
         attendees = (try? container.decode([String].self, forKey: .attendees)) ?? []
         htmlLink = try container.decodeIfPresent(String.self, forKey: .htmlLink)
         isAllDay = (try? container.decode(Bool.self, forKey: .isAllDay)) ?? false
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId)
     }
 }

@@ -41,6 +41,7 @@ struct ContentView: View {
                     if let vm = viewModel {
                         ChatContentView(
                             viewModel: vm,
+                            showSettings: $showSettings,
                             showEventTimeline: $showEventTimeline,
                             isTypingMode: $isTypingMode,
                             typedMessage: $typedMessage
@@ -55,6 +56,15 @@ struct ContentView: View {
                         }
                     } else {
                         emptyState
+                            .sheet(isPresented: $showSettings) {
+                                SettingsView(
+                                    pairedBridgeDevices: [],
+                                    bridgePairingMessage: nil,
+                                    onPairComputer: nil,
+                                    onSetWorkspaceOverride: nil,
+                                    bridgeAutoReconnect: .constant(true)
+                                )
+                            }
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)
@@ -78,12 +88,7 @@ struct ContentView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         HStack(spacing: 16) {
                             if let vm = viewModel {
-                                Button {
-                                    vm.toggleTTSMute()
-                                } label: {
-                                    Image(systemName: vm.isTTSMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
-                                }
+                                TTSMuteButton(viewModel: vm)
                             }
                             Button {
                                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -97,28 +102,6 @@ struct ContentView: View {
                     }
                 }
             }
-            .sheet(isPresented: $showSettings) {
-                if let vm = viewModel {
-                    SettingsView(
-                        pairedBridgeDevices: vm.pairedBridgeDevices,
-                        bridgePairingMessage: vm.bridgePairingMessage,
-                        onPairComputer: { code, deviceName in
-                            vm.requestBridgePairing(pairingCode: code, deviceName: deviceName)
-                        },
-                        onSetWorkspaceOverride: { deviceId, path in
-                            vm.setWorkspaceOverride(deviceId: deviceId, path: path)
-                        }
-                    )
-                } else {
-                    SettingsView(
-                        pairedBridgeDevices: [],
-                        bridgePairingMessage: nil,
-                        onPairComputer: nil,
-                        onSetWorkspaceOverride: nil
-                    )
-                }
-            }
-
             // Dimming overlay when sidebar is open
             Color.black
                 .opacity(showSidebar ? 0.35 : 0)
@@ -226,8 +209,9 @@ private struct ChatSidebarPanel: View {
                     chatList.createChat()
                 } label: {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(.primary)
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                        .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
+                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                 }
             }
             .padding(.horizontal, 20)
@@ -271,8 +255,8 @@ private struct ChatSidebarPanel: View {
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "gearshape.fill")
-                        .font(.system(size: 16))
-                        .frame(width: 28, height: 28)
+                        .font(.system(size: AppTheme.sidebarIconSize))
+                        .frame(width: AppTheme.sidebarIconFrame, height: AppTheme.sidebarIconFrame)
                         .foregroundStyle(.secondary)
                     Text("Settings")
                         .font(.body)
@@ -285,10 +269,7 @@ private struct ChatSidebarPanel: View {
             .buttonStyle(.plain)
             .padding(.bottom, 16)
         }
-        .background(
-            (colorScheme == .dark ? Color(white: 0.1) : Color(white: 0.97))
-                .ignoresSafeArea()
-        )
+        .sidebarGlassBackground(colorScheme: colorScheme)
         .ignoresSafeArea(edges: .vertical)
     }
 }
@@ -306,21 +287,21 @@ private struct ChatRowButton: View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
                 Image(systemName: "bubble.left")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isSelected ? .white : .secondary)
-                    .frame(width: 22)
+                    .font(.system(size: AppTheme.sidebarIconSize))
+                    .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .secondary)
+                    .frame(width: AppTheme.sidebarIconFrame)
                 Text(chat.title)
                     .font(.body)
                     .lineLimit(1)
-                    .foregroundStyle(isSelected ? .white : .primary)
+                    .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .primary)
                 Spacer()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(isSelected
-                          ? Color.accentColor
+                          ? AppTheme.sidebarSelectedRow(for: colorScheme)
                           : Color.clear)
             )
             .padding(.horizontal, 10)
@@ -339,6 +320,7 @@ private struct ChatRowButton: View {
 /// Chat content view that observes ConversationViewModel so UI updates propagate.
 private struct ChatContentView: View {
     @ObservedObject var viewModel: ConversationViewModel
+    @Binding var showSettings: Bool
     @Binding var showEventTimeline: Bool
     @Binding var isTypingMode: Bool
     @Binding var typedMessage: String
@@ -399,7 +381,9 @@ private struct ChatContentView: View {
                 onConfirmCalendar: { viewModel.confirmCalendarAction(callId: $0) },
                 onCancelCalendar: { viewModel.cancelCalendarAction(callId: $0) },
                 canvasCards: viewModel.canvasCards,
-                onToggleCanvasExpanded: { viewModel.toggleCanvasCardExpanded(cardID: $0) }
+                onToggleCanvasExpanded: { viewModel.toggleCanvasCardExpanded(cardID: $0) },
+                bridgeExecCards: viewModel.bridgeExecCards,
+                onToggleBridgeExecExpanded: { viewModel.toggleBridgeExecExpanded(cardID: $0) }
             )
 
             // Repository selection card (takes priority)
@@ -475,6 +459,35 @@ private struct ChatContentView: View {
             Button("OK") { viewModel.showError = false }
         } message: {
             Text(viewModel.errorMessage ?? "An unknown error occurred.")
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(
+                pairedBridgeDevices: viewModel.pairedBridgeDevices,
+                bridgePairingMessage: viewModel.bridgePairingMessage,
+                onPairComputer: { code, deviceName in
+                    viewModel.requestBridgePairing(pairingCode: code, deviceName: deviceName)
+                },
+                onSetWorkspaceOverride: { deviceId, path in
+                    viewModel.setWorkspaceOverride(deviceId: deviceId, path: path)
+                },
+                bridgeAutoReconnect: $viewModel.bridgeAutoReconnect
+            )
+        }
+    }
+}
+
+/// Isolated subview so `@ObservedObject` subscription is scoped to the view model,
+/// ensuring the icon re-renders when `isTTSMuted` changes.
+private struct TTSMuteButton: View {
+    @ObservedObject var viewModel: ConversationViewModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button {
+            viewModel.toggleTTSMute()
+        } label: {
+            Image(systemName: viewModel.isTTSMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
         }
     }
 }

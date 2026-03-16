@@ -17,7 +17,8 @@ let package = Package(
             name: "BridgeCore",
             dependencies: [
                 .product(name: "SwiftProtocol", package: "swift-protocol"),
-            ]
+            ],
+            resources: [.copy("Resources")]
         ),
         .testTarget(
             name: "BridgeCoreTests",

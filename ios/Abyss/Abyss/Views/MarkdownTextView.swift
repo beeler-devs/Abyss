@@ -7,6 +7,7 @@ import UIKit
 struct MarkdownTextView: View {
     let text: String
     var foregroundColor: Color = .primary
+    var cardResolver: ((String, String) -> AnyView?)?
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -21,6 +22,14 @@ struct MarkdownTextView: View {
                     CodeBlockView(language: language, code: code)
                 case .list(let items, let ordered):
                     renderList(items, ordered: ordered)
+                case .cardReference(let type, let id):
+                    if let resolved = cardResolver?(type, id) {
+                        resolved
+                    } else {
+                        CardPlaceholderView(state: .unresolved(type: type))
+                    }
+                case .cardPlaceholder(let partialInfo):
+                    CardPlaceholderView(state: CardPlaceholderView.placeholderState(from: partialInfo))
                 }
             }
         }
@@ -77,6 +86,8 @@ struct MarkdownTextView: View {
         case text(String)
         case codeBlock(language: String?, code: String)
         case list(items: [String], ordered: Bool)
+        case cardReference(type: String, id: String)
+        case cardPlaceholder(partialInfo: String)
     }
 
     static func parse(_ text: String) -> [Block] {
@@ -96,20 +107,35 @@ struct MarkdownTextView: View {
                 }
 
                 let lang = String(line.dropFirst(3)).trimmingCharacters(in: .whitespaces)
-                let language: String? = lang.isEmpty ? nil : lang
-                var codeLines: [String] = []
-                i += 1
 
-                // Collect until closing ```
-                while i < lines.count && !lines[i].hasPrefix("```") {
-                    codeLines.append(lines[i])
+                // Card reference: ```card:TYPE:CARD_ID
+                if lang.hasPrefix("card:") {
+                    let parts = lang.split(separator: ":", maxSplits: 2)
+                    if parts.count == 3 {
+                        blocks.append(.cardReference(type: String(parts[1]), id: String(parts[2])))
+                    } else {
+                        blocks.append(.cardPlaceholder(partialInfo: lang))
+                    }
+                    // Skip lines until closing ```
                     i += 1
-                }
-                // Skip the closing ``` if found
-                if i < lines.count { i += 1 }
+                    while i < lines.count && !lines[i].hasPrefix("```") { i += 1 }
+                    if i < lines.count { i += 1 }
+                } else {
+                    let language: String? = lang.isEmpty ? nil : lang
+                    var codeLines: [String] = []
+                    i += 1
 
-                let code = codeLines.joined(separator: "\n")
-                blocks.append(.codeBlock(language: language, code: code))
+                    // Collect until closing ```
+                    while i < lines.count && !lines[i].hasPrefix("```") {
+                        codeLines.append(lines[i])
+                        i += 1
+                    }
+                    // Skip the closing ``` if found
+                    if i < lines.count { i += 1 }
+
+                    let code = codeLines.joined(separator: "\n")
+                    blocks.append(.codeBlock(language: language, code: code))
+                }
             } else if let item = unorderedListItem(from: line) {
                 // Flush accumulated text
                 if !currentText.isEmpty {

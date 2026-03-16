@@ -152,6 +152,7 @@ public struct BridgeCapabilities: Codable, Sendable {
     public var gitCommit: Bool
     public var gitPush: Bool
     public var claudeRun: Bool
+    public var novaAct: Bool
 
     public init(
         execRun: Bool = true,
@@ -168,7 +169,8 @@ public struct BridgeCapabilities: Codable, Sendable {
         gitStage: Bool = true,
         gitCommit: Bool = true,
         gitPush: Bool = true,
-        claudeRun: Bool = true
+        claudeRun: Bool = true,
+        novaAct: Bool = true
     ) {
         self.execRun = execRun
         self.readFile = readFile
@@ -185,6 +187,7 @@ public struct BridgeCapabilities: Codable, Sendable {
         self.gitCommit = gitCommit
         self.gitPush = gitPush
         self.claudeRun = claudeRun
+        self.novaAct = novaAct
     }
 }
 
@@ -607,5 +610,67 @@ public struct BridgeClaudeRunResult: Codable, Sendable {
     public init(result: String, sessionId: String? = nil) {
         self.result = result
         self.sessionId = sessionId
+    }
+}
+
+// MARK: - Nova Act
+
+public struct BridgeNovaStartArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let url: String
+    public let headless: Bool?
+    public let userDataDir: String?
+
+    public init(deviceId: String? = nil, url: String, headless: Bool? = nil, userDataDir: String? = nil) {
+        self.deviceId = deviceId
+        self.url = url
+        self.headless = headless
+        self.userDataDir = userDataDir
+    }
+}
+
+public struct BridgeNovaStartResult: Codable, Sendable {
+    public let started: Bool
+
+    public init(started: Bool) {
+        self.started = started
+    }
+}
+
+public struct BridgeNovaActArguments: Codable, Sendable {
+    public let deviceId: String?
+    public let instruction: String
+    public let schema: String?
+
+    public init(deviceId: String? = nil, instruction: String, schema: String? = nil) {
+        self.deviceId = deviceId
+        self.instruction = instruction
+        self.schema = schema
+    }
+}
+
+public struct BridgeNovaActResult: Codable, Sendable {
+    public let result: String
+    public let success: Bool
+
+    public init(result: String, success: Bool) {
+        self.result = result
+        self.success = success
+    }
+}
+
+public struct BridgeNovaStopArguments: Codable, Sendable {
+    public let deviceId: String?
+
+    public init(deviceId: String? = nil) {
+        self.deviceId = deviceId
+    }
+}
+
+public struct BridgeNovaStopResult: Codable, Sendable {
+    public let stopped: Bool
+
+    public init(stopped: Bool) {
+        self.stopped = stopped
     }
 }

@@ -17,13 +17,13 @@ struct StateIndicator: View {
         }
     }
 
-    private var label: String {
+    private var label: String? {
         if isMuted { return "Muted" }
         switch state {
         case .idle: return "Ready"
         case .listening: return "Listening..."
         case .transcribing: return "Transcribing..."
-        case .thinking: return "Typing..."
+        case .thinking: return nil // uses ThinkingIndicatorView instead
         case .speaking: return "Speaking..."
         case .error: return "Error"
         }
@@ -48,9 +48,13 @@ struct StateIndicator: View {
                 .foregroundStyle(color)
                 .symbolEffect(.pulse, isActive: !isMuted && (state == .listening || state == .thinking))
 
-            Text(label)
-                .font(.subheadline)
-                .foregroundStyle(color)
+            if let label {
+                Text(label)
+                    .font(.subheadline)
+                    .foregroundStyle(color)
+            } else if state == .thinking {
+                ThinkingIndicatorView(font: .subheadline, baseColor: color)
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)

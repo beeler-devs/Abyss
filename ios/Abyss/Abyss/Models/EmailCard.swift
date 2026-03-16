@@ -11,6 +11,7 @@ struct EmailCard: Identifiable, Equatable, Sendable {
     var body: String?
     var isExpanded: Bool
     var anchorMessageID: UUID?
+    var serverCardId: String?
 
     init(
         id: UUID = UUID(),
@@ -22,7 +23,8 @@ struct EmailCard: Identifiable, Equatable, Sendable {
         snippet: String,
         body: String? = nil,
         isExpanded: Bool = false,
-        anchorMessageID: UUID? = nil
+        anchorMessageID: UUID? = nil,
+        serverCardId: String? = nil
     ) {
         self.id = id
         self.messageId = messageId
@@ -34,5 +36,6 @@ struct EmailCard: Identifiable, Equatable, Sendable {
         self.body = body
         self.isExpanded = isExpanded
         self.anchorMessageID = anchorMessageID
+        self.serverCardId = serverCardId
     }
 }

@@ -453,6 +453,46 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
       required: ["prompt"],
     },
   },
+  {
+    name: "bridge.nova.start",
+    description:
+      "Start a persistent Nova Act browser session on a paired Mac. Opens Chrome at the given URL. Session persists across subsequent bridge.nova.act calls.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        url: { type: "string", description: "The URL to open Chrome at." },
+        headless: { type: "boolean", description: "Run Chrome headless (default true)." },
+        userDataDir: { type: "string", description: "Optional Chrome user data directory for persistent profiles." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "bridge.nova.act",
+    description:
+      "Execute a natural-language browser instruction in the active Nova Act session. Optionally extract structured data with a JSON schema.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        instruction: { type: "string", description: "Natural-language instruction for the browser (e.g. 'Click the Sign In button')." },
+        schema: { type: "string", description: "Optional JSON schema string for structured data extraction from the page." },
+      },
+      required: ["instruction"],
+    },
+  },
+  {
+    name: "bridge.nova.stop",
+    description:
+      "Close the active Nova Act browser session.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+      },
+    },
+  },
 ];
 
 const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
@@ -1021,7 +1061,14 @@ export class ConductorService {
 
 
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
-        logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
+        const integrations: string[] = [];
+        if (session.githubToken) integrations.push("github");
+        if (session.gmailAccessToken) integrations.push("gmail");
+        if (session.canvasAccessToken) integrations.push("canvas");
+        if (session.userPreferences && Object.keys(session.userPreferences).length > 0) {
+          integrations.push(`prefs(${Object.keys(session.userPreferences).join(",")})`);
+        }
+        logger.info(`session started integrations=[${integrations.join(", ")}]`, { sessionId: event.sessionId, eventId: event.id });
         return;
       }
 
@@ -1032,8 +1079,11 @@ export class ConductorService {
             code: "invalid_transcript",
             message: "user.audio.transcript.final must include payload.text",
           }));
+          logger.warn("empty transcript.final received", { sessionId: event.sessionId, eventId: event.id });
           return;
         }
+
+        logger.info(`transcript.final: "${text}"`, { sessionId: event.sessionId, eventId: event.id });
 
         // Hydrate memory on first turn of session
         if (!session.memoryHydrated && session.memoryUserKey && this.memoryService) {
@@ -1055,6 +1105,7 @@ export class ConductorService {
           }
         }
 
+
         await this.runConductorLoop(session, text, emit, event.id);
         this.trySummarizeHistory(session);
         return;
@@ -1068,8 +1119,11 @@ export class ConductorService {
         if (callId) {
           const pending = session.pendingToolCalls.get(callId);
           session.pendingToolCalls.delete(callId);
+          const resultSnippet = resultPayload ? ` result=${summarizeValueForLog(resultPayload, 120)}` : "";
           logger.info(
-            errorText ? `tool.result error: ${errorText}` : "tool.result ok",
+            errorText
+              ? `tool.result error tool=${pending?.toolName ?? "?"} error=${errorText}`
+              : `tool.result ok tool=${pending?.toolName ?? "?"}${resultSnippet}`,
             {
               sessionId: session.sessionId,
               eventId: event.id,
@@ -1091,6 +1145,7 @@ export class ConductorService {
 
           const resolver = session.toolResultResolvers.get(callId);
           if (resolver) {
+            logger.info(`tool.result resolver found for callId=${callId} tool=${pending?.toolName ?? "?"}`, { sessionId: session.sessionId, callId });
             resolver(resultPayload ?? null, errorText ?? null);
           }
         }
@@ -1297,6 +1352,106 @@ export class ConductorService {
       && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
   }
 
+  /** Returns true for server-side tools whose results should also be emitted
+   *  to the iOS client so card managers can render inline cards. */
+  private shouldEmitServerToolToClient(toolName: string): boolean {
+    return toolName.startsWith("canvas.") ||
+      toolName.startsWith("gmail.") ||
+      toolName.startsWith("calendar.");
+  }
+
+  /**
+   * Determines the card type for a tool name, or null if the tool doesn't
+   * produce cards suitable for inline rendering.
+   */
+  private static cardTypeForTool(toolName: string): { type: string; mode: "array" | "single" } | null {
+    const map: Record<string, { type: string; mode: "array" | "single" }> = {
+      "gmail.inbox":            { type: "email",    mode: "array" },
+      "gmail.search":           { type: "email",    mode: "array" },
+      "gmail.read":             { type: "email",    mode: "single" },
+      "calendar.list":          { type: "calendar",  mode: "array" },
+      "calendar.get":           { type: "calendar",  mode: "single" },
+      "canvas.courses":         { type: "canvas",   mode: "array" },
+      "canvas.assignments":     { type: "canvas",   mode: "array" },
+      "canvas.todo":            { type: "canvas",   mode: "array" },
+      "canvas.grades":          { type: "canvas",   mode: "array" },
+      "canvas.announcements":   { type: "canvas",   mode: "array" },
+    };
+    return map[toolName] ?? null;
+  }
+
+  /**
+   * Enriches a tool result JSON with stable cardId fields so the LLM can
+   * reference cards inline via ```card:TYPE:ID``` fenced blocks, and iOS
+   * card managers can match cards to those IDs.
+   */
+  private enrichResultWithCardIds(
+    toolName: string,
+    resultJson: string,
+  ): { enrichedResult: string; cardSummary: string } | null {
+    const info = ConductorService.cardTypeForTool(toolName);
+    if (!info) return null;
+
+    try {
+      const parsed = JSON.parse(resultJson);
+      const cardRefs: string[] = [];
+
+      if (info.mode === "array") {
+        // Array results: the top-level value may be an array directly,
+        // or wrapped in an object with a known key (e.g. { messages: [...] }, { events: [...] }).
+        const arr = Array.isArray(parsed)
+          ? parsed
+          : (parsed.messages ?? parsed.events ?? parsed.items ?? null);
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            if (typeof item === "object" && item !== null) {
+              const id = crypto.randomUUID();
+              item.cardId = id;
+              cardRefs.push("```card:" + info.type + ":" + id + "\n```");
+            }
+          }
+        }
+      } else {
+        // Single-item result
+        if (typeof parsed === "object" && parsed !== null) {
+          const id = crypto.randomUUID();
+          parsed.cardId = id;
+          cardRefs.push("```card:" + info.type + ":" + id + "\n```");
+        }
+      }
+
+      if (cardRefs.length === 0) return null;
+
+      const enrichedResult = JSON.stringify(parsed);
+      const cardSummary =
+        "\n\n[Cards rendered to user. Reference each inline:\n" +
+        cardRefs.join("\n") +
+        "\n]";
+
+      return { enrichedResult, cardSummary };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Appends card reference fenced blocks for any cards the LLM failed to
+   * reference inline, ensuring iOS always receives card refs in the final text.
+   */
+  private injectMissingCardReferences(
+    responseText: string,
+    pendingCardRefs: Array<{type: string, id: string}>,
+  ): string {
+    if (pendingCardRefs.length === 0) return responseText;
+    const existingIds = new Set<string>();
+    const re = /```card:\w+:([0-9a-f-]+)\s*\n?```/g;
+    let m;
+    while ((m = re.exec(responseText)) !== null) existingIds.add(m[1]);
+    const missing = pendingCardRefs.filter(r => !existingIds.has(r.id));
+    if (missing.length === 0) return responseText;
+    return responseText + "\n" + missing.map(r => "```card:" + r.type + ":" + r.id + "\n```").join("\n");
+  }
+
   /**
    * Build the conversation array for the LLM, prepending the history summary
    * as context if one exists.
@@ -1355,6 +1510,12 @@ export class ConductorService {
     session.transcriptCount += 1;
     session.recentTranscriptTrace = [];
 
+    const transcriptPreview = transcript.length > 200 ? transcript.slice(0, 200) + "…" : transcript;
+    logger.info(`conductor.loop.start turn=${session.transcriptCount} historyLen=${session.history.length} text="${transcriptPreview}"`, {
+      sessionId: session.sessionId,
+      eventId: sourceEventId,
+    });
+
     const tracePush = (value: string): void => {
       this.sessions.recordTrace(session, value);
     };
@@ -1405,6 +1566,7 @@ export class ConductorService {
     const MAX_TOOL_ROUNDS = 8;
     let toolRound = 0;
     let emittedFinalResponse = false;
+    const pendingCardRefs: Array<{type: string, id: string}> = [];
     const deterministicBridgeToolCall = this.routeDeterministicBridgeIntent(transcript);
 
     while (toolRound < MAX_TOOL_ROUNDS) {
@@ -1419,7 +1581,20 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId), session.userPreferences, session.canvasCourseContext);
+          const conversation = this.buildConversation(session);
+          const tools = this.availableTools(session.sessionId);
+          logger.info(`conductor.llm.call round=${toolRound} conversationTurns=${conversation.length} toolCount=${tools.length}`, {
+            sessionId: session.sessionId,
+            eventId: sourceEventId,
+          });
+          const llmStartMs = Date.now();
+          modelResponse = await this.provider.generateResponse(conversation, tools, session.userPreferences, session.canvasCourseContext);
+          const hasToolCalls = modelResponse.toolCalls && modelResponse.toolCalls.length > 0;
+          const hasText = modelResponse.fullText.trim().length > 0;
+          logger.info(
+            `conductor.llm.response round=${toolRound} durationMs=${Date.now() - llmStartMs} toolCalls=${modelResponse.toolCalls?.length ?? 0} hasText=${hasText}${hasToolCalls ? ` tools=[${modelResponse.toolCalls!.map(tc => tc.name).join(", ")}]` : ""}`,
+            { sessionId: session.sessionId, eventId: sourceEventId },
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {
@@ -1446,11 +1621,8 @@ export class ConductorService {
 
           if (this.shouldExecuteServerTool(toolCall.name)) {
             tracePush(`tool.server:${toolCall.name}`);
-            const dispatchPreview = this.verboseToolRoutingLogs
-              ? ` args=${summarizeArgsForLog(toolCall.input)}`
-              : "";
             logger.info(
-              `tool.server.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}${dispatchPreview}`,
+              `tool.server.dispatch tool=${toolCall.name} round=${toolRound} call=${callId} args=${summarizeArgsForLog(toolCall.input)}`,
               {
                 sessionId: session.sessionId,
                 eventId: sourceEventId,
@@ -1466,11 +1638,11 @@ export class ConductorService {
               emit,
             );
             const outcome = execution.error ? "error" : "ok";
-            const errorPreview = execution.error && this.verboseToolRoutingLogs
+            const resultPreview = execution.error
               ? ` error=${summarizeValueForLog(execution.error)}`
-              : "";
+              : ` result=${summarizeValueForLog(execution.result, 120)}`;
             logger.info(
-              `tool.server.result tool=${toolCall.name} outcome=${outcome} durationMs=${Date.now() - startedAtMs}${errorPreview}`,
+              `tool.server.result tool=${toolCall.name} outcome=${outcome} durationMs=${Date.now() - startedAtMs}${resultPreview}`,
               {
                 sessionId: session.sessionId,
                 eventId: sourceEventId,
@@ -1478,12 +1650,51 @@ export class ConductorService {
               },
             );
 
+            // Enrich tool results with stable card IDs for inline card references
+            const rawResult = execution.error ? null : (execution.result ?? "{}");
+            const enrichment = rawResult ? this.enrichResultWithCardIds(toolCall.name, rawResult) : null;
+            if (enrichment) {
+              // Collect card refs for post-response injection
+              try {
+                const info = ConductorService.cardTypeForTool(toolCall.name);
+                if (info) {
+                  const parsed = JSON.parse(enrichment.enrichedResult);
+                  const items = info.mode === "array"
+                    ? (Array.isArray(parsed) ? parsed : (parsed.messages ?? parsed.events ?? parsed.items ?? []))
+                    : [parsed];
+                  for (const item of items) {
+                    if (item?.cardId) pendingCardRefs.push({ type: info.type, id: item.cardId });
+                  }
+                }
+              } catch { /* ignore parse errors */ }
+            }
+            const resultForLLM = enrichment
+              ? enrichment.enrichedResult + enrichment.cardSummary
+              : (execution.error ? `Error: ${execution.error}` : rawResult!);
+
             this.sessions.appendTurn(session, {
               role: "tool",
-              content: execution.error ? `Error: ${execution.error}` : execution.result ?? "{}",
+              content: resultForLLM,
               tool_use_id: toolCall.id,
               tool_name: toolCall.name,
             });
+
+            // Emit tool.call + tool.result to iOS for tools with card representations
+            // so ConversationCanvasManager / ConversationEmailManager / ConversationCalendarManager
+            // can create inline cards from the results.
+            if (this.shouldEmitServerToolToClient(toolCall.name)) {
+              emit(makeEvent("tool.call", session.sessionId, {
+                callId,
+                name: toolCall.name,
+                arguments: JSON.stringify(toolCall.input),
+              }));
+              emit(makeEvent("tool.result", session.sessionId, {
+                callId,
+                result: enrichment ? enrichment.enrichedResult : (execution.error ? null : rawResult!),
+                error: execution.error ?? null,
+              }));
+            }
+
             continue;
           }
 
@@ -1502,14 +1713,15 @@ export class ConductorService {
 
           emit(envelope);
           tracePush(`tool.call:${toolCall.name}`);
-          logger.info(`tool.client.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}`, {
+          logger.info(`tool.client.dispatch tool=${toolCall.name} round=${toolRound} call=${callId} args=${summarizeArgsForLog(toolCall.input)}`, {
             sessionId: session.sessionId,
             eventId: sourceEventId,
             callId,
           });
 
+          const clientToolStartMs = Date.now();
           const { result, error } = await waitForToolResult(session, callId, 30_000);
-          logger.info(`tool.client.result tool=${toolCall.name} outcome=${error ? "error" : "ok"}`, {
+          logger.info(`tool.client.result tool=${toolCall.name} outcome=${error ? "error" : "ok"} durationMs=${Date.now() - clientToolStartMs}${error ? ` error=${error}` : ""}`, {
             sessionId: session.sessionId,
             eventId: sourceEventId,
             callId,
@@ -1527,8 +1739,10 @@ export class ConductorService {
       }
 
       let responseText = "";
+      let chunkCount = 0;
       for await (const chunk of modelResponse.chunks) {
         responseText += chunk;
+        chunkCount += 1;
         emit(makeEvent("assistant.speech.partial", session.sessionId, { text: responseText }));
         tracePush("assistant.speech.partial");
       }
@@ -1538,10 +1752,12 @@ export class ConductorService {
       }
 
       responseText = responseText.trim();
+      responseText = this.injectMissingCardReferences(responseText, pendingCardRefs);
 
+      const cardRefCount = (responseText.match(/```card:\w+:[0-9a-f-]+/g) || []).length;
       emit(makeEvent("assistant.speech.final", session.sessionId, { text: responseText }));
       tracePush("assistant.speech.final");
-      logger.info(`assistant.speech.final: "${responseText.length > 160 ? responseText.slice(0, 160) + "…" : responseText}"`, {
+      logger.info(`assistant.speech.final chunks=${chunkCount} len=${responseText.length} cardRefs=${cardRefCount} pendingCards=${pendingCardRefs.length}: "${responseText.length > 200 ? responseText.slice(0, 200) + "…" : responseText}"`, {
         sessionId: session.sessionId,
         eventId: sourceEventId,
       });
@@ -1567,10 +1783,10 @@ export class ConductorService {
     if (!emittedFinalResponse) {
       emit(makeEvent("error", session.sessionId, {
         code: "tool_round_limit_exceeded",
-        message: "Conductor reached max tool rounds without a final response.",
+        message: `Conductor reached max tool rounds (${MAX_TOOL_ROUNDS}) without a final response. The LLM kept calling tools without producing a text reply.`,
       }));
       emitToolCall("convo.setState", { state: "idle" });
-      logger.warn("tool round limit exceeded", {
+      logger.warn(`tool round limit exceeded: ${toolRound}/${MAX_TOOL_ROUNDS} rounds exhausted. trace=[${session.recentTranscriptTrace.join(" -> ")}]`, {
         sessionId: session.sessionId,
         eventId: sourceEventId,
       });
@@ -1670,6 +1886,34 @@ export class ConductorService {
         return {
           result: null,
           error: "cursor_server_not_configured: CURSOR_API_KEY is not configured. Fall back to legacy agent.* tools.",
+        };
+      }
+    }
+
+    // Hard guard: reject cursor/agent spawn for email, calendar, or canvas tasks.
+    // The LLM sometimes ignores system prompt instructions and routes these requests
+    // to cursor.agent.spawn, which can't handle them. Return an actionable error.
+    if (toolName === "cursor.agent.spawn" || toolName === "agent.spawn") {
+      const tools = this.availableTools(session.sessionId);
+      const toolNames = new Set(tools.map((t) => t.name));
+      const prompt = (stringFromRecord(args, "prompt") ?? "").toLowerCase();
+
+      if (toolNames.has("gmail.send") && /\b(email|e-mail|gmail|mail|send.*to|compose|draft)\b/i.test(prompt)) {
+        return {
+          result: null,
+          error: "wrong_tool: Use gmail.send or gmail.reply for email tasks, not cursor.agent.spawn. The Gmail tools are available.",
+        };
+      }
+      if (toolNames.has("calendar.create") && /\b(calendar|schedule|meeting|event|appointment)\b/i.test(prompt)) {
+        return {
+          result: null,
+          error: "wrong_tool: Use calendar.* tools for scheduling tasks, not cursor.agent.spawn. The Calendar tools are available.",
+        };
+      }
+      if (toolNames.has("canvas.courses") && /\b(canvas|course|assignment|grade|syllabus|class)\b/i.test(prompt)) {
+        return {
+          result: null,
+          error: "wrong_tool: Use canvas.* tools for coursework tasks, not cursor.agent.spawn. The Canvas tools are available.",
         };
       }
     }
@@ -1961,6 +2205,45 @@ export class ConductorService {
           }, emit);
         }
 
+        case "bridge.nova.start": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 60_000,
+          }, emit);
+        }
+
+        case "bridge.nova.act": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 120_000,
+          }, emit);
+        }
+
+        case "bridge.nova.stop": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 15_000,
+          }, emit);
+        }
+
         case "gmail.inbox": {
           if (!this.gmailClient) {
             return { result: null, error: "gmail_not_configured" };
@@ -2023,10 +2306,12 @@ export class ConductorService {
             toolArguments: { to, cc, subject, body },
           });
           emit(confirmEnvelope);
+          logger.info(`gmail.send waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           // Wait for user confirmation (120s timeout — user needs time to read)
           const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
           if (confirmError || !confirmResult) {
+            logger.warn(`gmail.send confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
             return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
           }
 
@@ -2037,6 +2322,8 @@ export class ConductorService {
           } catch {
             return { result: null, error: "gmail_send_invalid_confirmation" };
           }
+
+          logger.info(`gmail.send confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           if (!confirmed) {
             return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
@@ -2072,9 +2359,11 @@ export class ConductorService {
             toolArguments: { messageId, body, to, cc },
           });
           emit(confirmEnvelope);
+          logger.info(`gmail.reply waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
           if (confirmError || !confirmResult) {
+            logger.warn(`gmail.reply confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
             return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
           }
 
@@ -2085,6 +2374,8 @@ export class ConductorService {
           } catch {
             return { result: null, error: "gmail_reply_invalid_confirmation" };
           }
+
+          logger.info(`gmail.reply confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           if (!confirmed) {
             return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };

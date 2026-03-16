@@ -28,7 +28,7 @@ struct CanvasAuthenticateTool: Tool, @unchecked Sendable {
 
         return Result(
             authenticated: false,
-            message: "Canvas is not connected. Please go to Settings → Connections → Canvas to enter your personal access token."
+            message: "Canvas is not connected. The user has been directed to Settings → Connections → Canvas to enter their personal access token. Do NOT call canvas.authenticate again — wait for the user to complete setup and ask again later."
         )
     }
 }

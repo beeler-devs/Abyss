@@ -25,6 +25,8 @@ public actor BridgeCore {
     private var callbacksInstalled = false
     private var hasRipgrep: Bool?
     private var claudeStreamStates: [String: ClaudeCLIStreamState] = [:]
+    private var novaActManager: NovaActSessionManager?
+    private var lastPairingErrorLogged: Date?
 
     private let envelopeEncoder: JSONEncoder
     private let envelopeDecoder: JSONDecoder
@@ -170,6 +172,8 @@ public actor BridgeCore {
         state = .disconnected
         paired = false
         activeCommand = nil
+        await novaActManager?.forceKill()
+        novaActManager = nil
         await emitStatus()
     }
 
@@ -202,6 +206,7 @@ public actor BridgeCore {
                 }
 
                 state = .connected
+                await emitLog("[connection] WebSocket connected to \(config.serverURL.absoluteString)")
                 await emitStatus()
 
                 try await sendRegisterIfPossible()
@@ -273,7 +278,10 @@ public actor BridgeCore {
 
     private func sendRegisterIfPossible() async throws {
         guard state == .connected else { return }
-        guard let pairingCode = config.pairingCode, !pairingCode.isEmpty else { return }
+        guard let pairingCode = config.pairingCode, !pairingCode.isEmpty else {
+            await emitLog("[pairing] skipping registration: no pairing code set")
+            return
+        }
 
         let payload = BridgeRegisterPayload(
             pairingCode: pairingCode,
@@ -285,6 +293,7 @@ public actor BridgeCore {
             protocolVersion: AbyssProtocol.version
         )
 
+        await emitLog("[pairing] sending bridge.register with code \(pairingCode)")
         try await sendEvent(type: "bridge.register", sessionId: config.deviceId, payload: payload)
     }
 
@@ -306,13 +315,26 @@ public actor BridgeCore {
 
         switch envelope.type {
         case "bridge.registered":
+            await emitLog("[pairing] registered successfully — paired=true")
             paired = true
+            lastPairingErrorLogged = nil
             await emitStatus()
         case "error":
-            if let payload: [String: String] = try? decodePayloadObject(from: envelope.payload),
-               payload["code"] == "pairing_code_invalid_or_expired" {
-                paired = false
-                await emitStatus()
+            if let payload: [String: String] = try? decodePayloadObject(from: envelope.payload) {
+                let code = payload["code"] ?? "unknown"
+                let message = payload["message"] ?? ""
+                await emitLog("[error] code=\(code) message=\(message)")
+                if code == "pairing_code_invalid_or_expired" {
+                    if paired {
+                        paired = false
+                        await emitStatus()
+                    }
+                    let now = Date()
+                    if lastPairingErrorLogged == nil || now.timeIntervalSince(lastPairingErrorLogged!) > 30 {
+                        await emitLog("[pairing] code not found on server, waiting for iOS to re-register...")
+                        lastPairingErrorLogged = now
+                    }
+                }
             }
         case "tool.call":
             // Fire-and-forget so the receive loop isn't blocked during long-running tools
@@ -532,6 +554,52 @@ public actor BridgeCore {
 
                 let resultString = firstNonEmptyString([parsed?.result, claudeOutput]) ?? ""
                 resultText = encodeJSONString(BridgeClaudeRunResult(result: resultString, sessionId: parsed?.sessionId))
+
+            case "bridge.nova.start":
+                guard config.permissions.allowNovaAct else {
+                    throw BridgeCoreError.permissionDenied("novaAct disabled")
+                }
+                let novaAlreadyActive = await novaActManager?.isActive ?? false
+                guard novaActManager == nil || !novaAlreadyActive else {
+                    throw BridgeCoreError.internalError("Nova Act session already active")
+                }
+                let args = try decodeArguments(BridgeNovaStartArguments.self, json: payload.arguments)
+
+                let scriptPath: String
+                if let bundledScript = Bundle.module.url(forResource: "nova_act_bridge", withExtension: "py", subdirectory: "Resources") {
+                    scriptPath = bundledScript.path
+                } else {
+                    throw BridgeCoreError.internalError("nova_act_bridge.py not found in bundle")
+                }
+
+                let manager = NovaActSessionManager()
+                try await manager.start(
+                    url: args.url,
+                    headless: args.headless ?? true,
+                    userDataDir: args.userDataDir,
+                    scriptPath: scriptPath
+                )
+                novaActManager = manager
+                resultText = encodeJSONString(BridgeNovaStartResult(started: true))
+
+            case "bridge.nova.act":
+                guard config.permissions.allowNovaAct else {
+                    throw BridgeCoreError.permissionDenied("novaAct disabled")
+                }
+                let novaActActive = await novaActManager?.isActive ?? false
+                guard let manager = novaActManager, novaActActive else {
+                    throw BridgeCoreError.internalError("No active Nova Act session. Call bridge.nova.start first.")
+                }
+                let args = try decodeArguments(BridgeNovaActArguments.self, json: payload.arguments)
+                let actResult = try await manager.act(instruction: args.instruction, schema: args.schema)
+                resultText = encodeJSONString(BridgeNovaActResult(result: actResult, success: true))
+
+            case "bridge.nova.stop":
+                if let manager = novaActManager {
+                    let _ = try await manager.stop()
+                    novaActManager = nil
+                }
+                resultText = encodeJSONString(BridgeNovaStopResult(stopped: true))
 
             default:
                 throw BridgeCoreError.unsupportedTool(payload.name)

@@ -20,6 +20,7 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
     let spawnCallId: String
 
     var anchorMessageID: UUID?
+    var serverCardId: String?
     var agentId: String?
     var title: String
     var repository: String?

@@ -8,6 +8,7 @@ struct PairedBridgeDevice: Codable, Identifiable, Equatable {
     let lastSeen: String?
     let workspaceRoot: String?
     let workspaceOverride: String?
+    let pairingCode: String?
 
     var id: String { deviceId }
 }
@@ -28,6 +29,7 @@ final class ConversationEventCoordinator: ObservableObject {
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
     private var cancellables: Set<AnyCancellable> = []
+    private var pendingPairingCode: String?
     private var activeLiveResponseId: String?
     private var assistantPartialSpeechResponseId: String?
     private var invalidatedLiveResponseIds: Set<String> = []
@@ -78,6 +80,8 @@ final class ConversationEventCoordinator: ObservableObject {
             return
         }
 
+        self.pendingPairingCode = normalizedCode
+        AppLogger.conductor.info("Bridge pairing: sending request with code \(normalizedCode, privacy: .public)")
         bridgePairingMessage = "Sending pairing request…"
         let event = Event.bridgePairRequest(
             code: normalizedCode,
@@ -88,6 +92,19 @@ final class ConversationEventCoordinator: ObservableObject {
 
         Task {
             await sendConductorEvent(event, true)
+        }
+    }
+
+    func reRegisterPairedBridgeCodes() {
+        for device in pairedBridgeDevices {
+            guard let code = device.pairingCode, !code.isEmpty else { continue }
+            AppLogger.conductor.info("Bridge auto-reconnect: re-registering code for \(device.deviceName, privacy: .public)")
+            let event = Event.bridgePairRequest(
+                code: code,
+                deviceName: device.deviceName,
+                sessionId: sessionId
+            )
+            Task { await sendConductorEvent(event, true) }
         }
     }
 
@@ -167,6 +184,28 @@ final class ConversationEventCoordinator: ObservableObject {
                 return
             }
 
+            // Confirmation tools (gmail.send.confirm, calendar.create.confirm, etc.)
+            // are dispatched locally on iOS — they show draft cards and await user input.
+            let isConfirmTool = toolCall.name.hasSuffix(".confirm")
+
+            // Server-side tools (canvas/gmail/calendar) are executed on the server.
+            // The server sends tool.call + tool.result events so card managers can
+            // render inline cards. Do NOT dispatch these locally — there are no iOS
+            // tools registered for them, and dispatching would emit an error result
+            // that poisons the card manager's pending-call tracking.
+            if !isConfirmTool &&
+               (toolCall.name.hasPrefix("canvas.") ||
+                toolCall.name.hasPrefix("gmail.") ||
+                toolCall.name.hasPrefix("calendar.")) {
+                AppLogger.tooling.debug("Skipping local dispatch for server-side tool: \(toolCall.name, privacy: .public)")
+                eventBus.emit(event)
+                return
+            }
+
+            if isConfirmTool {
+                AppLogger.tooling.info("Dispatching confirm tool locally: \(toolCall.name, privacy: .public) callId=\(toolCall.callId, privacy: .public)")
+            }
+
             if audioPipeline.isHandsFreeLiveConversationMode,
                toolCall.name == ConvoAppendMessageTool.name,
                let arguments = decode(ConvoAppendMessageTool.Arguments.self, from: toolCall.arguments),
@@ -202,10 +241,12 @@ final class ConversationEventCoordinator: ObservableObject {
             }
 
         case .bridgePairPending(let pending):
-            bridgePairingMessage = "Pairing code \(pending.pairingCode) accepted."
+            AppLogger.conductor.info("Bridge pairing: code \(pending.pairingCode, privacy: .public) accepted by server, waiting for bridge to register…")
+            bridgePairingMessage = "Pairing code \(pending.pairingCode) accepted — waiting for bridge…"
             eventBus.emit(event)
 
         case .bridgePaired(let paired):
+            AppLogger.conductor.info("Bridge pairing: paired with \(paired.deviceName, privacy: .public) (deviceId=\(paired.deviceId, privacy: .public), status=\(paired.status, privacy: .public))")
             bridgePairingMessage = "Paired with \(paired.deviceName)."
             let existingOverride = pairedBridgeDevices
                 .first(where: { $0.deviceId == paired.deviceId })?.workspaceOverride
@@ -215,14 +256,17 @@ final class ConversationEventCoordinator: ObservableObject {
                 status: paired.status,
                 lastSeen: nil,
                 workspaceRoot: paired.workspaceRoot,
-                workspaceOverride: existingOverride
+                workspaceOverride: existingOverride,
+                pairingCode: pendingPairingCode
             )
+            pendingPairingCode = nil
             if let override = existingOverride, !override.isEmpty {
                 sendWorkspaceSet(deviceId: paired.deviceId, path: override)
             }
             eventBus.emit(event)
 
         case .bridgeStatus(let status):
+            AppLogger.conductor.info("Bridge status: deviceId=\(status.deviceId, privacy: .public) status=\(status.status, privacy: .public)")
             let existing = pairedBridgeDevices.first(where: { $0.deviceId == status.deviceId })
             upsertPairedBridgeDevice(
                 deviceId: status.deviceId,
@@ -242,6 +286,10 @@ final class ConversationEventCoordinator: ObservableObject {
             eventBus.emit(event)
 
         case .error(let error):
+            AppLogger.conductor.error("Inbound error: code=\(error.code, privacy: .public) message=\(error.message, privacy: .public)")
+            if error.code.hasPrefix("bridge") || error.code.contains("pairing") {
+                bridgePairingMessage = "Error: \(error.message)"
+            }
             eventBus.emit(event)
             if audioPipeline.isHandsFreeLiveConversationMode,
                error.code == "voice_provider_failed" {
@@ -288,7 +336,8 @@ final class ConversationEventCoordinator: ObservableObject {
                 status: "offline",
                 lastSeen: device.lastSeen,
                 workspaceRoot: device.workspaceRoot,
-                workspaceOverride: device.workspaceOverride
+                workspaceOverride: device.workspaceOverride,
+                pairingCode: device.pairingCode
             )
         }
 
@@ -312,7 +361,8 @@ final class ConversationEventCoordinator: ObservableObject {
             status: existing.status,
             lastSeen: existing.lastSeen,
             workspaceRoot: existing.workspaceRoot,
-            workspaceOverride: newOverride
+            workspaceOverride: newOverride,
+            pairingCode: existing.pairingCode
         )
         if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {
             pairedBridgeDevices[index] = updated
@@ -334,7 +384,8 @@ final class ConversationEventCoordinator: ObservableObject {
         status: String,
         lastSeen: String?,
         workspaceRoot: String? = nil,
-        workspaceOverride: String? = nil
+        workspaceOverride: String? = nil,
+        pairingCode: String? = nil
     ) {
         let existing = pairedBridgeDevices.first(where: { $0.deviceId == deviceId })
         let updated = PairedBridgeDevice(
@@ -343,7 +394,8 @@ final class ConversationEventCoordinator: ObservableObject {
             status: status,
             lastSeen: lastSeen ?? existing?.lastSeen,
             workspaceRoot: workspaceRoot ?? existing?.workspaceRoot,
-            workspaceOverride: workspaceOverride ?? existing?.workspaceOverride
+            workspaceOverride: workspaceOverride ?? existing?.workspaceOverride,
+            pairingCode: pairingCode ?? existing?.pairingCode
         )
 
         if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {

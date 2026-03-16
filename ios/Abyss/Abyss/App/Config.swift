@@ -52,7 +52,9 @@ enum Config {
 
     /// ElevenLabs API key, loaded from Secrets.plist or environment.
     static var elevenLabsAPIKey: String? {
-        valueFromSecretsPlist("ELEVENLABS_API_KEY")
+        valueFromSecretsPlist("ELEVEN_LABS_API_KEY")
+            ?? valueFromSecretsPlist("ELEVENLABS_API_KEY")
+            ?? valueFromEnvironment("ELEVEN_LABS_API_KEY")
             ?? valueFromEnvironment("ELEVENLABS_API_KEY")
     }
 

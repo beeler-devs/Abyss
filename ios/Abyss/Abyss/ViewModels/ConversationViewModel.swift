@@ -18,11 +18,15 @@ final class ConversationViewModel: ObservableObject {
     @Published var calendarEventCards: [CalendarEventCard] = []
     @Published var calendarDraftCards: [CalendarDraftCard] = []
     @Published var canvasCards: [CanvasCard] = []
+    @Published var bridgeExecCards: [BridgeExecCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
     @Published var isTTSMuted: Bool = UserDefaults.standard.bool(forKey: "isTTSMuted") {
         didSet { UserDefaults.standard.set(isTTSMuted, forKey: "isTTSMuted") }
+    }
+    @Published var bridgeAutoReconnect: Bool = UserDefaults.standard.object(forKey: "bridgeAutoReconnect") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(bridgeAutoReconnect, forKey: "bridgeAutoReconnect") }
     }
     @Published var isPTTHeld: Bool = false
     @Published var isTTSSpeaking: Bool = false
@@ -68,6 +72,7 @@ final class ConversationViewModel: ObservableObject {
     private var emailManager: ConversationEmailManager!
     private var calendarManager: ConversationCalendarManager!
     private var canvasCardManager: ConversationCanvasManager!
+    private var bridgeExecManager: ConversationBridgeExecManager!
     private let emailDraftManager = EmailDraftManager()
     private let calendarDraftManager = CalendarDraftManager()
     let preferencesStore = UserPreferencesStore()
@@ -255,6 +260,21 @@ final class ConversationViewModel: ObservableObject {
                 await self.configureConductorClient(forceReconnect: true)
             }
         ))
+
+        // When the user authenticates Gmail in Settings (outside the tool flow),
+        // reconnect the WebSocket so the server receives the new tokens.
+        manager.$isAuthenticated
+            .dropFirst()
+            .removeDuplicates()
+            .filter { $0 == true }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                Task {
+                    await self.configureConductorClient(forceReconnect: true)
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func setCanvasManager(_ manager: CanvasManager) {
@@ -267,6 +287,21 @@ final class ConversationViewModel: ObservableObject {
                 await self.configureConductorClient(forceReconnect: true)
             }
         ))
+
+        // When the user connects Canvas in Settings, reconnect the WebSocket
+        // so the server receives the new token and exposes real Canvas tools.
+        manager.$isConnected
+            .dropFirst()
+            .removeDuplicates()
+            .filter { $0 == true }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                Task {
+                    await self.configureConductorClient(forceReconnect: true)
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func toggleEmailCardExpanded(cardID: UUID) {
@@ -295,6 +330,10 @@ final class ConversationViewModel: ObservableObject {
 
     func toggleCanvasCardExpanded(cardID: UUID) {
         canvasCardManager.toggleExpanded(cardId: cardID)
+    }
+
+    func toggleBridgeExecExpanded(cardID: UUID) {
+        bridgeExecManager.toggleExpanded(cardID: cardID)
     }
 
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
@@ -352,6 +391,7 @@ final class ConversationViewModel: ObservableObject {
             toolRouter: toolRouter,
             appStateStore: appStateStore,
             sessionId: sessionId,
+            isTTSMuted: { [weak self] in self?.isTTSMuted ?? false },
             sendConductorEvent: { [weak self] event, surfaceErrors in
                 await self?.sendEventToConductor(event, surfaceErrors: surfaceErrors)
             },
@@ -381,6 +421,7 @@ final class ConversationViewModel: ObservableObject {
         emailManager = ConversationEmailManager(eventBus: eventBus)
         calendarManager = ConversationCalendarManager(eventBus: eventBus)
         canvasCardManager = ConversationCanvasManager(eventBus: eventBus)
+        bridgeExecManager = ConversationBridgeExecManager()
 
         eventCoordinator = ConversationEventCoordinator(
             conversationStore: conversationStore,
@@ -403,6 +444,12 @@ final class ConversationViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
+                if let lastAssistant = self.messages.last(where: { $0.role == .assistant }) {
+                    self.bridgeExecManager.updateLastAssistantMessageID(lastAssistant.id)
+                    self.emailManager.updateLastAssistantMessageID(lastAssistant.id)
+                    self.calendarManager.updateLastAssistantMessageID(lastAssistant.id)
+                    self.canvasCardManager.updateLastAssistantMessageID(lastAssistant.id)
+                }
             }
             .store(in: &cancellables)
 
@@ -413,6 +460,7 @@ final class ConversationViewModel: ObservableObject {
                 self?.emailManager.handleEventStream(event)
                 self?.calendarManager.handleEventStream(event)
                 self?.canvasCardManager.handleEventStream(event)
+                self?.bridgeExecManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -463,6 +511,10 @@ final class ConversationViewModel: ObservableObject {
         canvasCardManager.$canvasCards
             .receive(on: RunLoop.main)
             .assign(to: &$canvasCards)
+
+        bridgeExecManager.$cards
+            .receive(on: RunLoop.main)
+            .assign(to: &$bridgeExecCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)
@@ -582,6 +634,9 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func connectConductorClient(_ client: ConductorClient) async throws {
+        // Refresh Gmail token on-device before connecting (server can't refresh iOS OAuth tokens)
+        await gmailAuthManager?.refreshTokenIfNeeded()
+
         let githubToken = GitHubAuthManager.loadToken()
         let gmailAccessToken = GmailAuthManager.loadAccessToken()
         let gmailRefreshToken = GmailAuthManager.loadRefreshToken()
@@ -589,6 +644,16 @@ final class ConversationViewModel: ObservableObject {
         let canvasAccessToken = CanvasManager.loadAccessToken()
         let canvasBaseURL = CanvasManager.loadBaseURL()
         let prefs = preferencesStore.getAll()
+
+        let overrides: [Event.BridgeWorkspaceOverride]? = {
+            let devices = eventCoordinator.pairedBridgeDevices
+            let result = devices.compactMap { device -> Event.BridgeWorkspaceOverride? in
+                guard let path = device.workspaceOverride else { return nil }
+                return Event.BridgeWorkspaceOverride(deviceId: device.deviceId, workspacePath: path)
+            }
+            return result.isEmpty ? nil : result
+        }()
+
         try await client.connect(
             sessionId: sessionId,
             githubToken: githubToken,
@@ -598,8 +663,13 @@ final class ConversationViewModel: ObservableObject {
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
             preferences: prefs.isEmpty ? nil : prefs,
-            memoryUserKey: Self.memoryUserKey
+            memoryUserKey: Self.memoryUserKey,
+            bridgeWorkspaceOverrides: overrides
         )
+
+        if bridgeAutoReconnect {
+            eventCoordinator.reRegisterPairedBridgeCodes()
+        }
 
         inboundEventsTask?.cancel()
         inboundEventsTask = Task { [weak self] in

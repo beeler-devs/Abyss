@@ -66,6 +66,19 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`, `web.search`) execute directly on the server and return results to the LLM
 7. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
+### Inline Card Rendering
+When server-side tools (gmail.*, calendar.*, canvas.*) return results, `ConductorService.enrichResultWithCardIds()` injects a `cardId` (UUID) into each item in the JSON. The enriched result is sent to both iOS (for card managers) and the LLM (with a card summary instruction). The LLM references cards inline in its response via `` ```card:TYPE:CARD_ID``` `` fenced blocks. On iOS, `MarkdownTextView` parses these as `.cardReference` blocks and resolves them via `TranscriptView.resolveCard()` to render actual card views inline in the prose. Cards rendered inline are excluded from the anchored/unanchored card sections to avoid duplication. During streaming, unresolved card references show a `CardPlaceholderView` with shimmer animation.
+
+**Card types:** `email`, `calendar`, `canvas` (with future support for `agent`, `bridge`)
+
+**Files:**
+- `server/src/core/conductorService.ts` — `enrichResultWithCardIds()`, `cardTypeForTool()`
+- `ios/.../Views/MarkdownTextView.swift` — `Block.cardReference`/`.cardPlaceholder` cases, `cardResolver` closure
+- `ios/.../Views/CardPlaceholderView.swift` — Placeholder with generic/typed/unresolved states
+- `ios/.../Views/TranscriptView.swift` — `resolveCard()`, dedup logic in `transcriptItems`
+- All card models (`EmailCard`, `CalendarEventCard`, `CanvasCard`, `BridgeExecCard`, `AgentProgressCard`) — `serverCardId: String?`
+- Card managers (`ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`) — parse `cardId` from enriched JSON
+
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
 
@@ -107,6 +120,35 @@ Selected via `MODEL_PROVIDER` env var:
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
 
+**Auto-reconnect:** `PairedBridgeDevice` stores the `pairingCode` used during initial pairing. On every iOS WebSocket connect, `reRegisterPairedBridgeCodes()` re-sends `bridge.pair.request` for each stored code, so the Mac bridge can re-register after a server restart without regenerating a pairing code. Controlled by `bridgeAutoReconnect` UserDefaults setting (default true), toggled in Settings > Bridge.
+
+**Mac toolbar status:** `connectionStateLabel` and `connectionDotColor` gate on both `connectionState` and `paired` — shows orange "Not Paired" when WebSocket is connected but pairing failed. Pairing error logs are debounced to once per 30 seconds via `lastPairingErrorLogged`.
+
+### Bridge Exec Cards (Streaming Output)
+When the LLM calls `bridge.exec.run`, `bridge.exec.start`, or `bridge.claude.run`, iOS shows a `BridgeExecCard` in the transcript with streaming terminal output. `ConversationBridgeExecManager` listens for `toolCall` → `toolResult` → `bridgeExecOutput` → `bridgeExecFinished` events and maintains card state. Cards display command text, a status pill (Running/Done/Failed), monospace output area (capped at ~100KB), and exit code + duration footer. Follows the same anchored-card pattern as agent/email/calendar/canvas cards.
+
+**Files:**
+- `ios/.../Models/BridgeExecCard.swift` — Card model with status enum, output accumulation
+- `ios/.../ViewModels/ConversationBridgeExecManager.swift` — Event→card state machine
+- `ios/.../Views/BridgeExecCardView.swift` — SwiftUI card with collapsed/expanded states
+
+### Nova Act Browser Automation
+Three bridge tools (`bridge.nova.start`, `bridge.nova.act`, `bridge.nova.stop`) manage a persistent Amazon Nova Act Python process on the macOS bridge. The Python process communicates via stdin/stdout JSON-RPC (one JSON object per line), keeping a Chrome browser session alive across multiple `act()` calls.
+
+**Flow:** LLM calls `bridge.nova.start` with a URL → bridge spawns Python process → NovaAct opens Chrome. LLM calls `bridge.nova.act` with a natural-language instruction → bridge writes JSON to Python stdin → NovaAct executes → JSON result on stdout. LLM calls `bridge.nova.stop` → Python exits, Chrome closes.
+
+**Permission:** Gated by `BridgePermissions.allowNovaAct` (default false). Toggle in AbyssBridge GUI. `BridgeCapabilities.novaAct` field controls server-side tool availability.
+
+**Files:**
+- `mac/BridgeCore/Sources/BridgeCore/Resources/nova_act_bridge.py` — Python wrapper script
+- `mac/BridgeCore/Sources/BridgeCore/NovaActSessionManager.swift` — Swift actor managing Python process lifecycle
+- `server/src/core/conductorService.ts` — Tool definitions + dispatch (timeouts: start 60s, act 120s, stop 15s)
+
+**Prerequisites on Mac:** `python3 -m pip install nova-act`, `NOVA_ACT_API_KEY` env var set, Chrome installed.
+
+### Workspace Overrides in session.start
+When the iOS app connects or reconnects, `connectConductorClient` gathers any workspace overrides from `eventCoordinator.pairedBridgeDevices` and includes them as `bridgeWorkspaceOverrides` in the `session.start` payload. The server iterates these and forwards each as `bridge.workspace.set` to the paired bridge device, ensuring workspace state survives iOS app restarts.
+
 ### iOS UI Architecture
 
 #### Key iOS Files
@@ -137,7 +179,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 **Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`. Canvas tool results render as `CanvasCardView` cards in the transcript via `ConversationCanvasManager` (same pattern as Calendar). Cards use a unified `CanvasCard` model with variant enum (`.course`, `.assignment`, `.todo`, `.grade`, `.announcement`). At session start, the server pre-fetches courses via `canvasClient.courses()` and stores a summary in `session.canvasCourseContext`, which is injected into the system prompt for ambient awareness.
 
-**Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use iOS confirmation card pattern via `EmailDraftManager`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in.
+**Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use iOS confirmation card pattern via `EmailDraftManager`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in. **Settings auth reconnect:** `ConversationViewModel.setGmailAuthManager()` subscribes to `gmailAuthManager.$isAuthenticated` — when the user authenticates Gmail in Settings (outside the tool flow), the WebSocket automatically reconnects with fresh tokens.
 
 **Web Search Integration:** Server-side `SearchClient` (`server/src/integrations/searchClient.ts`) wraps the Brave Search API. Provides 1 tool: `web.search(query, maxResults?)`. Available when `SEARCH_API_KEY` env var is set. Results include title, URL, and snippet (truncated to 300 chars). No iOS-side config needed.
 
@@ -151,7 +193,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 - Shared state uses `@StateObject` in `AbyssApp` + `@EnvironmentObject` in child views
 - Theming via `AppTheme` static methods that take `colorScheme` parameter
 - `@AppStorage` for persisted preferences: `appAppearance`, `recordingMode`, `voiceMode`, `cursorAPIKey`, `cursorAgentModel`, `elevenLabsVoiceId`. **Gotcha:** `@AppStorage` on `ObservableObject` does NOT fire `objectWillChange` — SwiftUI views won't re-render. Use `@Published` with manual `UserDefaults` sync in `didSet` instead (see `isTTSMuted` in `ConversationViewModel`).
-- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`, `RepositorySelectionManager`, `EmailDraftManager`, `CalendarDraftManager`, `InAppBrowserCoordinator`
+- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`, `ConversationBridgeExecManager`, `RepositorySelectionManager`, `EmailDraftManager`, `CalendarDraftManager`, `InAppBrowserCoordinator`
 - `@MainActor` isolation for all UI/state management; `@unchecked Sendable` for backward compat
 
 #### Xcode Project Gotcha
@@ -162,6 +204,9 @@ When adding new `.swift` files to the iOS project, they MUST be manually added t
 4. **PBXSourcesBuildPhase section** — add the `A1...` build file ref
 
 IDs follow the pattern `A1000000000000010000XXXX` (build) / `A2000000000000010000XXXX` (file ref), incrementing the last hex digits. Without this, Xcode won't compile the file and you'll get "Cannot find type in scope" errors.
+
+#### Transcript Item Ordering
+`TranscriptView` renders items via a `TranscriptItem` enum in a `LazyVStack`. For each assistant message: `.message` (bubble text) → anchored cards (agent, email, calendar, canvas) → `.messageActions` (copy/thumbs buttons). The `MessageActionsView` is a separate struct from `MessageBubble`, ensuring cards appear between message text and action buttons.
 
 #### Markdown Rendering
 Assistant messages rendered via `MarkdownTextView` → parses into `.text` (inline formatting) and `.codeBlock(language, code)` (terminal-style with copy button). User messages use plain `Text`.

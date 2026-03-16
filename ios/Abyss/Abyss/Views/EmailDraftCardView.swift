@@ -12,7 +12,11 @@ struct EmailDraftCardView: View {
             HStack {
                 Image(systemName: card.isReply ? "arrowshape.turn.up.left.fill" : "envelope.fill")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
+                    .foregroundStyle(AppTheme.CardCategory.email.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle().fill(AppTheme.cardIconBackground(category: .email, colorScheme: colorScheme))
+                    )
 
                 Text(card.isReply ? "Draft Reply" : "Draft Email")
                     .font(.subheadline.bold())
@@ -100,14 +104,7 @@ struct EmailDraftCardView: View {
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppTheme.agentCardBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
-        )
+        .cardBackground(category: .email, colorScheme: colorScheme)
     }
 
     @ViewBuilder

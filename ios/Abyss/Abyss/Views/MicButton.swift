@@ -124,13 +124,27 @@ struct MicButton: View {
             .accessibilityLabel(isRecording ? "Recording, release to send" : "Hold to speak")
     }
 
+    private var maxInputHeight: CGFloat { 120 }
+
     private var typingBar: some View {
-        HStack(spacing: UIConstants.actionBarSpacing) {
-            TextField("Type a message", text: $typedText)
-                .font(.body)
-                .textFieldStyle(.plain)
-                .submitLabel(.send)
-                .onSubmit(submitTypedText)
+        HStack(alignment: .bottom, spacing: UIConstants.actionBarSpacing) {
+            ZStack(alignment: .topLeading) {
+                if typedText.isEmpty {
+                    Text("Type a message")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
+
+                TextEditor(text: $typedText)
+                    .font(.body)
+                    .scrollContentBackground(.hidden)
+                    .background(.clear)
+                    .frame(minHeight: UIConstants.actionBarControlHeight - 16, maxHeight: maxInputHeight)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             if canSubmitText {
                 Button(action: submitTypedText) {
@@ -162,8 +176,9 @@ struct MicButton: View {
             }
         }
         .padding(.horizontal, UIConstants.actionBarPillHorizontalPadding)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity)
-        .frame(height: UIConstants.actionBarControlHeight)
+        .frame(minHeight: UIConstants.actionBarControlHeight)
         .glassButtonBackground(cornerRadius: UIConstants.actionBarControlHeight / 2, colorScheme: colorScheme)
         .simultaneousGesture(
             DragGesture(minimumDistance: 30)
