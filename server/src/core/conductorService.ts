@@ -2200,6 +2200,10 @@ export class ConductorService {
             }
           }
 
+          // Bridge exec results are shown via BridgeExecCard on iOS — never as inline cards
+          if (!bridgeResult.error && bridgeResult.result && (toolName === "bridge.exec.run" || toolName === "bridge.exec.start")) {
+            bridgeResult.result += "\n[Do NOT reference this as an inline card — the output is already displayed to the user.]";
+          }
           return bridgeResult;
         }
 
@@ -2229,13 +2233,17 @@ export class ConductorService {
 
           const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
           const claudeTimeoutMs = Math.max(1, Math.min(660, Math.trunc(claudeTimeoutRaw ?? 660))) * 1_000;
-          return await this.bridgeToolExecutor({
+          const claudeResult = await this.bridgeToolExecutor({
             callId,
             sessionId: session.sessionId,
             toolName,
             args: resolvedArgs,
             timeoutMs: claudeTimeoutMs,
           }, emit);
+          if (!claudeResult.error && claudeResult.result) {
+            claudeResult.result += "\n[Do NOT reference this as an inline card — the output is already displayed to the user.]";
+          }
+          return claudeResult;
         }
 
         case "bridge.nova.start": {
@@ -2349,7 +2357,7 @@ export class ConductorService {
           return {
             result: stableJSONStringify({
               status: "pending_confirmation",
-              message: "Email draft shown to user. They can edit fields and confirm or cancel. The email will be sent when they confirm.",
+              message: "Email draft shown to user for review. They can edit and confirm or cancel. Do NOT reference this as an inline card.",
             }),
             error: null,
           };
@@ -2391,7 +2399,7 @@ export class ConductorService {
           return {
             result: stableJSONStringify({
               status: "pending_confirmation",
-              message: "Reply draft shown to user. They can edit and confirm or cancel. The reply will be sent when they confirm.",
+              message: "Reply draft shown to user for review. They can edit and confirm or cancel. Do NOT reference this as an inline card.",
             }),
             error: null,
           };

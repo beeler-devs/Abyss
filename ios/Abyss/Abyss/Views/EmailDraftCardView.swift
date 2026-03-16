@@ -4,16 +4,18 @@ struct EmailDraftCardView: View {
     let card: EmailDraftCard
     let onSend: (String, String, String) -> Void  // (to, subject, body)
     let onCancel: () -> Void
+    let onFieldEdit: (String, String, String) -> Void  // (to, subject, body)
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var editTo: String
     @State private var editSubject: String
     @State private var editBody: String
 
-    init(card: EmailDraftCard, onSend: @escaping (String, String, String) -> Void, onCancel: @escaping () -> Void) {
+    init(card: EmailDraftCard, onSend: @escaping (String, String, String) -> Void, onCancel: @escaping () -> Void, onFieldEdit: @escaping (String, String, String) -> Void = { _, _, _ in }) {
         self.card = card
         self.onSend = onSend
         self.onCancel = onCancel
+        self.onFieldEdit = onFieldEdit
         _editTo = State(initialValue: card.to)
         _editSubject = State(initialValue: card.subject)
         _editBody = State(initialValue: card.body)
@@ -51,6 +53,7 @@ struct EmailDraftCardView: View {
                         .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
                         .textFieldStyle(.plain)
                         .lineLimit(1)
+                        .onChange(of: editTo) { _, newValue in onFieldEdit(newValue, editSubject, editBody) }
                 } else {
                     Text(card.to)
                         .font(.caption)
@@ -78,6 +81,7 @@ struct EmailDraftCardView: View {
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
                     .textFieldStyle(.plain)
+                    .onChange(of: editSubject) { _, newValue in onFieldEdit(editTo, newValue, editBody) }
             } else {
                 Text(card.subject)
                     .font(.subheadline.weight(.medium))
@@ -93,6 +97,7 @@ struct EmailDraftCardView: View {
                     .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 80, maxHeight: 200)
+                    .onChange(of: editBody) { _, newValue in onFieldEdit(editTo, editSubject, newValue) }
             } else {
                 ScrollView {
                     Text(card.body)

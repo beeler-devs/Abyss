@@ -34,6 +34,13 @@ final class EmailDraftManager: ObservableObject {
         return activeDrafts[index]
     }
 
+    func updateDraft(callId: String, to: String, subject: String, body: String) {
+        guard let index = activeDrafts.firstIndex(where: { $0.callId == callId }) else { return }
+        activeDrafts[index].to = to
+        activeDrafts[index].subject = subject
+        activeDrafts[index].body = body
+    }
+
     func cancelDraft(callId: String) {
         if let index = activeDrafts.firstIndex(where: { $0.callId == callId }) {
             activeDrafts[index].sendState = .cancelled

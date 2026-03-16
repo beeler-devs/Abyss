@@ -328,6 +328,10 @@ final class ConversationViewModel: ObservableObject {
         }
     }
 
+    func updateEmailDraft(callId: String, to: String, subject: String, body: String) {
+        emailDraftManager.updateDraft(callId: callId, to: to, subject: subject, body: body)
+    }
+
     func cancelEmailDraft(callId: String) {
         emailDraftManager.cancelDraft(callId: callId)
         let event = Event(
