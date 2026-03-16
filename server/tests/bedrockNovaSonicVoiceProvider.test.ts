@@ -1730,7 +1730,11 @@ test("barge-in finalizes assistant text before clearing state", async (t) => {
     return args.isPartial === false && args.role === "assistant";
   });
   assert.equal(finalizedAppends.length, 1, "should have exactly one finalized assistant message");
-  assertAssistantAppend(finalizedAppends[0], { text: "I was saying something.", isPartial: false });
+  const finalArgs = parseToolArguments(finalizedAppends[0]);
+  assert.equal(finalArgs.text, "I was saying something.");
+  assert.equal(finalArgs.isPartial, false);
+  // liveResponseId is omitted during barge-in finalization so iOS processes it
+  assert.equal(finalArgs.liveResponseId, undefined);
 
   // Interrupted event should still be emitted
   const interrupted = harness.emitted.filter((e) => e.type === "assistant.audio.interrupted");

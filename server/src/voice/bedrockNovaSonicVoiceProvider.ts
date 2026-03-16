@@ -65,6 +65,8 @@ interface SonicSession {
   restarting: boolean;
   streamGeneration: number;
   bargedIn: boolean;
+  /** Set after finishAssistantTurn to suppress late FINAL/SPECULATIVE events. Reset on new assistant contentStart. */
+  turnFinalized: boolean;
   /** Tracks consecutive failures per tool name for circuit-breaking. */
   toolFailureCounts: Map<string, number>;
 }
@@ -199,6 +201,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       restarting: false,
       streamGeneration: 0,
       bargedIn: false,
+      turnFinalized: false,
       toolFailureCounts: new Map(),
     };
     this.sessions.set(sessionId, session);
@@ -234,6 +237,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if (!session) {
       return;
     }
+    logger.info(`[INTERRUPT] called from iOS`, { sessionId });
     this.handleBargeIn(session, "user_interrupt");
   }
 
@@ -460,19 +464,25 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       || session.liveResponseId !== null;
   }
 
-  private finalizeAccumulatedAssistantText(session: SonicSession): boolean {
+  private finalizeAccumulatedAssistantText(
+    session: SonicSession,
+    options?: { omitLiveResponseId?: boolean },
+  ): boolean {
     // Use speculative text if it's more complete (FINAL may not have caught up yet).
     const finalText = session.accumulatedAssistantText.trim();
     const specText = session.accumulatedSpeculativeText.trim();
     const text = specText.length > finalText.length ? specText : finalText;
     if (!text) {
+      logger.info(`[FINALIZE] no text to finalize (finalText=${finalText.length}, specText=${specText.length})`, { sessionId: session.sessionId });
       session.accumulatedAssistantText = "";
       session.accumulatedSpeculativeText = "";
       return false;
     }
 
     const liveResponseId = this.ensureLiveResponseId(session);
+    const includeLiveResponseId = !options?.omitLiveResponseId;
 
+    logger.info(`[FINALIZE] emitting isPartial:false liveResponseId=${includeLiveResponseId ? liveResponseId : "OMITTED"} text="${text.slice(0, 80)}..."`, { sessionId: session.sessionId });
     session.context.emit(makeEvent("assistant.speech.final", session.sessionId, {
       text,
       liveResponseId,
@@ -484,7 +494,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         role: "assistant",
         text,
         isPartial: false,
-        liveResponseId,
+        // Omit liveResponseId during barge-in so iOS doesn't match it against
+        // the already-invalidated set (local interrupt handler runs first).
+        // ConversationStore fallback finds the orphaned partial by role.
+        ...(includeLiveResponseId ? { liveResponseId } : {}),
       }),
     }));
     session.accumulatedAssistantText = "";
@@ -506,10 +519,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
+    logger.info(`[FINISH_TURN] reason=${options.reason} assistText="${session.accumulatedAssistantText.slice(0, 60)}" specText="${session.accumulatedSpeculativeText.slice(0, 60)}" liveResponseId=${session.liveResponseId} contentsSize=${session.contents.size}`, { sessionId: session.sessionId });
     this.finalizeAccumulatedAssistantText(session);
 
-    // Clear tracked content entries so late-arriving FINAL contentEnd events
-    // cannot create a duplicate grey message with a new liveResponseId.
+    // Suppress late-arriving SPECULATIVE/FINAL events from the just-finished
+    // turn. Not needed for user_turn_flush since the user speaking means
+    // Nova Sonic has moved on — the next assistant content is a new response.
+    if (options.reason !== "user_turn_flush") {
+      session.turnFinalized = true;
+    }
     session.contents.clear();
 
     if (options.emitIdle) {
@@ -604,9 +622,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       const role = asString(payload.role) ?? "ASSISTANT";
       if (role === "ASSISTANT") {
         this.noteAssistantActivity(session);
+        // SPECULATIVE contentStart signals a new response — reset the gate.
+        // FINAL contentStart from the old response doesn't have SPECULATIVE stage.
+        if (asString(metadata.generationStage) === "SPECULATIVE") {
+          session.turnFinalized = false;
+        }
       }
       if (role === "USER") {
         session.bargedIn = false;
+        session.turnFinalized = false;
       }
       return;
     }
@@ -622,7 +646,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (!info) {
         return;
       }
-      if (info.role === "ASSISTANT" && session.bargedIn) return;
+      if (info.role === "ASSISTANT" && (session.bargedIn || session.turnFinalized)) return;
       info.text += content;
       if (info.role === "ASSISTANT") {
         this.noteAssistantActivity(session);
@@ -643,7 +667,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
 
     if ("audioOutput" in event) {
-      if (session.bargedIn) return;
+      if (session.bargedIn || session.turnFinalized) return;
       const payload = asRecord(event.audioOutput);
       const audio = payload ? (asString(payload.content) ?? asString(payload.bytes)) : undefined;
       if (!audio) {
@@ -759,8 +783,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }));
       }
 
-      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "SPECULATIVE" && info.text.trim().length > 0 && !session.bargedIn) {
+      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "SPECULATIVE" && info.text.trim().length > 0 && !session.bargedIn && !session.turnFinalized) {
         const text = info.text.trim();
+        logger.info(`[SPEC contentEnd] text="${text.slice(0, 60)}" liveResponseId=${session.liveResponseId}`, { sessionId: session.sessionId });
 
         // Skip Nova Sonic metadata responses (same guard as FINAL)
         if (text.startsWith("{") && text.endsWith("}")) {
@@ -791,8 +816,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }));
       }
 
-      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0 && !session.bargedIn) {
+      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0 && !session.bargedIn && !session.turnFinalized) {
         const text = info.text.trim();
+        logger.info(`[FINAL contentEnd] text="${text.slice(0, 60)}" liveResponseId=${session.liveResponseId} specText="${session.accumulatedSpeculativeText.slice(0, 40)}"`, { sessionId: session.sessionId });
 
         // Skip Nova Sonic metadata responses (e.g., { "interrupted" : true })
         if (text.startsWith("{") && text.endsWith("}")) {
@@ -812,7 +838,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         // Only emit a bubble update if speculative text isn't already showing
         // a longer preview — otherwise the bubble would regress to just the
         // confirmed text, losing the read-ahead the user already saw.
-        if (!session.accumulatedSpeculativeText) {
+        // Also skip if liveResponseId is null — this means the turn was already
+        // finalized and this is a late-arriving FINAL event.
+        if (!session.accumulatedSpeculativeText && session.liveResponseId) {
           session.context.emit(makeEvent("tool.call", session.sessionId, {
             callId: crypto.randomUUID(),
             name: "convo.appendMessage",
@@ -820,13 +848,14 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
               role: "assistant",
               text: session.accumulatedAssistantText,
               isPartial: true,
-              liveResponseId: this.ensureLiveResponseId(session),
+              liveResponseId: session.liveResponseId,
             }),
           }));
         }
       }
 
       if (info.role === "ASSISTANT" && info.type === "AUDIO" && !session.bargedIn) {
+        logger.info(`[AUDIO contentEnd] liveResponseId=${session.liveResponseId}`, { sessionId: session.sessionId });
         session.context.emit(makeEvent("assistant.audio.end", session.sessionId, {
           ...(session.liveResponseId ? { liveResponseId: session.liveResponseId } : {}),
         }));
@@ -839,6 +868,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if ("completionEnd" in event) {
       const payload = asRecord(event.completionEnd);
       const stopReason = payload ? asString(payload.stopReason) : undefined;
+      logger.info(`[completionEnd] stopReason=${stopReason} bargedIn=${session.bargedIn} liveResponseId=${session.liveResponseId} contentsSize=${session.contents.size}`, { sessionId: session.sessionId });
       if (stopReason === "INTERRUPTED" || stopReason === "BARGE_IN") {
         this.handleBargeIn(session, stopReason.toLowerCase());
         session.bargedIn = false;
@@ -913,15 +943,16 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
   }
 
   private handleBargeIn(session: SonicSession, reason: string): void {
+    logger.info(`[BARGE_IN] reason=${reason} closed=${session.closed} bargedIn=${session.bargedIn} liveResponseId=${session.liveResponseId} assistText="${session.accumulatedAssistantText.slice(0, 40)}" specText="${session.accumulatedSpeculativeText.slice(0, 40)}"`, { sessionId: session.sessionId });
     if (session.closed || session.bargedIn) return;
 
     // Capture liveResponseId before finalization clears it
     const liveResponseId = session.liveResponseId;
 
     // Finalize any accumulated text as a completed (white) message before
-    // clearing state. iOS removePartialMessage() only deletes partial messages,
-    // so a finalized message survives the subsequent interrupted event.
-    const didFinalize = this.finalizeAccumulatedAssistantText(session);
+    // clearing state. Omit liveResponseId so iOS doesn't match against the
+    // already-invalidated set (local interrupt handler runs before server events).
+    const didFinalize = this.finalizeAccumulatedAssistantText(session, { omitLiveResponseId: true });
 
     this.resetAssistantTurnState(session);
     session.bargedIn = true;
