@@ -3,6 +3,7 @@ import {
   ExecuteQueryCommand,
 } from "@aws-sdk/client-neptune-graph";
 
+import { logger } from "../../core/logger.js";
 import {
   GraphNode,
   GraphNodeType,
@@ -44,31 +45,45 @@ export class NeptuneAnalyticsStore implements GraphStore {
         region: config.region,
         ...(config.endpoint ? { endpoint: config.endpoint } : {}),
       });
+    logger.info(`[neptune] initialized — graphId=${config.graphId} region=${config.region} endpoint=${config.endpoint ?? "default"}`);
   }
 
   private async executeQuery(
     query: string,
     parameters?: Record<string, unknown>,
   ): Promise<Record<string, unknown>[]> {
+    const start = Date.now();
+    const queryPreview = query.replace(/\s+/g, " ").slice(0, 120);
     const command = new ExecuteQueryCommand({
       graphIdentifier: this.graphId,
       queryString: query,
       language: "OPEN_CYPHER" as any,
       parameters: parameters as any,
     });
-    const response = await this.neptune.send(command);
-    // Neptune Analytics returns results as a payload (Uint8Array)
-    if (!response.payload) return [];
-    // SDK payload type is StreamingBlobPayloadOutputTypes; cast through unknown for mock compatibility
-    const raw = response.payload as unknown;
-    const bytes = raw instanceof Uint8Array
-      ? raw
-      : await new Response(raw as ReadableStream).arrayBuffer().then((ab) => new Uint8Array(ab));
-    const text = new TextDecoder().decode(bytes);
-    const parsed = JSON.parse(text) as {
-      results?: Record<string, unknown>[];
-    };
-    return parsed.results ?? [];
+    try {
+      const response = await this.neptune.send(command);
+      // Neptune Analytics returns results as a payload (Uint8Array)
+      if (!response.payload) {
+        logger.info(`[neptune] query ok durationMs=${Date.now() - start} rows=0 query="${queryPreview}"`);
+        return [];
+      }
+      // SDK payload type is StreamingBlobPayloadOutputTypes; cast through unknown for mock compatibility
+      const raw = response.payload as unknown;
+      const bytes = raw instanceof Uint8Array
+        ? raw
+        : await new Response(raw as ReadableStream).arrayBuffer().then((ab) => new Uint8Array(ab));
+      const text = new TextDecoder().decode(bytes);
+      const parsed = JSON.parse(text) as {
+        results?: Record<string, unknown>[];
+      };
+      const results = parsed.results ?? [];
+      logger.info(`[neptune] query ok durationMs=${Date.now() - start} rows=${results.length} query="${queryPreview}"`);
+      return results;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error(`[neptune] query failed durationMs=${Date.now() - start} query="${queryPreview}" error=${msg}`);
+      throw err;
+    }
   }
 
   async upsertNode(node: GraphNode): Promise<void> {
