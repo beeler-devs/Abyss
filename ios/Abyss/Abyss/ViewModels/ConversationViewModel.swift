@@ -46,6 +46,9 @@ final class ConversationViewModel: ObservableObject {
     let eventBus = EventBus()
     let conversationStore = ConversationStore()
     let appStateStore = AppStateStore()
+    private let historyStore = ChatHistoryStore()
+    private var lastPersistedCount = 0
+    var onFirstMessage: ((String) -> Void)?
 
     private var toolRegistry: ToolRegistry!
     private var toolRouter: ToolRouter!
@@ -103,6 +106,14 @@ final class ConversationViewModel: ObservableObject {
         setupToolSystem()
         setupConversationComponents()
         observeStores()
+
+        let persisted = historyStore.load(sessionId: sessionId)
+        if !persisted.isEmpty {
+            conversationStore.restore(persisted)
+            self.messages = persisted
+            self.lastPersistedCount = persisted.filter { !$0.isPartial && $0.role != .system }.count
+        }
+
         startSession()
     }
 
@@ -403,6 +414,14 @@ final class ConversationViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
+                let finalized = self.conversationStore.messages.filter { !$0.isPartial && $0.role != .system }
+                if finalized.count != self.lastPersistedCount {
+                    self.lastPersistedCount = finalized.count
+                    self.persistMessages()
+                    if finalized.count == 1, let first = finalized.first, first.role == .user {
+                        self.autoNameIfNeeded(from: first.text)
+                    }
+                }
             }
             .store(in: &cancellables)
 
@@ -755,6 +774,18 @@ final class ConversationViewModel: ObservableObject {
             let event = Event.preferencesSync(preferences: preferences, sessionId: sessionId)
             await sendEventToConductor(event, surfaceErrors: false)
         }
+    }
+
+    private func persistMessages() {
+        let toSave = conversationStore.messages.filter { !$0.isPartial && $0.role != .system }
+        historyStore.save(toSave, sessionId: sessionId)
+    }
+
+    private func autoNameIfNeeded(from text: String) {
+        guard let onFirstMessage else { return }
+        let words = text.split(separator: " ").prefix(5).joined(separator: " ")
+        let title = words.isEmpty ? "New Chat" : words
+        onFirstMessage(title)
     }
 
     private func encode<T: Encodable>(_ value: T) -> String {

@@ -91,6 +91,7 @@
 		A10000000000000100000052 /* CanvasCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000052 /* CanvasCard.swift */; };
 		A10000000000000100000053 /* ConversationCanvasManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000053 /* ConversationCanvasManager.swift */; };
 		A10000000000000100000054 /* CanvasCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000054 /* CanvasCardView.swift */; };
+		A10000000000000100000055 /* ChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000055 /* ChatHistoryStore.swift */; };
 		B10000000000000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000100000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
@@ -190,6 +191,7 @@
 		A20000000000000100000052 /* CanvasCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCard.swift; sourceTree = "<group>"; };
 		A20000000000000100000053 /* ConversationCanvasManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationCanvasManager.swift; sourceTree = "<group>"; };
 		A20000000000000100000054 /* CanvasCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CanvasCardView.swift; sourceTree = "<group>"; };
+		A20000000000000100000055 /* ChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHistoryStore.swift; sourceTree = "<group>"; };
 		A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20000000000000100000001 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -279,6 +281,7 @@
 				A20000000000000100000031 /* RepositorySelectionCard.swift */,
 				A2000000000000010000004F /* UserPreferencesStore.swift */,
 				A20000000000000100000052 /* CanvasCard.swift */,
+				A20000000000000100000055 /* ChatHistoryStore.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -622,6 +625,7 @@
 				A10000000000000100000052 /* CanvasCard.swift in Sources */,
 				A10000000000000100000053 /* ConversationCanvasManager.swift in Sources */,
 				A10000000000000100000054 /* CanvasCardView.swift in Sources */,
+				A10000000000000100000055 /* ChatHistoryStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
