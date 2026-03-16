@@ -287,6 +287,31 @@ wss.on("connection", (socket, request) => {
 
     if (event.type === "session.start") {
       emitBridgeStatusSnapshot(event.sessionId, socket);
+
+      // Forward any workspace overrides included in session.start to paired bridges
+      const overrides = event.payload.bridgeWorkspaceOverrides;
+      if (Array.isArray(overrides)) {
+        for (const override of overrides) {
+          const deviceId = typeof override === "object" && override !== null && typeof (override as Record<string, unknown>).deviceId === "string"
+            ? (override as Record<string, unknown>).deviceId as string
+            : undefined;
+          const workspacePath = typeof override === "object" && override !== null && typeof (override as Record<string, unknown>).workspacePath === "string"
+            ? (override as Record<string, unknown>).workspacePath as string
+            : undefined;
+          if (!deviceId || !workspacePath || workspacePath.length > 4096) continue;
+
+          const resolved = bridgeState.resolveDeviceForTool(event.sessionId, deviceId);
+          if (!resolved.device) continue;
+
+          const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
+          if (bridgeSocket) {
+            safeSend(bridgeSocket, makeEvent("bridge.workspace.set", resolved.device.sessionId, {
+              deviceId,
+              workspacePath,
+            }));
+          }
+        }
+      }
     }
 
     if (event.type === "bridge.workspace.set") {

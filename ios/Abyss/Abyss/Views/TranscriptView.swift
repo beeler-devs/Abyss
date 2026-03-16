@@ -29,6 +29,8 @@ struct TranscriptView: View {
     var onCancelCalendar: (String) -> Void = { _ in }
     var canvasCards: [CanvasCard] = []
     var onToggleCanvasExpanded: (UUID) -> Void = { _ in }
+    var bridgeExecCards: [BridgeExecCard] = []
+    var onToggleBridgeExecExpanded: (UUID) -> Void = { _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -93,6 +95,14 @@ struct TranscriptView: View {
                             .padding(.horizontal, 12)
                             .id(item.id)
 
+                        case .bridgeExecCard(let card):
+                            BridgeExecCardView(
+                                card: card,
+                                onToggleExpanded: { onToggleBridgeExecExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
                         case .messageActions(let message):
                             MessageActionsView(message: message)
                                 .id(item.id)
@@ -117,7 +127,7 @@ struct TranscriptView: View {
                     }
 
                     // Empty state
-                    if messages.isEmpty && agentProgressCards.isEmpty && emailCards.isEmpty && emailDraftCards.isEmpty && calendarEventCards.isEmpty && calendarDraftCards.isEmpty && canvasCards.isEmpty && assistantPartialSpeech.isEmpty {
+                    if messages.isEmpty && agentProgressCards.isEmpty && emailCards.isEmpty && emailDraftCards.isEmpty && calendarEventCards.isEmpty && calendarDraftCards.isEmpty && canvasCards.isEmpty && bridgeExecCards.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -202,6 +212,11 @@ struct TranscriptView: View {
             return (anchor, card)
         }, by: \.0)
 
+        let anchoredBridgeExecCards = Dictionary(grouping: bridgeExecCards.compactMap { card -> (UUID, BridgeExecCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
         var items: [TranscriptItem] = []
         for message in messages {
             items.append(.message(message))
@@ -235,6 +250,11 @@ struct TranscriptView: View {
                     items.append(.canvasCard(entry.1))
                 }
             }
+            if let bridgeExecCardsForMsg = anchoredBridgeExecCards[message.id] {
+                for entry in bridgeExecCardsForMsg {
+                    items.append(.bridgeExecCard(entry.1))
+                }
+            }
             // Emit action buttons after any anchored cards for assistant messages
             if message.role == .assistant && !message.isPartial && !message.text.isEmpty {
                 items.append(.messageActions(message))
@@ -258,6 +278,9 @@ struct TranscriptView: View {
         }
         for card in canvasCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
             items.append(.canvasCard(card))
+        }
+        for card in bridgeExecCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.bridgeExecCard(card))
         }
 
         return items
@@ -285,6 +308,7 @@ private enum TranscriptItem: Identifiable {
     case calendarEventCard(CalendarEventCard)
     case calendarDraftCard(CalendarDraftCard)
     case canvasCard(CanvasCard)
+    case bridgeExecCard(BridgeExecCard)
     case messageActions(ConversationMessage)
 
     var id: String {
@@ -303,6 +327,8 @@ private enum TranscriptItem: Identifiable {
             return "cal-draft-\(card.id.uuidString)"
         case .canvasCard(let card):
             return "canvas-\(card.id.uuidString)"
+        case .bridgeExecCard(let card):
+            return "bridge-exec-\(card.id.uuidString)"
         case .messageActions(let message):
             return "actions-\(message.id.uuidString)"
         }

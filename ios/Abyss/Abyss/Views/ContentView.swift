@@ -221,7 +221,8 @@ private struct ChatSidebarPanel: View {
                     chatList.createChat()
                 } label: {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: 18, weight: .semibold))
+                        .font(.system(size: AppTheme.sidebarIconSize, weight: .semibold))
+                        .frame(width: AppTheme.sidebarIconFrame, height: AppTheme.sidebarIconFrame)
                         .foregroundStyle(.primary)
                 }
             }
@@ -266,8 +267,8 @@ private struct ChatSidebarPanel: View {
             } label: {
                 HStack(spacing: 12) {
                     Image(systemName: "gearshape.fill")
-                        .font(.system(size: 16))
-                        .frame(width: 28, height: 28)
+                        .font(.system(size: AppTheme.sidebarIconSize))
+                        .frame(width: AppTheme.sidebarIconFrame, height: AppTheme.sidebarIconFrame)
                         .foregroundStyle(.secondary)
                     Text("Settings")
                         .font(.body)
@@ -280,10 +281,7 @@ private struct ChatSidebarPanel: View {
             .buttonStyle(.plain)
             .padding(.bottom, 16)
         }
-        .background(
-            (colorScheme == .dark ? Color(white: 0.1) : Color(white: 0.97))
-                .ignoresSafeArea()
-        )
+        .sidebarGlassBackground(colorScheme: colorScheme)
         .ignoresSafeArea(edges: .vertical)
     }
 }
@@ -301,21 +299,21 @@ private struct ChatRowButton: View {
         Button(action: onSelect) {
             HStack(spacing: 12) {
                 Image(systemName: "bubble.left")
-                    .font(.system(size: 14))
-                    .foregroundStyle(isSelected ? .white : .secondary)
-                    .frame(width: 22)
+                    .font(.system(size: AppTheme.sidebarIconSize))
+                    .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .secondary)
+                    .frame(width: AppTheme.sidebarIconFrame)
                 Text(chat.title)
                     .font(.body)
                     .lineLimit(1)
-                    .foregroundStyle(isSelected ? .white : .primary)
+                    .foregroundStyle(isSelected ? AppTheme.sidebarSelectedText(for: colorScheme) : .primary)
                 Spacer()
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
             .background(
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(isSelected
-                          ? Color.accentColor
+                          ? AppTheme.sidebarSelectedRow(for: colorScheme)
                           : Color.clear)
             )
             .padding(.horizontal, 10)
@@ -394,7 +392,9 @@ private struct ChatContentView: View {
                 onConfirmCalendar: { viewModel.confirmCalendarAction(callId: $0) },
                 onCancelCalendar: { viewModel.cancelCalendarAction(callId: $0) },
                 canvasCards: viewModel.canvasCards,
-                onToggleCanvasExpanded: { viewModel.toggleCanvasCardExpanded(cardID: $0) }
+                onToggleCanvasExpanded: { viewModel.toggleCanvasCardExpanded(cardID: $0) },
+                bridgeExecCards: viewModel.bridgeExecCards,
+                onToggleBridgeExecExpanded: { viewModel.toggleBridgeExecExpanded(cardID: $0) }
             )
 
             // Repository selection card (takes priority)

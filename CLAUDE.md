@@ -107,6 +107,17 @@ Selected via `MODEL_PROVIDER` env var:
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
 
+### Bridge Exec Cards (Streaming Output)
+When the LLM calls `bridge.exec.run`, `bridge.exec.start`, or `bridge.claude.run`, iOS shows a `BridgeExecCard` in the transcript with streaming terminal output. `ConversationBridgeExecManager` listens for `toolCall` → `toolResult` → `bridgeExecOutput` → `bridgeExecFinished` events and maintains card state. Cards display command text, a status pill (Running/Done/Failed), monospace output area (capped at ~100KB), and exit code + duration footer. Follows the same anchored-card pattern as agent/email/calendar/canvas cards.
+
+**Files:**
+- `ios/.../Models/BridgeExecCard.swift` — Card model with status enum, output accumulation
+- `ios/.../ViewModels/ConversationBridgeExecManager.swift` — Event→card state machine
+- `ios/.../Views/BridgeExecCardView.swift` — SwiftUI card with collapsed/expanded states
+
+### Workspace Overrides in session.start
+When the iOS app connects or reconnects, `connectConductorClient` gathers any workspace overrides from `eventCoordinator.pairedBridgeDevices` and includes them as `bridgeWorkspaceOverrides` in the `session.start` payload. The server iterates these and forwards each as `bridge.workspace.set` to the paired bridge device, ensuring workspace state survives iOS app restarts.
+
 ### iOS UI Architecture
 
 #### Key iOS Files
@@ -149,7 +160,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 - Shared state uses `@StateObject` in `AbyssApp` + `@EnvironmentObject` in child views
 - Theming via `AppTheme` static methods that take `colorScheme` parameter
 - `@AppStorage` for persisted preferences: `appAppearance`, `recordingMode`, `voiceMode`, `cursorAPIKey`, `cursorAgentModel`, `elevenLabsVoiceId`. **Gotcha:** `@AppStorage` on `ObservableObject` does NOT fire `objectWillChange` — SwiftUI views won't re-render. Use `@Published` with manual `UserDefaults` sync in `didSet` instead (see `isTTSMuted` in `ConversationViewModel`).
-- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`, `RepositorySelectionManager`, `EmailDraftManager`, `CalendarDraftManager`, `InAppBrowserCoordinator`
+- Manager/Coordinator pattern: `ConversationAgentManager`, `ConversationEventCoordinator`, `ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`, `ConversationBridgeExecManager`, `RepositorySelectionManager`, `EmailDraftManager`, `CalendarDraftManager`, `InAppBrowserCoordinator`
 - `@MainActor` isolation for all UI/state management; `@unchecked Sendable` for backward compat
 
 #### Xcode Project Gotcha

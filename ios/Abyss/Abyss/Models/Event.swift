@@ -49,6 +49,11 @@ struct Event: Identifiable, Codable, Sendable {
 
     // MARK: - Payloads
 
+    struct BridgeWorkspaceOverride: Codable, Sendable {
+        let deviceId: String
+        let workspacePath: String
+    }
+
     struct SessionStart: Codable, Sendable {
         let sessionId: String
         let githubToken: String?
@@ -59,6 +64,7 @@ struct Event: Identifiable, Codable, Sendable {
         let canvasBaseURL: String?
         let preferences: [String: String]?
         let memoryUserKey: String?
+        let bridgeWorkspaceOverrides: [BridgeWorkspaceOverride]?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -278,7 +284,8 @@ extension Event {
         canvasAccessToken: String? = nil,
         canvasBaseURL: String? = nil,
         preferences: [String: String]? = nil,
-        memoryUserKey: String? = nil
+        memoryUserKey: String? = nil,
+        bridgeWorkspaceOverrides: [BridgeWorkspaceOverride]? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
             sessionId: sessionId,
@@ -289,7 +296,8 @@ extension Event {
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
             preferences: preferences,
-            memoryUserKey: memoryUserKey
+            memoryUserKey: memoryUserKey,
+            bridgeWorkspaceOverrides: bridgeWorkspaceOverrides
         )))
     }
 

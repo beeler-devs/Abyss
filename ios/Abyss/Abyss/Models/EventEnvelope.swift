@@ -65,6 +65,14 @@ struct EventEnvelope: Codable, Sendable {
             if let prefs = value.preferences, !prefs.isEmpty {
                 sessionPayload["preferences"] = .object(prefs.mapValues { .string($0) })
             }
+            if let overrides = value.bridgeWorkspaceOverrides, !overrides.isEmpty {
+                sessionPayload["bridgeWorkspaceOverrides"] = .array(overrides.map { override in
+                    .object([
+                        "deviceId": .string(override.deviceId),
+                        "workspacePath": .string(override.workspacePath),
+                    ])
+                })
+            }
             payload = sessionPayload
         case .userAudioTranscriptPartial(let value):
             type = "user.audio.transcript.partial"
@@ -253,10 +261,10 @@ struct EventEnvelope: Codable, Sendable {
         switch type {
         case "session.start":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil, memoryUserKey: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil, memoryUserKey: nil, bridgeWorkspaceOverrides: nil))
         case "session.started":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil, memoryUserKey: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil, memoryUserKey: nil, bridgeWorkspaceOverrides: nil))
         case "user.audio.transcript.partial":
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":

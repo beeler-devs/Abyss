@@ -229,6 +229,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var currentCanvasBaseURL: String?
     private var currentPreferences: [String: String]?
     private var currentMemoryUserKey: String?
+    private var currentBridgeWorkspaceOverrides: [Event.BridgeWorkspaceOverride]?
 
     private var seenInboundEventIDs: BoundedEventIDCache
 
@@ -303,7 +304,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         canvasAccessToken: String? = nil,
         canvasBaseURL: String? = nil,
         preferences: [String: String]? = nil,
-        memoryUserKey: String? = nil
+        memoryUserKey: String? = nil,
+        bridgeWorkspaceOverrides: [Event.BridgeWorkspaceOverride]? = nil
     ) async throws {
         currentSessionId = sessionId
         currentGithubToken = githubToken
@@ -314,6 +316,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         currentCanvasBaseURL = canvasBaseURL
         currentPreferences = preferences
         currentMemoryUserKey = memoryUserKey
+        currentBridgeWorkspaceOverrides = bridgeWorkspaceOverrides
         shouldReconnect = true
 
         try await openSocketAndStartListening()
@@ -326,7 +329,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
             preferences: preferences,
-            memoryUserKey: memoryUserKey
+            memoryUserKey: memoryUserKey,
+            bridgeWorkspaceOverrides: bridgeWorkspaceOverrides
         ))
     }
 
@@ -447,7 +451,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
                     canvasAccessToken: self.currentCanvasAccessToken,
                     canvasBaseURL: self.currentCanvasBaseURL,
                     preferences: self.currentPreferences,
-                    memoryUserKey: self.currentMemoryUserKey
+                    memoryUserKey: self.currentMemoryUserKey,
+                    bridgeWorkspaceOverrides: self.currentBridgeWorkspaceOverrides
                 ))
             } catch {
                 await self.scheduleReconnect()

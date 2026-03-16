@@ -18,6 +18,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var calendarEventCards: [CalendarEventCard] = []
     @Published var calendarDraftCards: [CalendarDraftCard] = []
     @Published var canvasCards: [CanvasCard] = []
+    @Published var bridgeExecCards: [BridgeExecCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
@@ -68,6 +69,7 @@ final class ConversationViewModel: ObservableObject {
     private var emailManager: ConversationEmailManager!
     private var calendarManager: ConversationCalendarManager!
     private var canvasCardManager: ConversationCanvasManager!
+    private var bridgeExecManager: ConversationBridgeExecManager!
     private let emailDraftManager = EmailDraftManager()
     private let calendarDraftManager = CalendarDraftManager()
     let preferencesStore = UserPreferencesStore()
@@ -327,6 +329,10 @@ final class ConversationViewModel: ObservableObject {
         canvasCardManager.toggleExpanded(cardId: cardID)
     }
 
+    func toggleBridgeExecExpanded(cardID: UUID) {
+        bridgeExecManager.toggleExpanded(cardID: cardID)
+    }
+
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
@@ -412,6 +418,7 @@ final class ConversationViewModel: ObservableObject {
         emailManager = ConversationEmailManager(eventBus: eventBus)
         calendarManager = ConversationCalendarManager(eventBus: eventBus)
         canvasCardManager = ConversationCanvasManager(eventBus: eventBus)
+        bridgeExecManager = ConversationBridgeExecManager()
 
         eventCoordinator = ConversationEventCoordinator(
             conversationStore: conversationStore,
@@ -434,6 +441,9 @@ final class ConversationViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
+                if let lastAssistant = self.messages.last(where: { $0.role == .assistant }) {
+                    self.bridgeExecManager.updateLastAssistantMessageID(lastAssistant.id)
+                }
             }
             .store(in: &cancellables)
 
@@ -444,6 +454,7 @@ final class ConversationViewModel: ObservableObject {
                 self?.emailManager.handleEventStream(event)
                 self?.calendarManager.handleEventStream(event)
                 self?.canvasCardManager.handleEventStream(event)
+                self?.bridgeExecManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -494,6 +505,10 @@ final class ConversationViewModel: ObservableObject {
         canvasCardManager.$canvasCards
             .receive(on: RunLoop.main)
             .assign(to: &$canvasCards)
+
+        bridgeExecManager.$cards
+            .receive(on: RunLoop.main)
+            .assign(to: &$bridgeExecCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)
@@ -620,6 +635,16 @@ final class ConversationViewModel: ObservableObject {
         let canvasAccessToken = CanvasManager.loadAccessToken()
         let canvasBaseURL = CanvasManager.loadBaseURL()
         let prefs = preferencesStore.getAll()
+
+        let overrides: [Event.BridgeWorkspaceOverride]? = {
+            let devices = eventCoordinator.pairedBridgeDevices
+            let result = devices.compactMap { device -> Event.BridgeWorkspaceOverride? in
+                guard let path = device.workspaceOverride else { return nil }
+                return Event.BridgeWorkspaceOverride(deviceId: device.deviceId, workspacePath: path)
+            }
+            return result.isEmpty ? nil : result
+        }()
+
         try await client.connect(
             sessionId: sessionId,
             githubToken: githubToken,
@@ -629,7 +654,8 @@ final class ConversationViewModel: ObservableObject {
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
             preferences: prefs.isEmpty ? nil : prefs,
-            memoryUserKey: Self.memoryUserKey
+            memoryUserKey: Self.memoryUserKey,
+            bridgeWorkspaceOverrides: overrides
         )
 
         inboundEventsTask?.cancel()
