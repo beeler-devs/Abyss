@@ -89,6 +89,13 @@ async function streamToString(stream: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf-8");
 }
 
+export interface MemoryServiceClients {
+  s3?: S3Client;
+  bedrock?: BedrockRuntimeClient;
+  agentRuntime?: BedrockAgentRuntimeClient;
+  bedrockAgent?: BedrockAgentClient;
+}
+
 export class MemoryService {
   private readonly config: MemoryServiceConfig;
   private readonly s3: S3Client;
@@ -96,12 +103,12 @@ export class MemoryService {
   private readonly agentRuntime: BedrockAgentRuntimeClient;
   private readonly bedrockAgent: BedrockAgentClient;
 
-  constructor(config: MemoryServiceConfig) {
+  constructor(config: MemoryServiceConfig, clients?: MemoryServiceClients) {
     this.config = config;
-    this.s3 = new S3Client({ region: config.awsRegion });
-    this.bedrock = new BedrockRuntimeClient({ region: config.awsRegion });
-    this.agentRuntime = new BedrockAgentRuntimeClient({ region: config.awsRegion });
-    this.bedrockAgent = new BedrockAgentClient({ region: config.awsRegion });
+    this.s3 = clients?.s3 ?? new S3Client({ region: config.awsRegion });
+    this.bedrock = clients?.bedrock ?? new BedrockRuntimeClient({ region: config.awsRegion });
+    this.agentRuntime = clients?.agentRuntime ?? new BedrockAgentRuntimeClient({ region: config.awsRegion });
+    this.bedrockAgent = clients?.bedrockAgent ?? new BedrockAgentClient({ region: config.awsRegion });
   }
 
   async summarizeAndStore(
