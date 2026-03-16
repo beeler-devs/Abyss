@@ -860,7 +860,14 @@ export class ConductorService {
         }
 
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
-        logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
+        const integrations: string[] = [];
+        if (session.githubToken) integrations.push("github");
+        if (session.gmailAccessToken) integrations.push("gmail");
+        if (session.canvasAccessToken) integrations.push("canvas");
+        if (session.userPreferences && Object.keys(session.userPreferences).length > 0) {
+          integrations.push(`prefs(${Object.keys(session.userPreferences).join(",")})`);
+        }
+        logger.info(`session started integrations=[${integrations.join(", ")}]`, { sessionId: event.sessionId, eventId: event.id });
         return;
       }
 
@@ -871,9 +878,11 @@ export class ConductorService {
             code: "invalid_transcript",
             message: "user.audio.transcript.final must include payload.text",
           }));
+          logger.warn("empty transcript.final received", { sessionId: event.sessionId, eventId: event.id });
           return;
         }
 
+        logger.info(`transcript.final: "${text}"`, { sessionId: event.sessionId, eventId: event.id });
         await this.runConductorLoop(session, text, emit, event.id);
         this.trySummarizeHistory(session);
         return;
@@ -887,8 +896,11 @@ export class ConductorService {
         if (callId) {
           const pending = session.pendingToolCalls.get(callId);
           session.pendingToolCalls.delete(callId);
+          const resultSnippet = resultPayload ? ` result=${summarizeValueForLog(resultPayload, 120)}` : "";
           logger.info(
-            errorText ? `tool.result error: ${errorText}` : "tool.result ok",
+            errorText
+              ? `tool.result error tool=${pending?.toolName ?? "?"} error=${errorText}`
+              : `tool.result ok tool=${pending?.toolName ?? "?"}${resultSnippet}`,
             {
               sessionId: session.sessionId,
               eventId: event.id,
@@ -1137,6 +1149,12 @@ export class ConductorService {
     session.transcriptCount += 1;
     session.recentTranscriptTrace = [];
 
+    const transcriptPreview = transcript.length > 200 ? transcript.slice(0, 200) + "…" : transcript;
+    logger.info(`conductor.loop.start turn=${session.transcriptCount} historyLen=${session.history.length} text="${transcriptPreview}"`, {
+      sessionId: session.sessionId,
+      eventId: sourceEventId,
+    });
+
     const tracePush = (value: string): void => {
       this.sessions.recordTrace(session, value);
     };
@@ -1195,7 +1213,20 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId), session.userPreferences, session.canvasCourseContext);
+          const conversation = this.buildConversation(session);
+          const tools = this.availableTools(session.sessionId);
+          logger.info(`conductor.llm.call round=${toolRound} conversationTurns=${conversation.length} toolCount=${tools.length}`, {
+            sessionId: session.sessionId,
+            eventId: sourceEventId,
+          });
+          const llmStartMs = Date.now();
+          modelResponse = await this.provider.generateResponse(conversation, tools, session.userPreferences, session.canvasCourseContext);
+          const hasToolCalls = modelResponse.toolCalls && modelResponse.toolCalls.length > 0;
+          const hasText = modelResponse.fullText.trim().length > 0;
+          logger.info(
+            `conductor.llm.response round=${toolRound} durationMs=${Date.now() - llmStartMs} toolCalls=${modelResponse.toolCalls?.length ?? 0} hasText=${hasText}${hasToolCalls ? ` tools=[${modelResponse.toolCalls!.map(tc => tc.name).join(", ")}]` : ""}`,
+            { sessionId: session.sessionId, eventId: sourceEventId },
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {
@@ -1222,11 +1253,8 @@ export class ConductorService {
 
           if (this.shouldExecuteServerTool(toolCall.name)) {
             tracePush(`tool.server:${toolCall.name}`);
-            const dispatchPreview = this.verboseToolRoutingLogs
-              ? ` args=${summarizeArgsForLog(toolCall.input)}`
-              : "";
             logger.info(
-              `tool.server.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}${dispatchPreview}`,
+              `tool.server.dispatch tool=${toolCall.name} round=${toolRound} call=${callId} args=${summarizeArgsForLog(toolCall.input)}`,
               {
                 sessionId: session.sessionId,
                 eventId: sourceEventId,
@@ -1242,11 +1270,11 @@ export class ConductorService {
               emit,
             );
             const outcome = execution.error ? "error" : "ok";
-            const errorPreview = execution.error && this.verboseToolRoutingLogs
+            const resultPreview = execution.error
               ? ` error=${summarizeValueForLog(execution.error)}`
-              : "";
+              : ` result=${summarizeValueForLog(execution.result, 120)}`;
             logger.info(
-              `tool.server.result tool=${toolCall.name} outcome=${outcome} durationMs=${Date.now() - startedAtMs}${errorPreview}`,
+              `tool.server.result tool=${toolCall.name} outcome=${outcome} durationMs=${Date.now() - startedAtMs}${resultPreview}`,
               {
                 sessionId: session.sessionId,
                 eventId: sourceEventId,
@@ -1278,14 +1306,15 @@ export class ConductorService {
 
           emit(envelope);
           tracePush(`tool.call:${toolCall.name}`);
-          logger.info(`tool.client.dispatch tool=${toolCall.name} round=${toolRound} call=${callId}`, {
+          logger.info(`tool.client.dispatch tool=${toolCall.name} round=${toolRound} call=${callId} args=${summarizeArgsForLog(toolCall.input)}`, {
             sessionId: session.sessionId,
             eventId: sourceEventId,
             callId,
           });
 
+          const clientToolStartMs = Date.now();
           const { result, error } = await waitForToolResult(session, callId, 30_000);
-          logger.info(`tool.client.result tool=${toolCall.name} outcome=${error ? "error" : "ok"}`, {
+          logger.info(`tool.client.result tool=${toolCall.name} outcome=${error ? "error" : "ok"} durationMs=${Date.now() - clientToolStartMs}${error ? ` error=${error}` : ""}`, {
             sessionId: session.sessionId,
             eventId: sourceEventId,
             callId,
@@ -1303,8 +1332,10 @@ export class ConductorService {
       }
 
       let responseText = "";
+      let chunkCount = 0;
       for await (const chunk of modelResponse.chunks) {
         responseText += chunk;
+        chunkCount += 1;
         emit(makeEvent("assistant.speech.partial", session.sessionId, { text: responseText }));
         tracePush("assistant.speech.partial");
       }
@@ -1317,7 +1348,7 @@ export class ConductorService {
 
       emit(makeEvent("assistant.speech.final", session.sessionId, { text: responseText }));
       tracePush("assistant.speech.final");
-      logger.info(`assistant.speech.final: "${responseText.length > 160 ? responseText.slice(0, 160) + "…" : responseText}"`, {
+      logger.info(`assistant.speech.final chunks=${chunkCount} len=${responseText.length}: "${responseText.length > 200 ? responseText.slice(0, 200) + "…" : responseText}"`, {
         sessionId: session.sessionId,
         eventId: sourceEventId,
       });
@@ -1343,10 +1374,10 @@ export class ConductorService {
     if (!emittedFinalResponse) {
       emit(makeEvent("error", session.sessionId, {
         code: "tool_round_limit_exceeded",
-        message: "Conductor reached max tool rounds without a final response.",
+        message: `Conductor reached max tool rounds (${MAX_TOOL_ROUNDS}) without a final response. The LLM kept calling tools without producing a text reply.`,
       }));
       emitToolCall("convo.setState", { state: "idle" });
-      logger.warn("tool round limit exceeded", {
+      logger.warn(`tool round limit exceeded: ${toolRound}/${MAX_TOOL_ROUNDS} rounds exhausted. trace=[${session.recentTranscriptTrace.join(" -> ")}]`, {
         sessionId: session.sessionId,
         eventId: sourceEventId,
       });
