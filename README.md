@@ -4,16 +4,15 @@
 
 Abyss makes the phone the primary interface, not a companion app. You speak to a SwiftUI iPhone client, a TypeScript conductor server orchestrates tools over WebSockets, and a paired macOS bridge unlocks privileged local actions only when the user has explicitly allowed them.
 
-## Tech Stack / Architecture Diagram
+## Tech Stack / Architecture Diagrams
 
-_Reserved for a system diagram: iPhone app -> WebSocket conductor -> integrations + paired Mac bridge._
+**System architecture**
 
-## Built Today
+![Abyss architecture](assets/abyss-architecture.png)
 
-- Working iPhone client with live conversation, voice input, push-to-talk, and transcript rendering.
-- Live Node.js + TypeScript WebSocket conductor with tool calling, streaming responses, and inline result cards.
-- Paired macOS bridge for permissioned local shell, file, git, and advanced coding workflows.
-- Real integrations already wired in: Gmail, Google Calendar, Canvas, Cursor Cloud Agents, Brave web search, and optional advanced memory/context infrastructure.
+**Core data flow**
+
+![Abyss data flow](assets/abyss-data-flow.png)
 
 ## Features
 

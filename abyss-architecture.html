@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Abyss Architecture</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+    min-height: 100vh;
+  }
+  h1 {
+    font-family: 'SF Mono', Menlo, monospace;
+    color: #58a6ff;
+    font-size: 12px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+  }
+  .section {
+    margin-bottom: 48px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 12px;
+  }
+  .section-label {
+    font-family: 'SF Mono', Menlo, monospace;
+    color: #8b949e;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .export-btn {
+    font-family: 'SF Mono', Menlo, monospace;
+    font-size: 11px;
+    color: #58a6ff;
+    background: rgba(88, 166, 255, 0.1);
+    border: 1px solid rgba(88, 166, 255, 0.3);
+    border-radius: 6px;
+    padding: 4px 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .export-btn:hover {
+    background: rgba(88, 166, 255, 0.2);
+    border-color: #58a6ff;
+  }
+  .export-btn.success {
+    color: #3fb950;
+    background: rgba(63, 185, 80, 0.1);
+    border-color: rgba(63, 185, 80, 0.3);
+  }
+  .diagram-wrap {
+    position: relative;
+  }
+  pre {
+    font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    color: #e6edf3;
+    background: #0d1117;
+    padding: 48px 60px;
+    border-radius: 12px;
+    border: 1px solid #30363d;
+    white-space: pre;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .divider {
+    width: 200px;
+    height: 1px;
+    background: #30363d;
+    margin: 16px 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>Abyss &mdash; Tech Stack</h1>
+
+<!-- ARCHITECTURE -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-label">Architecture</span>
+    <button class="export-btn" onclick="exportDiagram('arch-diagram', 'abyss-architecture', this)">Export PNG</button>
+    <button class="export-btn" onclick="exportSVG('arch-diagram', 'abyss-architecture', this)">Export SVG</button>
+  </div>
+  <div class="diagram-wrap" id="arch-diagram">
+<pre>
+                                                        ┌───────────────────┐
+                                                        │ Neptune            │
+                                                        │ Analytics          │
+                                                        │ (Graph DB)         │
+                                                        └─────────┬──────────┘
+                                                                  │
+                                                     ┌────────────┤
+                                                     │            │
+                                            ┌────────▼──────┐  ┌──▼───────────────┐
+                                            │ Titan          │  │ S3               │
+                                            │ Embeddings     │  │ (Memory Store)   │
+                                            └────────┬──────┘  └──┬───────────────┘
+                                                     │            │
+                                                     └──────┬─────┘
+                                                            │
+   ┌──────────────────┐                ┌────────────────────▼───────────────────────────────────────────────────────────────────────┐
+   │                  │   WebSocket    │                                                                                            │
+   │   iOS App        ├──────────────►│                            Node.js Conductor Server                                        │
+   │                  │◄──────────────┤                                 (ECS Fargate)                                              │
+   │  · SwiftUI       │               │                                                                                            │
+   │  · WhisperKit    │    Events     │       ┌──────────────────┐      ┌──────────────────┐      ┌──────────────────────┐          │
+   │    (STT)         │               │       │ Bedrock          │      │ Anthropic        │      │ Nova Sonic           │          │
+   │  · ElevenLabs    │               │       │ Nova             │      │ Claude           │      │ (Voice Stream)       │          │
+   │    (TTS)         │               │       │ Lite / Pro       │      │                  │      │                      │          │
+   │  · OAuth         │               │       └──────────────────┘      └──────────────────┘      └──────────────────────┘          │
+   │                  │               │                                                                                            │
+   └──────────────────┘               └──┬──────────┬──────────┬──────────┬────────────┬──────────┬────────────────────────┬────────┘
+                                         │          │          │          │            │          │                        │
+                        ┌────────────────┘          │          │          │            │          │                        │
+                        │          ┌────────────────┘          │          │            │          │                        │
+                        │          │          ┌────────────────┘          │            │          │                        │
+                        │          │          │          ┌────────────────┘            │          │                        │
+                        ▼          ▼          ▼          ▼                             ▼          │                        ▼
+                 ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────────┐ ┌────────────┐  │                 ┌────────────┐
+                 │ Gmail      │ │ Google     │ │ Canvas     │ │ Cursor         │ │ Brave      │  │                 │ GitHub     │
+                 │ API        │ │ Calendar   │ │ LMS        │ │ Cloud Agents   │ │ Search     │  │                 │ OAuth      │
+                 │            │ │ API        │ │            │ │                │ │            │  │                 │            │
+                 │ · inbox    │ │ · list     │ │ · todo     │ │ · spawn        │ │ · web      │  │                 │ · auth     │
+                 │ · search   │ │ · create   │ │ · grades   │ │ · status       │ │   search   │  │                 │ · repos    │
+                 │ · read     │ │ · update   │ │ · assgn    │ │ · cancel       │ │            │  │                 │            │
+                 │ · send  ⚡ │ │ · delete ⚡│ │            │ │ · followup     │ │            │  │                 │            │
+                 │ · reply ⚡ │ │          ⚡│ │            │ │                │ │            │  │                 │            │
+                 └────────────┘ └────────────┘ └────────────┘ └────────────────┘ └────────────┘  │                 └────────────┘
+                                                                                                 │
+                   ⚡ = iOS user confirmation required                                           │
+                                                                                                 │
+                                                                                    ┌────────────▼────────────┐
+                                                                                    │                         │
+                                                                                    │     Bridge Router       │
+                                                                                    │                         │
+                                                                                    └────────────┬────────────┘
+                                                                                                 │
+                                                                                                 ▼
+   ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+   │                                                  macOS Bridge                                                               │
+   │                                                                                                                             │
+   │    ┌──────────────────────────┐      ┌──────────────────────────┐      ┌──────────────────────────────┐                      │
+   │    │ Command Executor         │      │ Claude Code              │      │ Nova Act                     │                      │
+   │    │                          │      │ (Subprocess)             │      │ (Python)                     │                      │
+   │    │                          │      │                          │      │                              │                      │
+   │    │  · exec.run              │      │  · Bash, Read            │      │  · start                     │                      │
+   │    │  · fs.read               │      │  · Edit, Write           │      │  · act                       │                      │
+   │    │  · fs.search             │      │  · Glob, Grep            │      │  · stop                      │                      │
+   │    │  · fs.patch              │      │                          │      │                              │                      │
+   │    │  · git.*                 │      │                          │      │  Chrome ─────────────────────┼──────────────► Web   │
+   │    └──────────────────────────┘      └──────────────────────────┘      └──────────────────────────────┘                      │
+   │                                                                                                                             │
+   │    ┌───────────────────────────────────────────────────────────────────────────────────────────┐                              │
+   │    │                      Workspace Sandbox  ·  Pairing Security                              │                              │
+   │    └───────────────────────────────────────────────────────────────────────────────────────────┘                              │
+   └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- DATA FLOW -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-label">Data Flow</span>
+    <button class="export-btn" onclick="exportDiagram('flow-diagram', 'abyss-data-flow', this)">Export PNG</button>
+    <button class="export-btn" onclick="exportSVG('flow-diagram', 'abyss-data-flow', this)">Export SVG</button>
+  </div>
+  <div class="diagram-wrap" id="flow-diagram">
+<pre>
+                                                     Data Flow
+
+                    User speaks ──► WhisperKit ──► WebSocket ──► Conductor
+                                                                     │
+                                                               LLM (Nova/Claude)
+                                                                     │
+                                                     ┌───────────────┼───────────────┐
+                                                     ▼               ▼               ▼
+                                               Server Tools    iOS Tools       Bridge Tools
+                                               (Gmail, Cal,    (Confirm ⚡,    (Exec, FS,
+                                                Canvas,         Audio,          Git, Claude,
+                                                Search)         Prefs)          Nova Act)
+                                                     │               │               │
+                                                     └───────────────┼───────────────┘
+                                                                     ▼
+                                                               LLM continues...
+                                                                     │
+                                                                     ▼
+                                           ElevenLabs/Nova Sonic ──► iOS ──► Speaker
+</pre>
+  </div>
+</div>
+
+<script>
+function exportDiagram(elementId, filename, btn) {
+  const el = document.getElementById(elementId);
+  const pre = el.querySelector('pre');
+
+  // Create canvas
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const scale = 3; // high-res
+
+  // Measure text
+  const text = pre.textContent;
+  const lines = text.split('\n');
+  const fontSize = 13;
+  const lineHeight = fontSize * 1.4;
+  const font = `${fontSize}px "SF Mono", "JetBrains Mono", "Fira Code", Menlo, monospace`;
+
+  ctx.font = font;
+  let maxWidth = 0;
+  for (const line of lines) {
+    const w = ctx.measureText(line).width;
+    if (w > maxWidth) maxWidth = w;
+  }
+
+  const padX = 80;
+  const padY = 60;
+  const width = maxWidth + padX * 2;
+  const height = lines.length * lineHeight + padY * 2;
+
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  ctx.scale(scale, scale);
+
+  // Background
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0, 0, width, height);
+
+  // Border
+  ctx.strokeStyle = '#30363d';
+  ctx.lineWidth = 1;
+  ctx.roundRect ? ctx.roundRect(8, 8, width - 16, height - 16, 12) : ctx.rect(8, 8, width - 16, height - 16);
+  ctx.stroke();
+
+  // Text
+  ctx.fillStyle = '#e6edf3';
+  ctx.font = font;
+  ctx.textBaseline = 'top';
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillText(lines[i], padX, padY + i * lineHeight);
+  }
+
+  // Download
+  canvas.toBlob(function(blob) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename + '.png';
+    a.click();
+    URL.revokeObjectURL(url);
+
+    btn.textContent = 'Saved!';
+    btn.classList.add('success');
+    setTimeout(() => {
+      btn.textContent = 'Export PNG';
+      btn.classList.remove('success');
+    }, 2000);
+  }, 'image/png');
+}
+
+function exportSVG(elementId, filename, btn) {
+  const el = document.getElementById(elementId);
+  const pre = el.querySelector('pre');
+  const text = pre.textContent;
+  const lines = text.split('\n');
+  const fontSize = 13;
+  const lineHeight = fontSize * 1.4;
+
+  // Estimate width (monospace ~7.8px per char at 13px)
+  const charWidth = 7.8;
+  let maxChars = 0;
+  for (const line of lines) {
+    if (line.length > maxChars) maxChars = line.length;
+  }
+
+  const padX = 80;
+  const padY = 60;
+  const width = maxChars * charWidth + padX * 2;
+  const height = lines.length * lineHeight + padY * 2;
+
+  let svgLines = '';
+  for (let i = 0; i < lines.length; i++) {
+    const escaped = lines[i]
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    svgLines += `<text x="${padX}" y="${padY + i * lineHeight + fontSize}" fill="#e6edf3" font-family="SF Mono, JetBrains Mono, Fira Code, Menlo, monospace" font-size="${fontSize}" xml:space="preserve">${escaped}</text>\n`;
+  }
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="${width}" height="${height}" fill="#0d1117" rx="12"/>
+  <rect x="8" y="8" width="${width - 16}" height="${height - 16}" fill="none" stroke="#30363d" stroke-width="1" rx="12"/>
+  ${svgLines}
+</svg>`;
+
+  const blob = new Blob([svg], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename + '.svg';
+  a.click();
+  URL.revokeObjectURL(url);
+
+  btn.textContent = 'Saved!';
+  btn.classList.add('success');
+  setTimeout(() => {
+    btn.textContent = 'Export SVG';
+    btn.classList.remove('success');
+  }, 2000);
+}
+</script>
+
+</body>
+</html>
