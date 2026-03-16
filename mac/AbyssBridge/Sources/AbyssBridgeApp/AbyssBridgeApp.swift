@@ -74,11 +74,16 @@ struct NovaActPrerequisite: Identifiable {
         case unchecked, checking
         case passed(String)
         case failed(String)
+        case installing
     }
 
     var isPassed: Bool {
         if case .passed = status { return true }
         return false
+    }
+
+    var isInstallable: Bool {
+        id != "api_key"
     }
 }
 
@@ -116,6 +121,7 @@ final class BridgeAppModel: ObservableObject {
     @Published var novaActPrerequisites: [NovaActPrerequisite] = []
     @Published var novaActChecksRunning = false
 
+    private var detectedPythonPath: String?
     private var bridgeCore: BridgeCore?
     private let defaults = UserDefaults.standard
     private var securityScopedURLs: [URL] = []
@@ -458,6 +464,7 @@ final class BridgeAppModel: ObservableObject {
 
         // Python check
         let pythonResult = await checkPython3()
+        detectedPythonPath = pythonResult.path
         if let idx = novaActPrerequisites.firstIndex(where: { $0.id == "python3" }) {
             novaActPrerequisites[idx].status = pythonResult.status
         }
@@ -487,6 +494,68 @@ final class BridgeAppModel: ObservableObject {
         }
 
         novaActChecksRunning = false
+    }
+
+    func installPrerequisite(_ id: String) async {
+        guard let idx = novaActPrerequisites.firstIndex(where: { $0.id == id }) else { return }
+        novaActPrerequisites[idx].status = .installing
+
+        let command: String
+        switch id {
+        case "python3":
+            command = "brew install python3"
+        case "nova_act":
+            let pythonPath = detectedPythonPath ?? "/usr/bin/python3"
+            command = "\(pythonPath) -m pip install nova-act"
+        case "chrome":
+            command = "brew install --cask google-chrome"
+        default:
+            return
+        }
+
+        let result: (exitCode: Int32, stderr: String) = await withCheckedContinuation { continuation in
+            Task.detached {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/bin/zsh")
+                proc.arguments = ["-l", "-c", command]
+
+                let stderrPipe = Pipe()
+                proc.standardOutput = Pipe()
+                proc.standardError = stderrPipe
+
+                do {
+                    try proc.run()
+                    proc.waitUntilExit()
+                    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stderrStr = String(data: stderrData, encoding: .utf8) ?? ""
+                    continuation.resume(returning: (proc.terminationStatus, stderrStr))
+                } catch {
+                    continuation.resume(returning: (1, error.localizedDescription))
+                }
+            }
+        }
+
+        if result.exitCode == 0 {
+            // Re-run the specific check to get version info
+            switch id {
+            case "python3":
+                let pythonResult = await checkPython3()
+                detectedPythonPath = pythonResult.path
+                novaActPrerequisites[idx].status = pythonResult.status
+            case "nova_act":
+                let pythonPath = detectedPythonPath ?? "/usr/bin/python3"
+                let novaResult = await checkNovaActPackage(pythonPath: pythonPath)
+                novaActPrerequisites[idx].status = novaResult
+            case "chrome":
+                let chromeResult = checkChrome()
+                novaActPrerequisites[idx].status = chromeResult
+            default:
+                break
+            }
+        } else {
+            let lastLine = result.stderr.split(separator: "\n").last.map(String.init) ?? "Unknown error"
+            novaActPrerequisites[idx].status = .failed("Install failed: \(lastLine)")
+        }
     }
 
     private func checkPython3() async -> (status: NovaActPrerequisite.Status, path: String?) {
@@ -922,7 +991,12 @@ struct NovaActSetupSheet: View {
 
                     VStack(spacing: 12) {
                         ForEach(model.novaActPrerequisites) { prereq in
-                            PrerequisiteRow(prerequisite: prereq)
+                            PrerequisiteRow(
+                                prerequisite: prereq,
+                                onInstall: prereq.isInstallable ? {
+                                    Task { await model.installPrerequisite(prereq.id) }
+                                } : nil
+                            )
                         }
                     }
                     .padding(.horizontal)
@@ -966,6 +1040,7 @@ struct NovaActSetupSheet: View {
 
 struct PrerequisiteRow: View {
     let prerequisite: NovaActPrerequisite
+    var onInstall: (() -> Void)?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -980,6 +1055,16 @@ struct PrerequisiteRow: View {
                 }
                 Spacer()
                 if case .failed = prerequisite.status {
+                    if let onInstall {
+                        Button {
+                            onInstall()
+                        } label: {
+                            Label("Install", systemImage: "arrow.down.circle")
+                                .imageScale(.small)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
                     Button {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(prerequisite.fixCommand, forType: .string)
@@ -990,6 +1075,10 @@ struct PrerequisiteRow: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .help("Copy fix command")
+                } else if case .installing = prerequisite.status {
+                    Text("Installing\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
 
@@ -1019,6 +1108,9 @@ struct PrerequisiteRow: View {
         case .failed:
             Image(systemName: "xmark.circle.fill")
                 .foregroundStyle(.red)
+        case .installing:
+            ProgressView()
+                .controlSize(.small)
         }
     }
 
@@ -1033,6 +1125,8 @@ struct PrerequisiteRow: View {
             Text(detail)
         case .failed(let detail):
             Text(detail)
+        case .installing:
+            Text("Installing…")
         }
     }
 }
