@@ -963,6 +963,15 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             sinkNode: sinkNode,
             stage: "pre-start"
         )
+        // Override to speaker BEFORE starting the engine so the route is
+        // settled when the graph spins up. Doing it after start can cause
+        // a transient route change that makes engine.isRunning flicker.
+        do {
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            AppLogger.audio.warning("Hands-free route override failed: \(error.localizedDescription, privacy: .public)")
+        }
+
         engine.prepare()
         do {
             try engine.start()
@@ -979,10 +988,15 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             )
             throw error
         }
-        do {
-            try session.overrideOutputAudioPort(.speaker)
-        } catch {
-            AppLogger.audio.warning("Hands-free route override failed: \(error.localizedDescription, privacy: .public)")
+
+        // The engine can take a moment to stabilize after start, especially
+        // on device with voice processing enabled. Retry briefly before
+        // declaring failure.
+        if !engine.isRunning {
+            for _ in 0..<5 {
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                if engine.isRunning { break }
+            }
         }
         if !engine.isRunning {
             logSessionState(session, stage: "start-failed")
