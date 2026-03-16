@@ -214,12 +214,16 @@ Respond with JSON only:
 
   private async triggerKbIngestion(): Promise<void> {
     if (!this.config.knowledgeBaseId || !this.config.knowledgeBaseDataSourceId) return;
-    await this.bedrockAgent.send(
-      new StartIngestionJobCommand({
-        knowledgeBaseId: this.config.knowledgeBaseId,
-        dataSourceId: this.config.knowledgeBaseDataSourceId,
-      }),
-    );
+    try {
+      await this.bedrockAgent.send(
+        new StartIngestionJobCommand({
+          knowledgeBaseId: this.config.knowledgeBaseId,
+          dataSourceId: this.config.knowledgeBaseDataSourceId,
+        }),
+      );
+    } catch (err) {
+      console.error("[memoryService] KB ingestion trigger failed:", err);
+    }
   }
 
   async retrieveContext(input: MemoryRetrieveInput): Promise<string | null> {
@@ -233,7 +237,7 @@ Respond with JSON only:
         new ListObjectsV2Command({
           Bucket: this.config.s3Bucket,
           Prefix: `${this.config.s3Prefix}${input.memoryUserKey}/`,
-          MaxKeys: 10,
+          MaxKeys: 100,
         }),
       );
 
@@ -255,6 +259,7 @@ Respond with JSON only:
             Key: obj.Key!,
           }),
         );
+        if (!response.Body) throw new Error("S3 GetObject returned empty Body");
         const text = await streamToString(response.Body as NodeJS.ReadableStream);
         return JSON.parse(text) as MemoryDocument;
       });
