@@ -338,6 +338,7 @@ final class ConversationViewModel: ObservableObject {
             toolRouter: toolRouter,
             appStateStore: appStateStore,
             sessionId: sessionId,
+            isTTSMuted: { [weak self] in self?.isTTSMuted ?? false },
             sendConductorEvent: { [weak self] event, surfaceErrors in
                 await self?.sendEventToConductor(event, surfaceErrors: surfaceErrors)
             },

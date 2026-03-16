@@ -18,6 +18,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
     private let handleError: @MainActor @Sendable (String) async -> Void
+    private let isTTSMuted: @MainActor @Sendable () -> Bool
 
     private let voiceActivityDetector = VoiceActivityDetector(
         config: VoiceActivityDetector.Config(
@@ -46,6 +47,7 @@ final class ConversationAudioPipeline: ObservableObject {
         appStateStore: AppStateStore,
         sessionId: String,
         remoteVoiceCapture: RemoteVoiceCapturing? = nil,
+        isTTSMuted: @escaping @MainActor @Sendable () -> Bool = { false },
         sendConductorEvent: @escaping @MainActor @Sendable (Event, Bool) async -> Void,
         handleError: @escaping @MainActor @Sendable (String) async -> Void
     ) {
@@ -57,6 +59,7 @@ final class ConversationAudioPipeline: ObservableObject {
         self.appStateStore = appStateStore
         self.sessionId = sessionId
         self.remoteVoiceCapture = remoteVoiceCapture ?? RemoteAudioCapture()
+        self.isTTSMuted = isTTSMuted
         self.sendConductorEvent = sendConductorEvent
         self.handleError = handleError
 
@@ -515,6 +518,7 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
         guard recordingMode == .vadAuto else { return }
+        guard !isTTSMuted() else { return }
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
         if remoteVoiceCapture.isStreaming {
             await stopRemoteVoiceCapture()

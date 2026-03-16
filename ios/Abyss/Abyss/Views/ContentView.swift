@@ -67,12 +67,7 @@ struct ContentView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         HStack(spacing: 16) {
                             if let vm = viewModel {
-                                Button {
-                                    vm.toggleTTSMute()
-                                } label: {
-                                    Image(systemName: vm.isTTSMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
-                                }
+                                TTSMuteButton(viewModel: vm)
                             }
                             Button {
                                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -456,6 +451,22 @@ private struct ChatContentView: View {
             Button("OK") { viewModel.showError = false }
         } message: {
             Text(viewModel.errorMessage ?? "An unknown error occurred.")
+        }
+    }
+}
+
+/// Isolated subview so `@ObservedObject` subscription is scoped to the view model,
+/// ensuring the icon re-renders when `isTTSMuted` changes.
+private struct TTSMuteButton: View {
+    @ObservedObject var viewModel: ConversationViewModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Button {
+            viewModel.toggleTTSMute()
+        } label: {
+            Image(systemName: viewModel.isTTSMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
         }
     }
 }
