@@ -146,3 +146,28 @@ test("bedrock provider turns tool results into user toolResult blocks", async ()
   assert.equal(toolResult?.toolUseId, "tool-1");
   assert.deepEqual(toolResult?.content?.[0]?.json, { ok: true });
 });
+
+test("bedrock provider system prompt includes GitHub tool guidance", async () => {
+  const client = new FakeBedrockClient({
+    output: {
+      message: {
+        content: [{ text: "Done." }],
+      },
+    },
+  });
+  const provider = new BedrockNovaProvider({
+    modelId: "us.amazon.nova-2-lite-v1:0",
+    region: "us-east-1",
+    maxTokens: 256,
+    partialDelayMs: 0,
+  }, client);
+
+  await provider.generateResponse([
+    { role: "user", content: "Check my PRs" },
+  ], TOOLS);
+
+  const systemPrompt = client.lastCommand?.input?.system?.[0]?.text;
+  assert.equal(typeof systemPrompt, "string");
+  assert.match(systemPrompt ?? "", /github\.repos\.list/);
+  assert.match(systemPrompt ?? "", /github\.pr\.create/);
+});

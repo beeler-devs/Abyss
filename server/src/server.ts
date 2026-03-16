@@ -15,6 +15,7 @@ import { CalendarClient } from "./integrations/calendarClient.js";
 import { CanvasClient } from "./integrations/canvasClient.js";
 import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
+import { GitHubClient } from "./integrations/githubClient.js";
 import { buildProvider } from "./providers/index.js";
 import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
 import { VoiceProvider } from "./voice/types.js";
@@ -111,6 +112,7 @@ const conductor = new ConductorService(
       googleClientSecret: GOOGLE_CLIENT_SECRET,
     }),
     canvasClient: new CanvasClient(),
+    githubClient: new GitHubClient(),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
       let devices = bridgeState
