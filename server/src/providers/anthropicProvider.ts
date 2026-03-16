@@ -219,6 +219,7 @@ export class AnthropicProvider implements ModelProvider {
       "If canvas_courses, canvas_assignments, canvas_todo, canvas_upcoming, canvas_grades, or canvas_announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
       "When the user asks about their classes or courses, call canvas_courses first to discover course IDs, then use those IDs for canvas_assignments, canvas_grades, or canvas_announcements.",
       "If canvas tools are NOT available but canvas_authenticate IS available, call canvas_authenticate when the user asks about coursework — this opens the settings screen on their device.",
+      "You have cross-session memory. When you see a message starting with '[Prior context from previous sessions]', that is a summary of earlier conversations with this user. Use it naturally — reference prior topics, remember what the user told you, and build on previous discussions. Never say you don't have memory of past conversations.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {
