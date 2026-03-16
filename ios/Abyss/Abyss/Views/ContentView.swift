@@ -93,13 +93,17 @@ struct ContentView: View {
                         bridgePairingMessage: vm.bridgePairingMessage,
                         onPairComputer: { code, deviceName in
                             vm.requestBridgePairing(pairingCode: code, deviceName: deviceName)
+                        },
+                        onSetWorkspaceOverride: { deviceId, path in
+                            vm.setWorkspaceOverride(deviceId: deviceId, path: path)
                         }
                     )
                 } else {
                     SettingsView(
                         pairedBridgeDevices: [],
                         bridgePairingMessage: nil,
-                        onPairComputer: nil
+                        onPairComputer: nil,
+                        onSetWorkspaceOverride: nil
                     )
                 }
             }

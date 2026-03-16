@@ -44,6 +44,7 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeExecOutput(BridgeExecOutput)
         case bridgeExecFinished(BridgeExecFinished)
         case preferencesSync(PreferencesSync)
+        case bridgeWorkspaceSet(BridgeWorkspaceSet)
     }
 
     // MARK: - Payloads
@@ -190,6 +191,7 @@ struct Event: Identifiable, Codable, Sendable {
         let deviceId: String
         let deviceName: String
         let status: String
+        let workspaceRoot: String?
     }
 
     struct BridgeStatus: Codable, Sendable {
@@ -216,6 +218,11 @@ struct Event: Identifiable, Codable, Sendable {
 
     struct PreferencesSync: Codable, Sendable {
         let preferences: [String: String]
+    }
+
+    struct BridgeWorkspaceSet: Codable, Sendable {
+        let deviceId: String
+        let workspacePath: String
     }
 }
 
@@ -393,6 +400,10 @@ extension Event {
         let payload = BridgePairRequest(pairingCode: code, deviceName: deviceName)
         return Event(sessionId: sessionId, kind: .bridgePairRequest(payload))
     }
+
+    static func bridgeWorkspaceSet(deviceId: String, workspacePath: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .bridgeWorkspaceSet(BridgeWorkspaceSet(deviceId: deviceId, workspacePath: workspacePath)))
+    }
 }
 
 // MARK: - Display Helpers
@@ -427,6 +438,7 @@ extension Event.Kind {
         case .bridgeExecOutput(let payload): return "bridge.exec.output: \(payload.commandId.prefix(8))"
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
         case .preferencesSync: return "preferences.sync"
+        case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
         }
     }
 }

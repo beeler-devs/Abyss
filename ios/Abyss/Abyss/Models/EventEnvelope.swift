@@ -179,11 +179,15 @@ struct EventEnvelope: Codable, Sendable {
             payload = p
         case .bridgePaired(let value):
             type = "bridge.paired"
-            payload = [
+            var p: [String: JSONValue] = [
                 "deviceId": .string(value.deviceId),
                 "deviceName": .string(value.deviceName),
                 "status": .string(value.status),
             ]
+            if let workspaceRoot = value.workspaceRoot {
+                p["workspaceRoot"] = .string(workspaceRoot)
+            }
+            payload = p
         case .bridgeStatus(let value):
             var p: [String: JSONValue] = [
                 "deviceId": .string(value.deviceId),
@@ -215,6 +219,12 @@ struct EventEnvelope: Codable, Sendable {
         case .preferencesSync(let value):
             type = "preferences.sync"
             payload = ["preferences": .object(value.preferences.mapValues { .string($0) })]
+        case .bridgeWorkspaceSet(let value):
+            type = "bridge.workspace.set"
+            payload = [
+                "deviceId": .string(value.deviceId),
+                "workspacePath": .string(value.workspacePath),
+            ]
         }
     }
 
@@ -342,7 +352,8 @@ struct EventEnvelope: Codable, Sendable {
             kind = .bridgePaired(Event.BridgePaired(
                 deviceId: try requireString("deviceId"),
                 deviceName: try requireString("deviceName"),
-                status: payload["status"]?.stringValue ?? "online"
+                status: payload["status"]?.stringValue ?? "online",
+                workspaceRoot: payload["workspaceRoot"]?.stringValue
             ))
         case "bridge.status":
             kind = .bridgeStatus(Event.BridgeStatus(

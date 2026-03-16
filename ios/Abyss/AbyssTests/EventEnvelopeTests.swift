@@ -42,4 +42,36 @@ final class EventEnvelopeTests: XCTestCase {
         XCTAssertEqual(envelope.payload["sessionId"]?.stringValue, "session-abc")
         XCTAssertNotNil(envelope.payload["timestamp"]?.stringValue)
     }
+
+    func testBridgeWorkspaceSetEncodesCorrectly() {
+        let event = Event.bridgeWorkspaceSet(deviceId: "dev-1", workspacePath: "/Users/benton/Dev", sessionId: "session-1")
+        let envelope = EventEnvelope(event: event)
+        XCTAssertEqual(envelope.type, "bridge.workspace.set")
+        XCTAssertEqual(envelope.payload["deviceId"]?.stringValue, "dev-1")
+        XCTAssertEqual(envelope.payload["workspacePath"]?.stringValue, "/Users/benton/Dev")
+    }
+
+    func testBridgePairedDecodesWorkspaceRoot() throws {
+        let json = """
+        {"id":"abc","type":"bridge.paired","timestamp":"2026-03-15T00:00:00.000Z","protocolVersion":1,"sessionId":"s1","payload":{"deviceId":"dev-1","deviceName":"My Mac","status":"online","workspaceRoot":"/Users/benton/Dev"}}
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let envelope = try decoder.decode(EventEnvelope.self, from: json)
+        let event = try envelope.toEvent()
+        guard case .bridgePaired(let paired) = event.kind else { XCTFail("wrong kind"); return }
+        XCTAssertEqual(paired.workspaceRoot, "/Users/benton/Dev")
+    }
+
+    func testBridgePairedDecodesWithoutWorkspaceRoot() throws {
+        let json = """
+        {"id":"abc","type":"bridge.paired","timestamp":"2026-03-15T00:00:00.000Z","protocolVersion":1,"sessionId":"s1","payload":{"deviceId":"dev-1","deviceName":"My Mac","status":"online"}}
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let envelope = try decoder.decode(EventEnvelope.self, from: json)
+        let event = try envelope.toEvent()
+        guard case .bridgePaired(let paired) = event.kind else { XCTFail("wrong kind"); return }
+        XCTAssertNil(paired.workspaceRoot)
+    }
 }

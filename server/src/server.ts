@@ -263,6 +263,25 @@ wss.on("connection", (socket, request) => {
       emitBridgeStatusSnapshot(event.sessionId, socket);
     }
 
+    if (event.type === "bridge.workspace.set") {
+      const sessionId = context.sessionId;
+      const deviceId = typeof event.payload.deviceId === "string" ? event.payload.deviceId : undefined;
+      const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
+      if (!deviceId || !workspacePath || workspacePath.length > 4096) return;
+
+      const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
+      if (!resolved.device) return;
+
+      const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
+      if (bridgeSocket) {
+        safeSend(bridgeSocket, makeEvent("bridge.workspace.set", resolved.device.sessionId, {
+          deviceId,
+          workspacePath,
+        }));
+      }
+      return;
+    }
+
     if (event.type === "audio.output.interrupted") {
       if (voiceProvider) {
         await voiceProvider.interrupt(event.sessionId);
@@ -415,6 +434,7 @@ async function handleBridgeRegister(
     emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
       deviceId: registration.device.deviceId,
       deviceName: registration.device.deviceName,
+      workspaceRoot: registration.device.workspaceRoot,
       status: "online",
     }));
 

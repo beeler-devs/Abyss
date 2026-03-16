@@ -5,6 +5,7 @@ struct SettingsView: View {
     let pairedBridgeDevices: [PairedBridgeDevice]
     let bridgePairingMessage: String?
     let onPairComputer: ((String, String?) -> Void)?
+    let onSetWorkspaceOverride: ((String, String?) -> Void)?
     @EnvironmentObject private var gmailAuthManager: GmailAuthManager
     @EnvironmentObject private var canvasManager: CanvasManager
     @Environment(\.dismiss) private var dismiss
@@ -239,17 +240,20 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         ForEach(pairedBridgeDevices) { device in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(device.deviceName)
-                                    Text(device.deviceId)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(device.deviceName)
+                                        Text(device.deviceId)
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Text(device.status)
+                                        .font(.caption)
+                                        .foregroundStyle(device.status == "online" ? .green : .secondary)
                                 }
-                                Spacer()
-                                Text(device.status)
-                                    .font(.caption)
-                                    .foregroundStyle(device.status == "online" ? .green : .secondary)
+                                WorkspaceField(device: device, onSetWorkspaceOverride: onSetWorkspaceOverride)
                             }
                         }
                     }
@@ -473,6 +477,37 @@ private struct CanvasTokenPasteView: View {
             }
         }
         .presentationDetents([.height(200)])
+    }
+}
+
+// MARK: - Workspace Field
+
+private struct WorkspaceField: View {
+    let device: PairedBridgeDevice
+    let onSetWorkspaceOverride: ((String, String?) -> Void)?
+    @State private var text: String
+
+    init(device: PairedBridgeDevice, onSetWorkspaceOverride: ((String, String?) -> Void)?) {
+        self.device = device
+        self.onSetWorkspaceOverride = onSetWorkspaceOverride
+        _text = State(initialValue: device.workspaceOverride ?? "")
+    }
+
+    var body: some View {
+        TextField(device.workspaceRoot ?? "/path/to/workspace", text: $text)
+            .font(.system(.caption, design: .monospaced))
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+            .foregroundStyle(.secondary)
+            .onSubmit { commit() }
+            .onChange(of: device.workspaceOverride) { _, newValue in
+                text = newValue ?? ""
+            }
+    }
+
+    private func commit() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        onSetWorkspaceOverride?(device.deviceId, trimmed.isEmpty ? nil : trimmed)
     }
 }
 
