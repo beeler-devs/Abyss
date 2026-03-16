@@ -1163,23 +1163,60 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
-    // Immediate ack — Nova Sonic gets its tool result instantly, no parse error.
-    this.sendToolResult(session, toolCall.id, JSON.stringify({
-      status: "started_in_background",
-      message: "Claude Code has been started. The result will be provided when the task completes. Continue the conversation normally in the meantime.",
-    }));
-
-    // Do NOT set toolExecutionInFlight — audio must keep flowing.
-    session.backgroundToolCount += 1;
-    logger.info(`[LONG_RUNNING] started ${toolCall.name} in background (count=${session.backgroundToolCount})`, { sessionId: session.sessionId });
-
     const executeTool = session.context.executeTool;
     const emit = session.context.emit;
 
-    // Fire-and-forget async execution
+    // Race the tool execution against a short delay. If the tool resolves
+    // quickly (e.g. config error, missing permissions), return it as a normal
+    // tool result so Nova Sonic can tell the user what happened. Only if the
+    // tool is still running after the grace period do we send the "started in
+    // background" ack and let it continue asynchronously.
+    const GRACE_MS = 2_000;
+    const toolPromise = executeTool(session.sessionId, toolCall, emit);
+    const graceTimeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), GRACE_MS),
+    );
+
+    // Prevent the assistant turn finalize timer from firing while we wait.
+    session.toolExecutionInFlight = true;
+
     (async () => {
+      const raceResult = await Promise.race([toolPromise, graceTimeout]);
+
+      if (raceResult !== "timeout") {
+        // Tool resolved within the grace period — treat as a normal
+        // (synchronous) tool result so Nova Sonic speaks the outcome directly.
+        if (session.closed) { return; }
+
+        if (raceResult.error) {
+          session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+        } else {
+          session.toolFailureCounts.delete(circuitKey);
+        }
+
+        const resultStr = raceResult.error
+          ? JSON.stringify({ error: raceResult.error })
+          : (raceResult.result ?? "{}");
+
+        logger.info(`[LONG_RUNNING] ${toolCall.name} resolved within grace period (${resultStr.length} chars), returning as normal tool result`, { sessionId: session.sessionId });
+        this.sendToolResult(session, toolCall.id, resultStr);
+        session.toolExecutionInFlight = false;
+        return;
+      }
+
+      // Tool is still running — send immediate ack so Nova Sonic doesn't block.
+      logger.info(`[LONG_RUNNING] ${toolCall.name} still running after ${GRACE_MS}ms, sending background ack`, { sessionId: session.sessionId });
+      this.sendToolResult(session, toolCall.id, JSON.stringify({
+        status: "started_in_background",
+        message: "Claude Code has been started on the Mac. The result will be provided when the task completes. Tell the user you've kicked it off and they can continue talking in the meantime.",
+      }));
+      session.toolExecutionInFlight = false;
+
+      session.backgroundToolCount += 1;
+      logger.info(`[LONG_RUNNING] started ${toolCall.name} in background (count=${session.backgroundToolCount})`, { sessionId: session.sessionId });
+
       try {
-        const result = await executeTool(session.sessionId, toolCall, emit);
+        const result = await toolPromise;
 
         if (session.closed) {
           logger.info(`[LONG_RUNNING] session closed during ${toolCall.name}, dropping result`, { sessionId: session.sessionId });
@@ -1198,7 +1235,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           : `Background tool ${toolCall.name} completed. Result: ${result.result ?? "success"}`;
 
         logger.info(`[LONG_RUNNING] ${toolCall.name} finished, injecting result (${summary.length} chars)`, { sessionId: session.sessionId });
-        this.injectUserText(session, `[SYSTEM: ${summary}]\nSummarize this result to the user.`);
+        this.injectUserText(session, `[SYSTEM: ${summary}]\nSummarize this result to the user concisely.`);
       } catch (error) {
         if (session.closed) {
           return;
