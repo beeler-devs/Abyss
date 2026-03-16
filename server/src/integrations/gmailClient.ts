@@ -75,6 +75,7 @@ export class GmailClient {
     }
 
     try {
+      logger.info(`gmail token refresh: clientId=${this.clientId.slice(0, 12)}... hasSecret=${!!this.clientSecret}`);
       const refreshed = await refreshGoogleToken(
         session.gmailRefreshToken,
         this.clientId,
@@ -82,8 +83,10 @@ export class GmailClient {
       );
       session.gmailAccessToken = refreshed.access_token;
       session.gmailTokenExpiresAt = Date.now() + refreshed.expires_in * 1000;
+      logger.info("gmail token refresh: success");
       return refreshed.access_token;
-    } catch {
+    } catch (err) {
+      logger.warn(`gmail token refresh failed: ${err instanceof Error ? err.message : String(err)}`);
       throw new Error("gmail_token_expired");
     }
   }

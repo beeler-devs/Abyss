@@ -628,6 +628,9 @@ final class ConversationViewModel: ObservableObject {
     }
 
     private func connectConductorClient(_ client: ConductorClient) async throws {
+        // Refresh Gmail token on-device before connecting (server can't refresh iOS OAuth tokens)
+        await gmailAuthManager?.refreshTokenIfNeeded()
+
         let githubToken = GitHubAuthManager.loadToken()
         let gmailAccessToken = GmailAuthManager.loadAccessToken()
         let gmailRefreshToken = GmailAuthManager.loadRefreshToken()

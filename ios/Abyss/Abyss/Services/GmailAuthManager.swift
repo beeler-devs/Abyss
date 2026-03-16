@@ -67,6 +67,28 @@ final class GmailAuthManager: NSObject, ObservableObject {
         }
     }
 
+    /// Refreshes the access token on-device using the stored refresh token.
+    /// Must be called from iOS because Google rejects server-side refresh for iOS OAuth clients.
+    func refreshTokenIfNeeded() async {
+        guard let clientId = Config.googleClientId, !clientId.isEmpty else { return }
+        guard let refreshToken = Self.loadRefreshToken() else { return }
+
+        // Check if token is still valid (with 5-minute buffer)
+        if let expiresAt = Self.loadExpiresAt(), Date().timeIntervalSince1970 < expiresAt - 300 {
+            return // Token still valid
+        }
+
+        do {
+            let result = try await refreshAccessToken(refreshToken: refreshToken, clientId: clientId)
+            Self.saveAccessToken(result.accessToken)
+            Self.saveExpiresAt(Date().timeIntervalSince1970 + result.expiresIn)
+            isAuthenticated = true
+        } catch {
+            // Refresh failed — token may be revoked. User will need to re-authenticate.
+            AppLogger.conductor.warning("Gmail token refresh failed: \(error.localizedDescription)")
+        }
+    }
+
     func signOut() {
         Self.deleteToken(account: Self.accessTokenAccount)
         Self.deleteToken(account: Self.refreshTokenAccount)
@@ -212,6 +234,48 @@ final class GmailAuthManager: NSObject, ObservableObject {
         return TokenResponse(
             accessToken: accessToken,
             refreshToken: json["refresh_token"] as? String,
+            expiresIn: (json["expires_in"] as? Double) ?? 3600
+        )
+    }
+
+    // MARK: - Token Refresh (on-device, no client_secret for iOS PKCE clients)
+
+    private struct RefreshResult {
+        let accessToken: String
+        let expiresIn: Double
+    }
+
+    private func refreshAccessToken(refreshToken: String, clientId: String) async throws -> RefreshResult {
+        let params: [String: String] = [
+            "refresh_token": refreshToken,
+            "client_id": clientId,
+            "grant_type": "refresh_token",
+        ]
+
+        let body = params
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
+            .joined(separator: "&")
+
+        var request = URLRequest(url: URL(string: "https://oauth2.googleapis.com/token")!)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data(body.utf8)
+        request.timeoutInterval = 15
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let text = String(data: data, encoding: .utf8) ?? "unknown"
+            throw AuthError.exchangeFailed(text)
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let accessToken = json["access_token"] as? String, !accessToken.isEmpty else {
+            throw AuthError.missingToken
+        }
+
+        return RefreshResult(
+            accessToken: accessToken,
             expiresIn: (json["expires_in"] as? Double) ?? 3600
         )
     }
