@@ -92,6 +92,10 @@ struct TranscriptView: View {
                             )
                             .padding(.horizontal, 12)
                             .id(item.id)
+
+                        case .messageActions(let message):
+                            MessageActionsView(message: message)
+                                .id(item.id)
                         }
                     }
 
@@ -226,6 +230,10 @@ struct TranscriptView: View {
                     items.append(.canvasCard(entry.1))
                 }
             }
+            // Emit action buttons after any anchored cards for assistant messages
+            if message.role == .assistant && !message.isPartial && !message.text.isEmpty {
+                items.append(.messageActions(message))
+            }
         }
 
         for card in agentProgressCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
@@ -259,6 +267,7 @@ private enum TranscriptItem: Identifiable {
     case calendarEventCard(CalendarEventCard)
     case calendarDraftCard(CalendarDraftCard)
     case canvasCard(CanvasCard)
+    case messageActions(ConversationMessage)
 
     var id: String {
         switch self {
@@ -276,6 +285,8 @@ private enum TranscriptItem: Identifiable {
             return "cal-draft-\(card.id.uuidString)"
         case .canvasCard(let card):
             return "canvas-\(card.id.uuidString)"
+        case .messageActions(let message):
+            return "actions-\(message.id.uuidString)"
         }
     }
 
@@ -287,7 +298,6 @@ private enum TranscriptItem: Identifiable {
 struct MessageBubble: View {
     let message: ConversationMessage
     @Environment(\.colorScheme) private var colorScheme
-    @State private var didCopy = false
 
     private var isUser: Bool { message.role == .user }
 
@@ -303,10 +313,6 @@ struct MessageBubble: View {
                 } else {
                     MarkdownTextView(text: message.text, foregroundColor: textColor)
                 }
-
-                if showsAssistantActions {
-                    assistantActions
-                }
             }
             .padding(.horizontal, isUser ? 14 : 0)
             .padding(.vertical, isUser ? 10 : 0)
@@ -317,14 +323,33 @@ struct MessageBubble: View {
         .padding(.vertical, 2)
     }
 
-    private var showsAssistantActions: Bool {
-        !isUser && !message.isPartial && !message.text.isEmpty
+    private var bubbleBackground: some View {
+        Group {
+            if isUser {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(AppTheme.userBubbleBackground(for: colorScheme))
+            } else {
+                Color.clear
+            }
+        }
     }
 
-    private var assistantActions: some View {
+    private var textColor: Color {
+        if isUser {
+            return AppTheme.userBubbleText(for: colorScheme)
+        }
+        return message.isPartial ? .secondary : .primary
+    }
+}
+
+private struct MessageActionsView: View {
+    let message: ConversationMessage
+    @State private var didCopy = false
+
+    var body: some View {
         HStack(spacing: 16) {
             Button {
-                copyAssistantMessage()
+                copyMessage()
             } label: {
                 Image(systemName: didCopy ? "checkmark" : "square.on.square")
             }
@@ -347,10 +372,11 @@ struct MessageBubble: View {
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
         .buttonStyle(.plain)
+        .padding(.horizontal)
         .padding(.top, 2)
     }
 
-    private func copyAssistantMessage() {
+    private func copyMessage() {
 #if canImport(UIKit)
         UIPasteboard.general.string = message.text
 #elseif canImport(AppKit)
@@ -369,23 +395,5 @@ struct MessageBubble: View {
                 }
             }
         }
-    }
-
-    private var bubbleBackground: some View {
-        Group {
-            if isUser {
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(AppTheme.userBubbleBackground(for: colorScheme))
-            } else {
-                Color.clear
-            }
-        }
-    }
-
-    private var textColor: Color {
-        if isUser {
-            return AppTheme.userBubbleText(for: colorScheme)
-        }
-        return message.isPartial ? .secondary : .primary
     }
 }

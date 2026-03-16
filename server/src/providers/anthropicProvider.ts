@@ -216,6 +216,7 @@ export class AnthropicProvider implements ModelProvider {
       "If canvas_courses, canvas_assignments, canvas_todo, canvas_upcoming, canvas_grades, or canvas_announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
       "When the user asks about their classes or courses, call canvas_courses first to discover course IDs, then use those IDs for canvas_assignments, canvas_grades, or canvas_announcements.",
       "If canvas tools are NOT available but canvas_authenticate IS available, call canvas_authenticate when the user asks about coursework — this opens the settings screen on their device.",
+      "Never use cursor_agent_spawn or agent_spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail_*, calendar_*, canvas_*).",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {

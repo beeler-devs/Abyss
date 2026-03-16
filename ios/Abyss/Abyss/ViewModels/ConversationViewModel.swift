@@ -245,6 +245,21 @@ final class ConversationViewModel: ObservableObject {
                 await self.configureConductorClient(forceReconnect: true)
             }
         ))
+
+        // When the user authenticates Gmail in Settings (outside the tool flow),
+        // reconnect the WebSocket so the server receives the new tokens.
+        manager.$isAuthenticated
+            .dropFirst()
+            .removeDuplicates()
+            .filter { $0 == true }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                Task {
+                    await self.configureConductorClient(forceReconnect: true)
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func setCanvasManager(_ manager: CanvasManager) {
