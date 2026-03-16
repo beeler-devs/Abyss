@@ -6,6 +6,8 @@ struct PairedBridgeDevice: Codable, Identifiable, Equatable {
     let deviceName: String
     let status: String
     let lastSeen: String?
+    let workspaceRoot: String?
+    let workspaceOverride: String?
 
     var id: String { deviceId }
 }
@@ -121,31 +123,34 @@ final class ConversationEventCoordinator: ObservableObject {
 
         case .bridgePaired(let paired):
             bridgePairingMessage = "Paired with \(paired.deviceName)."
+            let existingOverride = pairedBridgeDevices
+                .first(where: { $0.deviceId == paired.deviceId })?.workspaceOverride
             upsertPairedBridgeDevice(
                 deviceId: paired.deviceId,
                 deviceName: paired.deviceName,
                 status: paired.status,
-                lastSeen: nil
+                lastSeen: nil,
+                workspaceRoot: paired.workspaceRoot,
+                workspaceOverride: existingOverride
             )
+            if let override = existingOverride, !override.isEmpty {
+                sendWorkspaceSet(deviceId: paired.deviceId, path: override)
+            }
             eventBus.emit(event)
 
         case .bridgeStatus(let status):
-            if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == status.deviceId }) {
-                let existing = pairedBridgeDevices[index]
-                pairedBridgeDevices[index] = PairedBridgeDevice(
-                    deviceId: existing.deviceId,
-                    deviceName: existing.deviceName,
-                    status: status.status,
-                    lastSeen: status.lastSeen
-                )
-                persistPairedBridgeDevices()
-            } else {
-                upsertPairedBridgeDevice(
-                    deviceId: status.deviceId,
-                    deviceName: status.deviceId,
-                    status: status.status,
-                    lastSeen: status.lastSeen
-                )
+            let existing = pairedBridgeDevices.first(where: { $0.deviceId == status.deviceId })
+            upsertPairedBridgeDevice(
+                deviceId: status.deviceId,
+                deviceName: existing?.deviceName ?? status.deviceId,
+                status: status.status,
+                lastSeen: status.lastSeen
+                // workspaceRoot/workspaceOverride default nil → helper preserves existing values
+            )
+            if existing?.status != "online",
+               status.status == "online",
+               let override = existing?.workspaceOverride, !override.isEmpty {
+                sendWorkspaceSet(deviceId: status.deviceId, path: override)
             }
             eventBus.emit(event)
 
@@ -181,7 +186,9 @@ final class ConversationEventCoordinator: ObservableObject {
                 deviceId: device.deviceId,
                 deviceName: device.deviceName,
                 status: "offline",
-                lastSeen: device.lastSeen
+                lastSeen: device.lastSeen,
+                workspaceRoot: device.workspaceRoot,
+                workspaceOverride: device.workspaceOverride
             )
         }
 
@@ -195,17 +202,48 @@ final class ConversationEventCoordinator: ObservableObject {
         UserDefaults.standard.set(data, forKey: Self.pairedBridgeDevicesKey)
     }
 
+    func setWorkspaceOverride(deviceId: String, path: String?) {
+        guard let existing = pairedBridgeDevices.first(where: { $0.deviceId == deviceId }) else { return }
+        let trimmed = path?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newOverride = (trimmed?.isEmpty == false) ? trimmed : nil
+        let updated = PairedBridgeDevice(
+            deviceId: existing.deviceId,
+            deviceName: existing.deviceName,
+            status: existing.status,
+            lastSeen: existing.lastSeen,
+            workspaceRoot: existing.workspaceRoot,
+            workspaceOverride: newOverride
+        )
+        if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {
+            pairedBridgeDevices[index] = updated
+        }
+        persistPairedBridgeDevices()
+        if let override = newOverride, existing.status == "online" {
+            sendWorkspaceSet(deviceId: deviceId, path: override)
+        }
+    }
+
+    private func sendWorkspaceSet(deviceId: String, path: String) {
+        let event = Event.bridgeWorkspaceSet(deviceId: deviceId, workspacePath: path, sessionId: sessionId)
+        Task { await sendConductorEvent(event, true) }
+    }
+
     private func upsertPairedBridgeDevice(
         deviceId: String,
         deviceName: String,
         status: String,
-        lastSeen: String?
+        lastSeen: String?,
+        workspaceRoot: String? = nil,
+        workspaceOverride: String? = nil
     ) {
+        let existing = pairedBridgeDevices.first(where: { $0.deviceId == deviceId })
         let updated = PairedBridgeDevice(
             deviceId: deviceId,
             deviceName: deviceName,
             status: status,
-            lastSeen: lastSeen
+            lastSeen: lastSeen,
+            workspaceRoot: workspaceRoot ?? existing?.workspaceRoot,
+            workspaceOverride: workspaceOverride ?? existing?.workspaceOverride
         )
 
         if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {
