@@ -287,6 +287,58 @@ test("nova-sonic emits partial convo.appendMessage per sentence, finalizes on au
   assert.equal(eventsOfType(harness.emitted, "assistant.speech.final")[0]?.payload.text, "First sentence. Second sentence.");
 });
 
+test("nova-sonic finalizes accumulated assistant text on completionEnd even before audio contentEnd", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "text-finalize-1",
+      completionId: "completion-finalize-1",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "text-finalize-1", content: "Sentence one." } });
+  harness.client.emitEvent({ contentEnd: { contentId: "text-finalize-1", type: "TEXT", stopReason: "END_TURN" } });
+  harness.client.emitEvent({
+    completionEnd: {
+      completionId: "completion-finalize-1",
+      stopReason: "END_TURN",
+    },
+  });
+
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.speech.final").length === 1);
+
+  const appendCalls = findToolCalls(harness.emitted, "convo.appendMessage");
+  assert.equal(appendCalls.length, 2);
+  assert.deepEqual(JSON.parse(String(appendCalls[0]?.payload.arguments)), {
+    role: "assistant",
+    text: "Sentence one.",
+    isPartial: true,
+  });
+  assert.deepEqual(JSON.parse(String(appendCalls[1]?.payload.arguments)), {
+    role: "assistant",
+    text: "Sentence one.",
+    isPartial: false,
+  });
+
+  harness.client.emitEvent({
+    contentStart: { contentId: "audio-finalize-1", completionId: "completion-finalize-1", role: "ASSISTANT", type: "AUDIO" },
+  });
+  harness.client.emitEvent({ contentEnd: { contentId: "audio-finalize-1", type: "AUDIO", stopReason: "END_TURN" } });
+
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.end").length === 1);
+  assert.equal(eventsOfType(harness.emitted, "assistant.speech.final").length, 1);
+  assert.equal(findToolCalls(harness.emitted, "convo.appendMessage").length, 2);
+});
+
 test("nova-sonic emits assistant audio end and idle once per completion", async (t) => {
   const harness = createHarness();
   t.after(async () => {
