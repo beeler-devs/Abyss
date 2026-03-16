@@ -20,7 +20,7 @@ struct TranscriptView: View {
     var emailCards: [EmailCard] = []
     var onToggleEmailExpanded: (UUID) -> Void = { _ in }
     var emailDraftCards: [EmailDraftCard] = []
-    var onSendDraft: (String) -> Void = { _ in }
+    var onSendDraft: (String, String, String, String) -> Void = { _, _, _, _ in }  // (callId, to, subject, body)
     var onCancelDraft: (String) -> Void = { _ in }
     var calendarEventCards: [CalendarEventCard] = []
     var onToggleCalendarExpanded: (UUID) -> Void = { _ in }
@@ -64,7 +64,7 @@ struct TranscriptView: View {
                         case .emailDraftCard(let card):
                             EmailDraftCardView(
                                 card: card,
-                                onSend: { onSendDraft(card.callId) },
+                                onSend: { to, subject, body in onSendDraft(card.callId, to, subject, body) },
                                 onCancel: { onCancelDraft(card.callId) }
                             )
                             .padding(.horizontal, 12)

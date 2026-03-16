@@ -1129,6 +1129,45 @@ export class ConductorService {
         return;
       }
 
+      case "gmail.send.execute": {
+        const callId = asString(event.payload.callId);
+        const confirmed = event.payload.confirmed === true;
+        if (!callId) return;
+
+        const pending = session.pendingGmailSends?.get(callId);
+        session.pendingGmailSends?.delete(callId);
+
+        if (!pending || !confirmed) {
+          logger.info(`gmail.send.execute ${confirmed ? "no pending" : "cancelled"} callId=${callId}`, { sessionId: session.sessionId });
+          if (!confirmed) {
+            emit(makeEvent("gmail.send.result", session.sessionId, { callId, success: false, error: "User cancelled" }));
+          }
+          return;
+        }
+
+        // Use edited values from the event payload, falling back to original
+        const to = asString(event.payload.to) || pending.to;
+        const subject = asString(event.payload.subject) || pending.subject;
+        const body = asString(event.payload.body) || pending.body;
+        const cc = asString(event.payload.cc) || pending.cc || undefined;
+
+        try {
+          if (pending.isReply && pending.messageId) {
+            const result = await this.gmailClient!.reply(session, pending.messageId, { body, to, cc });
+            logger.info(`gmail.reply sent via execute callId=${callId}`, { sessionId: session.sessionId });
+            emit(makeEvent("gmail.send.result", session.sessionId, { callId, success: true, ...result }));
+          } else {
+            const result = await this.gmailClient!.send(session, { to, cc, subject, body });
+            logger.info(`gmail.send sent via execute callId=${callId}`, { sessionId: session.sessionId });
+            emit(makeEvent("gmail.send.result", session.sessionId, { callId, success: true, ...result }));
+          }
+        } catch (err) {
+          logger.error(`gmail.send.execute failed callId=${callId}: ${String(err)}`, { sessionId: session.sessionId });
+          emit(makeEvent("gmail.send.result", session.sessionId, { callId, success: false, error: String(err) }));
+        }
+        return;
+      }
+
       case "audio.output.interrupted": {
         if (this.bridgeToolExecutor && session.activeBridgeCommandId) {
           const cancelArgs: Record<string, unknown> = {
@@ -2275,31 +2314,20 @@ export class ConductorService {
             toolArguments: { to, cc, subject, body },
           });
           emit(confirmEnvelope);
-          logger.info(`gmail.send waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          // Wait for user confirmation (120s timeout — user needs time to read)
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            logger.warn(`gmail.send confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
-            return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
-          }
+          // Store pending send details for async execution on confirmation
+          if (!session.pendingGmailSends) session.pendingGmailSends = new Map();
+          session.pendingGmailSends.set(confirmCallId, { to, cc, subject, body, isReply: false });
+          logger.info(`gmail.send draft emitted, awaiting user confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          let confirmed = false;
-          try {
-            const parsed = JSON.parse(confirmResult);
-            confirmed = parsed.confirmed === true;
-          } catch {
-            return { result: null, error: "gmail_send_invalid_confirmation" };
-          }
-
-          logger.info(`gmail.send confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
-
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
-          }
-
-          const sendResult = await this.gmailClient.send(session, { to, cc, subject, body });
-          return { result: stableJSONStringify(sendResult), error: null };
+          // Return immediately — don't block the conductor loop
+          return {
+            result: stableJSONStringify({
+              status: "pending_confirmation",
+              message: "Email draft shown to user. They can edit fields and confirm or cancel. The email will be sent when they confirm.",
+            }),
+            error: null,
+          };
         }
 
         case "gmail.reply": {
@@ -2328,30 +2356,20 @@ export class ConductorService {
             toolArguments: { messageId, body, to, cc },
           });
           emit(confirmEnvelope);
-          logger.info(`gmail.reply waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            logger.warn(`gmail.reply confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
-            return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
-          }
+          // Store pending reply details for async execution on confirmation
+          if (!session.pendingGmailSends) session.pendingGmailSends = new Map();
+          session.pendingGmailSends.set(confirmCallId, { to: to ?? "", cc, subject: "", body, messageId, isReply: true });
+          logger.info(`gmail.reply draft emitted, awaiting user confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          let confirmed = false;
-          try {
-            const parsed = JSON.parse(confirmResult);
-            confirmed = parsed.confirmed === true;
-          } catch {
-            return { result: null, error: "gmail_reply_invalid_confirmation" };
-          }
-
-          logger.info(`gmail.reply confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
-
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };
-          }
-
-          const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
-          return { result: stableJSONStringify(replyResult), error: null };
+          // Return immediately — don't block the conductor loop
+          return {
+            result: stableJSONStringify({
+              status: "pending_confirmation",
+              message: "Reply draft shown to user. They can edit and confirm or cancel. The reply will be sent when they confirm.",
+            }),
+            error: null,
+          };
         }
 
         // Canvas LMS tools

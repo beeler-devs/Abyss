@@ -242,6 +242,26 @@ struct EventEnvelope: Codable, Sendable {
                 "deviceId": .string(value.deviceId),
                 "workspacePath": .string(value.workspacePath),
             ]
+        case .gmailSendExecute(let value):
+            type = "gmail.send.execute"
+            var p: [String: JSONValue] = [
+                "callId": .string(value.callId),
+                "confirmed": .bool(value.confirmed),
+            ]
+            if let to = value.to { p["to"] = .string(to) }
+            if let cc = value.cc { p["cc"] = .string(cc) }
+            if let subject = value.subject { p["subject"] = .string(subject) }
+            if let body = value.body { p["body"] = .string(body) }
+            if let messageId = value.messageId { p["messageId"] = .string(messageId) }
+            payload = p
+        case .gmailSendResult(let value):
+            type = "gmail.send.result"
+            var p: [String: JSONValue] = [
+                "callId": .string(value.callId),
+                "success": .bool(value.success),
+            ]
+            if let error = value.error { p["error"] = .string(error) }
+            payload = p
         }
     }
 
@@ -416,6 +436,22 @@ struct EventEnvelope: Codable, Sendable {
             kind = .error(Event.ErrorInfo(
                 code: "bridge_device_selection_required",
                 message: "Multiple paired computers are available. Please choose one."
+            ))
+        case "gmail.send.execute":
+            kind = .gmailSendExecute(Event.GmailSendExecute(
+                callId: try requireString("callId"),
+                confirmed: payload["confirmed"]?.boolValue ?? false,
+                to: payload["to"]?.stringValue,
+                cc: payload["cc"]?.stringValue,
+                subject: payload["subject"]?.stringValue,
+                body: payload["body"]?.stringValue,
+                messageId: payload["messageId"]?.stringValue
+            ))
+        case "gmail.send.result":
+            kind = .gmailSendResult(Event.GmailSendResult(
+                callId: try requireString("callId"),
+                success: payload["success"]?.boolValue ?? false,
+                error: payload["error"]?.stringValue
             ))
         default:
             throw ConversionError.unsupportedType(type)

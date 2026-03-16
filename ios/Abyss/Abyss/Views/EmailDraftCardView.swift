@@ -2,9 +2,22 @@ import SwiftUI
 
 struct EmailDraftCardView: View {
     let card: EmailDraftCard
-    let onSend: () -> Void
+    let onSend: (String, String, String) -> Void  // (to, subject, body)
     let onCancel: () -> Void
     @Environment(\.colorScheme) private var colorScheme
+
+    @State private var editTo: String
+    @State private var editSubject: String
+    @State private var editBody: String
+
+    init(card: EmailDraftCard, onSend: @escaping (String, String, String) -> Void, onCancel: @escaping () -> Void) {
+        self.card = card
+        self.onSend = onSend
+        self.onCancel = onCancel
+        _editTo = State(initialValue: card.to)
+        _editSubject = State(initialValue: card.subject)
+        _editBody = State(initialValue: card.body)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -32,10 +45,18 @@ struct EmailDraftCardView: View {
                 Text("To:")
                     .font(.caption.bold())
                     .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
-                Text(card.to)
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
-                    .lineLimit(1)
+                if card.sendState == .pending {
+                    TextField("Recipient", text: $editTo)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+                        .textFieldStyle(.plain)
+                        .lineLimit(1)
+                } else {
+                    Text(card.to)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+                        .lineLimit(1)
+                }
             }
 
             // CC field (if present)
@@ -52,21 +73,36 @@ struct EmailDraftCardView: View {
             }
 
             // Subject
-            Text(card.subject)
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+            if card.sendState == .pending {
+                TextField("Subject", text: $editSubject)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+                    .textFieldStyle(.plain)
+            } else {
+                Text(card.subject)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+            }
 
             Divider()
 
             // Body
-            ScrollView {
-                Text(card.body)
+            if card.sendState == .pending {
+                TextEditor(text: $editBody)
                     .font(.callout)
                     .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 80, maxHeight: 200)
+            } else {
+                ScrollView {
+                    Text(card.body)
+                        .font(.callout)
+                        .foregroundStyle(AppTheme.agentCardText(for: colorScheme))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 200)
             }
-            .frame(maxHeight: 200)
 
             // Action buttons
             if card.sendState == .pending {
@@ -84,7 +120,7 @@ struct EmailDraftCardView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Button(action: onSend) {
+                    Button(action: { onSend(editTo, editSubject, editBody) }) {
                         HStack(spacing: 6) {
                             Image(systemName: "paperplane.fill")
                                 .font(.system(size: 12))

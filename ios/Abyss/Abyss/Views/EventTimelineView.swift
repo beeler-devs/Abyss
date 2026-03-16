@@ -140,6 +140,10 @@ struct EventRow: View {
                 Image(systemName: "gearshape.fill").foregroundStyle(.gray)
             case .bridgeWorkspaceSet:
                 Image(systemName: "folder").foregroundStyle(.brown)
+            case .gmailSendExecute:
+                Image(systemName: "paperplane").foregroundStyle(.blue)
+            case .gmailSendResult:
+                Image(systemName: "envelope.badge.fill").foregroundStyle(.green)
             }
         }
     }
@@ -207,6 +211,10 @@ struct EventRow: View {
             return "preferences.sync: \(prefs.preferences.count) keys"
         case .bridgeWorkspaceSet(let payload):
             return "bridge.workspace.set: \(payload.workspacePath)"
+        case .gmailSendExecute(let payload):
+            return "gmail.send.execute: \(payload.callId.prefix(8)) confirmed=\(payload.confirmed)"
+        case .gmailSendResult(let payload):
+            return "gmail.send.result: \(payload.callId.prefix(8)) success=\(payload.success)"
         }
     }
 

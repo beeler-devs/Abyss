@@ -23,20 +23,17 @@ struct GmailReplyConfirmTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
+        AppLogger.tooling.info("gmail.reply.confirm execute: messageId=\(arguments.messageId, privacy: .public)")
         let callId = UUID().uuidString
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                to: arguments.to ?? "",
-                cc: arguments.cc,
-                subject: "Re:",
-                body: arguments.body,
-                messageId: arguments.messageId,
-                anchorMessageID: nil
-            )
-            return Result(confirmed: confirmed, message: "User confirmed. Reply sent.")
-        } catch is EmailDraftManager.DraftError {
-            return Result(confirmed: false, message: "User cancelled the reply.")
-        }
+        draftManager.addDraft(
+            callId: callId,
+            to: arguments.to ?? "",
+            cc: arguments.cc,
+            subject: "Re:",
+            body: arguments.body,
+            messageId: arguments.messageId,
+            anchorMessageID: nil
+        )
+        return Result(confirmed: true, message: "Draft reply card shown to user for review. Awaiting their confirmation before sending.")
     }
 }

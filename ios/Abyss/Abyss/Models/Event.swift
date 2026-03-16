@@ -45,6 +45,8 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeExecFinished(BridgeExecFinished)
         case preferencesSync(PreferencesSync)
         case bridgeWorkspaceSet(BridgeWorkspaceSet)
+        case gmailSendExecute(GmailSendExecute)
+        case gmailSendResult(GmailSendResult)
     }
 
     // MARK: - Payloads
@@ -269,6 +271,22 @@ struct Event: Identifiable, Codable, Sendable {
     struct BridgeWorkspaceSet: Codable, Sendable {
         let deviceId: String
         let workspacePath: String
+    }
+
+    struct GmailSendExecute: Codable, Sendable {
+        let callId: String
+        let confirmed: Bool
+        let to: String?
+        let cc: String?
+        let subject: String?
+        let body: String?
+        let messageId: String?
+    }
+
+    struct GmailSendResult: Codable, Sendable {
+        let callId: String
+        let success: Bool
+        let error: String?
     }
 }
 
@@ -498,6 +516,8 @@ extension Event.Kind {
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
         case .preferencesSync: return "preferences.sync"
         case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
+        case .gmailSendExecute(let payload): return "gmail.send.execute: \(payload.callId.prefix(8))"
+        case .gmailSendResult(let payload): return "gmail.send.result: \(payload.success ? "ok" : "failed")"
         }
     }
 }

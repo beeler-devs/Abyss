@@ -3,23 +3,10 @@ import Foundation
 @MainActor
 final class EmailDraftManager: ObservableObject {
 
-    enum DraftError: LocalizedError {
-        case cancelled
-        case timeout
+    @Published var activeDrafts: [EmailDraftCard] = []
 
-        var errorDescription: String? {
-            switch self {
-            case .cancelled: return "User cancelled the email."
-            case .timeout: return "Email confirmation timed out."
-            }
-        }
-    }
-
-    @Published private(set) var activeDrafts: [EmailDraftCard] = []
-
-    private var pendingContinuations: [String: CheckedContinuation<Bool, Error>] = [:]
-
-    func requestConfirmation(
+    /// Add a draft card without blocking. Returns immediately.
+    func addDraft(
         callId: String,
         to: String,
         cc: String?,
@@ -27,7 +14,7 @@ final class EmailDraftManager: ObservableObject {
         body: String,
         messageId: String?,
         anchorMessageID: UUID?
-    ) async throws -> Bool {
+    ) {
         let card = EmailDraftCard(
             callId: callId,
             to: to,
@@ -37,41 +24,41 @@ final class EmailDraftManager: ObservableObject {
             messageId: messageId,
             anchorMessageID: anchorMessageID
         )
-
         activeDrafts.append(card)
-
-        let confirmed = try await withCheckedThrowingContinuation { continuation in
-            self.pendingContinuations[callId] = continuation
-        }
-
-        // After user confirms, mark as sending then auto-transition to sent
-        // (the server will actually send the email when it receives confirmed=true)
-        if confirmed, let index = activeDrafts.firstIndex(where: { $0.callId == callId }) {
-            activeDrafts[index].sendState = .sent
-            // Auto-dismiss after a short delay
-            let capturedCallId = callId
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                self.activeDrafts.removeAll { $0.callId == capturedCallId }
-            }
-        }
-
-        return confirmed
     }
 
-    func confirmSend(callId: String) {
-        guard let index = activeDrafts.firstIndex(where: { $0.callId == callId }) else { return }
+    /// Mark draft as sending and return the card's current (potentially edited) values.
+    func confirmSend(callId: String) -> EmailDraftCard? {
+        guard let index = activeDrafts.firstIndex(where: { $0.callId == callId }) else { return nil }
         activeDrafts[index].sendState = .sending
-
-        if let continuation = pendingContinuations.removeValue(forKey: callId) {
-            continuation.resume(returning: true)
-        }
+        return activeDrafts[index]
     }
 
     func cancelDraft(callId: String) {
-        if let continuation = pendingContinuations.removeValue(forKey: callId) {
-            continuation.resume(throwing: DraftError.cancelled)
+        if let index = activeDrafts.firstIndex(where: { $0.callId == callId }) {
+            activeDrafts[index].sendState = .cancelled
         }
-        activeDrafts.removeAll { $0.callId == callId }
+        let capturedCallId = callId
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            self.activeDrafts.removeAll { $0.callId == capturedCallId }
+        }
+    }
+
+    /// Called when the server reports send success.
+    func markSent(callId: String) {
+        guard let index = activeDrafts.firstIndex(where: { $0.callId == callId }) else { return }
+        activeDrafts[index].sendState = .sent
+        let capturedCallId = callId
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            self.activeDrafts.removeAll { $0.callId == capturedCallId }
+        }
+    }
+
+    /// Called when the server reports send failure.
+    func markFailed(callId: String, error: String) {
+        guard let index = activeDrafts.firstIndex(where: { $0.callId == callId }) else { return }
+        activeDrafts[index].sendState = .failed(error)
     }
 }

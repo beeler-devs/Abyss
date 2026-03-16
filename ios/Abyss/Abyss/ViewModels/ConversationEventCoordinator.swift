@@ -26,6 +26,7 @@ final class ConversationEventCoordinator: ObservableObject {
     private let toolRouter: ToolRouter
     private let audioPipeline: ConversationAudioPipeline
     private let agentManager: ConversationAgentManager
+    private let emailDraftManager: EmailDraftManager
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
     private var cancellables: Set<AnyCancellable> = []
@@ -50,6 +51,7 @@ final class ConversationEventCoordinator: ObservableObject {
         toolRouter: ToolRouter,
         audioPipeline: ConversationAudioPipeline,
         agentManager: ConversationAgentManager,
+        emailDraftManager: EmailDraftManager,
         sessionId: String,
         sendConductorEvent: @escaping @MainActor @Sendable (Event, Bool) async -> Void
     ) {
@@ -58,6 +60,7 @@ final class ConversationEventCoordinator: ObservableObject {
         self.toolRouter = toolRouter
         self.audioPipeline = audioPipeline
         self.agentManager = agentManager
+        self.emailDraftManager = emailDraftManager
         self.sessionId = sessionId
         self.sendConductorEvent = sendConductorEvent
 
@@ -285,6 +288,14 @@ final class ConversationEventCoordinator: ObservableObject {
         case .bridgeExecOutput, .bridgeExecFinished, .bridgeWorkspaceSet:
             eventBus.emit(event)
 
+        case .gmailSendResult(let result):
+            if result.success {
+                emailDraftManager.markSent(callId: result.callId)
+            } else {
+                emailDraftManager.markFailed(callId: result.callId, error: result.error ?? "Send failed")
+            }
+            eventBus.emit(event)
+
         case .error(let error):
             AppLogger.conductor.error("Inbound error: code=\(error.code, privacy: .public) message=\(error.message, privacy: .public)")
             if error.code.hasPrefix("bridge") || error.code.contains("pairing") {
@@ -308,7 +319,7 @@ final class ConversationEventCoordinator: ObservableObject {
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult,
                 .userAudioTranscriptPartial, .userAudioStreamStart,
                 .userAudioStreamChunk, .userAudioStreamEnd, .audioOutputInterrupted,
-                .agentCompleted, .bridgePairRequest, .preferencesSync:
+                .agentCompleted, .bridgePairRequest, .preferencesSync, .gmailSendExecute:
             eventBus.emit(event)
         }
     }

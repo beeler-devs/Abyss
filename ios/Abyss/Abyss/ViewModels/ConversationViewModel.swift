@@ -308,12 +308,42 @@ final class ConversationViewModel: ObservableObject {
         emailManager.toggleExpanded(cardId: cardID)
     }
 
-    func confirmEmailDraft(callId: String) {
-        emailDraftManager.confirmSend(callId: callId)
+    func confirmEmailDraft(callId: String, to: String, subject: String, body: String) {
+        guard let card = emailDraftManager.confirmSend(callId: callId) else { return }
+        let event = Event(
+            sessionId: sessionId,
+            kind: .gmailSendExecute(Event.GmailSendExecute(
+                callId: callId,
+                confirmed: true,
+                to: to,
+                cc: card.cc,
+                subject: subject,
+                body: body,
+                messageId: card.messageId
+            ))
+        )
+        Task {
+            try? await activeConductorClient?.send(event: event)
+        }
     }
 
     func cancelEmailDraft(callId: String) {
         emailDraftManager.cancelDraft(callId: callId)
+        let event = Event(
+            sessionId: sessionId,
+            kind: .gmailSendExecute(Event.GmailSendExecute(
+                callId: callId,
+                confirmed: false,
+                to: nil,
+                cc: nil,
+                subject: nil,
+                body: nil,
+                messageId: nil
+            ))
+        )
+        Task {
+            try? await activeConductorClient?.send(event: event)
+        }
     }
 
     func toggleCalendarEventExpanded(cardID: UUID) {
@@ -429,6 +459,7 @@ final class ConversationViewModel: ObservableObject {
             toolRouter: toolRouter,
             audioPipeline: audioPipeline,
             agentManager: agentManager,
+            emailDraftManager: emailDraftManager,
             sessionId: sessionId,
             sendConductorEvent: { [weak self] event, surfaceErrors in
                 await self?.sendEventToConductor(event, surfaceErrors: surfaceErrors)

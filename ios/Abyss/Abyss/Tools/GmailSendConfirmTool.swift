@@ -25,21 +25,15 @@ struct GmailSendConfirmTool: Tool, @unchecked Sendable {
     func execute(_ arguments: Arguments) async throws -> Result {
         AppLogger.tooling.info("gmail.send.confirm execute: to=\(arguments.to, privacy: .public) subject=\(arguments.subject, privacy: .public)")
         let callId = UUID().uuidString
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                to: arguments.to,
-                cc: arguments.cc,
-                subject: arguments.subject,
-                body: arguments.body,
-                messageId: nil,
-                anchorMessageID: nil
-            )
-            AppLogger.tooling.info("gmail.send.confirm result: confirmed=\(confirmed, privacy: .public)")
-            return Result(confirmed: confirmed, message: "User confirmed. Email sent.")
-        } catch is EmailDraftManager.DraftError {
-            AppLogger.tooling.info("gmail.send.confirm result: cancelled by user")
-            return Result(confirmed: false, message: "User cancelled the email.")
-        }
+        draftManager.addDraft(
+            callId: callId,
+            to: arguments.to,
+            cc: arguments.cc,
+            subject: arguments.subject,
+            body: arguments.body,
+            messageId: nil,
+            anchorMessageID: nil
+        )
+        return Result(confirmed: true, message: "Draft card shown to user for review. Awaiting their confirmation before sending.")
     }
 }

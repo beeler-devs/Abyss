@@ -11,10 +11,10 @@ enum EmailDraftSendState: Equatable, Sendable {
 struct EmailDraftCard: Identifiable, Equatable, Sendable {
     let id: UUID
     let callId: String
-    let to: String
+    var to: String
     let cc: String?
-    let subject: String
-    let body: String
+    var subject: String
+    var body: String
     let messageId: String?
     var sendState: EmailDraftSendState
     var anchorMessageID: UUID?
