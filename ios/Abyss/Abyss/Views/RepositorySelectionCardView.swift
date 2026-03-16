@@ -126,13 +126,6 @@ struct RepositorySelectionCardView: View {
             .frame(maxHeight: 280)
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(AppTheme.agentCardBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
-        )
+        .cardBackground(category: .repository, cornerRadius: 20, colorScheme: colorScheme)
     }
 }

@@ -20,20 +20,21 @@ struct AgentProgressCardView: View {
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 20)
-                .fill(AppTheme.agentCardBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 20)
-                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
-        )
+        .cardBackground(category: .agent, cornerRadius: 20, colorScheme: colorScheme)
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
-            Button(action: onToggleExpanded) {
+            Button(action: { withAnimation(AppTheme.cardExpandAnimation) { onToggleExpanded() } }) {
                 HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "cpu")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(AppTheme.CardCategory.agent.accentColor)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            Circle().fill(AppTheme.cardIconBackground(category: .agent, colorScheme: colorScheme))
+                        )
+
                     VStack(alignment: .leading, spacing: card.isExpanded ? 6 : 0) {
                         Text(card.displayTitle)
                             .font(.headline)

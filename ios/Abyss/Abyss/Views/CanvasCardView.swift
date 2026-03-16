@@ -7,12 +7,16 @@ struct CanvasCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button(action: onToggleExpanded) {
+            Button(action: { withAnimation(AppTheme.cardExpandAnimation) { onToggleExpanded() } }) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .top) {
                         Image(systemName: iconName)
                             .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
+                            .foregroundStyle(AppTheme.CardCategory.canvas.accentColor)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle().fill(AppTheme.cardIconBackground(category: .canvas, colorScheme: colorScheme))
+                            )
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(title)
@@ -44,14 +48,7 @@ struct CanvasCardView: View {
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppTheme.agentCardBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
-        )
+        .cardBackground(category: .canvas, colorScheme: colorScheme)
     }
 
     private var iconName: String {

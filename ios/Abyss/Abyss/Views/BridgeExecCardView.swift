@@ -15,24 +15,21 @@ struct BridgeExecCardView: View {
             }
         }
         .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppTheme.agentCardBackground(for: colorScheme))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(AppTheme.agentCardStroke(for: colorScheme), lineWidth: 1)
-        )
+        .cardBackground(category: .bridge, colorScheme: colorScheme)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        Button(action: onToggleExpanded) {
+        Button(action: { withAnimation(AppTheme.cardExpandAnimation) { onToggleExpanded() } }) {
             HStack(spacing: 10) {
                 Image(systemName: "terminal.fill")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(AppTheme.agentCardMutedText(for: colorScheme))
+                    .foregroundStyle(AppTheme.CardCategory.bridge.accentColor)
+                    .frame(width: 28, height: 28)
+                    .background(
+                        Circle().fill(AppTheme.cardIconBackground(category: .bridge, colorScheme: colorScheme))
+                    )
 
                 Text(card.command)
                     .font(.caption.monospaced())

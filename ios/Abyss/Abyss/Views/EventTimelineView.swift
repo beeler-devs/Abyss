@@ -16,12 +16,12 @@ struct EventTimelineView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "clock.arrow.circlepath")
-                    .font(.caption)
+                    .font(.footnote)
                 Text("Event Timeline")
-                    .font(.caption.bold())
+                    .font(.footnote.bold())
                 Spacer()
                 Text("\(events.count) events")
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 12)
@@ -45,12 +45,7 @@ struct EventTimelineView: View {
                 }
             }
         }
-        .background(AppTheme.eventTimelineBackground(for: colorScheme))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(AppTheme.eventTimelineBorder(for: colorScheme), lineWidth: 0.5)
-        )
+        .eventTimelineGlassBackground(cornerRadius: 14, colorScheme: colorScheme)
         .padding(.horizontal, 8)
     }
 }
@@ -69,17 +64,17 @@ struct EventRow: View {
         HStack(alignment: .top, spacing: 6) {
             // Timestamp
             Text(Self.timeFormatter.string(from: event.timestamp))
-                .font(.system(.caption2, design: .monospaced))
+                .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.tertiary)
 
             // Icon
             eventIcon
-                .font(.caption2)
-                .frame(width: 14)
+                .font(.caption)
+                .frame(width: 16)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(eventDescription)
-                    .font(.system(.caption2, design: .monospaced))
+                    .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(eventColor)
                     .lineLimit(2)
 
@@ -87,11 +82,11 @@ struct EventRow: View {
                     HStack(spacing: 8) {
                         if let runUrl = status.runUrl, let url = URL(string: runUrl) {
                             Button("Open Agent Run") { browserCoordinator.urlToOpen = url }
-                                .font(.caption2)
+                                .font(.caption)
                         }
                         if let prUrl = status.prUrl, let url = URL(string: prUrl) {
                             Button("Open PR") { browserCoordinator.urlToOpen = url }
-                                .font(.caption2)
+                                .font(.caption)
                         }
                     }
                 }
