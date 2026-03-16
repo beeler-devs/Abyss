@@ -106,6 +106,7 @@ public struct BridgeConfiguration: Sendable {
     public var commandOutputTailBytes: Int
     public var outputChunkBytes: Int
     public var permissions: BridgePermissions
+    public var novaActApiKey: String?
 
     public init(
         serverURL: URL,
@@ -118,7 +119,8 @@ public struct BridgeConfiguration: Sendable {
         outputLimitBytes: Int = 24_000,
         commandOutputTailBytes: Int = 200_000,
         outputChunkBytes: Int = 4096,
-        permissions: BridgePermissions = BridgePermissions()
+        permissions: BridgePermissions = BridgePermissions(),
+        novaActApiKey: String? = nil
     ) {
         self.serverURL = serverURL
         self.deviceId = deviceId
@@ -137,6 +139,7 @@ public struct BridgeConfiguration: Sendable {
         self.commandOutputTailBytes = commandOutputTailBytes
         self.outputChunkBytes = outputChunkBytes
         self.permissions = permissions
+        self.novaActApiKey = novaActApiKey
     }
 }
 

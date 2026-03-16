@@ -109,6 +109,10 @@ public actor BridgeCore {
         try? await sendRegisterIfPossible()
     }
 
+    public func updateNovaActApiKey(_ key: String?) {
+        config.novaActApiKey = key
+    }
+
     public func updateDeviceName(_ deviceName: String) async {
         config.deviceName = deviceName
         try? await sendRegisterIfPossible()
@@ -578,7 +582,8 @@ public actor BridgeCore {
                     url: args.url,
                     headless: args.headless ?? true,
                     userDataDir: args.userDataDir,
-                    scriptPath: scriptPath
+                    scriptPath: scriptPath,
+                    apiKey: config.novaActApiKey
                 )
                 novaActManager = manager
                 resultText = encodeJSONString(BridgeNovaStartResult(started: true))

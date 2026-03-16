@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Security
 import BridgeCore
 
 @main
@@ -120,6 +121,7 @@ final class BridgeAppModel: ObservableObject {
     @Published var showNovaActSetup = false
     @Published var novaActPrerequisites: [NovaActPrerequisite] = []
     @Published var novaActChecksRunning = false
+    @Published var novaActApiKey: String = ""
 
     private var detectedPythonPath: String?
     private var bridgeCore: BridgeCore?
@@ -139,6 +141,9 @@ final class BridgeAppModel: ObservableObject {
     private static let requireGitPushConfirmationKey = "bridge.permissions.requireGitPushConfirmation"
     private static let allowClaudeRunKey = "bridge.permissions.allowClaudeRun"
     private static let allowNovaActKey = "bridge.permissions.allowNovaAct"
+
+    private static let keychainService = "app.abyss.bridge"
+    private static let novaActApiKeyAccount = "nova_act_api_key"
 
     private let stableDeviceId: String
 
@@ -161,6 +166,7 @@ final class BridgeAppModel: ObservableObject {
         self.requireGitPushConfirmation = defaults.object(forKey: Self.requireGitPushConfirmationKey) as? Bool ?? true
         self.allowClaudeRun = defaults.object(forKey: Self.allowClaudeRunKey) as? Bool ?? false
         self.allowNovaAct = defaults.object(forKey: Self.allowNovaActKey) as? Bool ?? false
+        self.novaActApiKey = Self.loadKeychainString(account: Self.novaActApiKeyAccount) ?? ""
 
         restoreWorkspaces()
         bootstrapBridgeCore()
@@ -337,7 +343,8 @@ final class BridgeAppModel: ObservableObject {
             workspaceRoot: selectedURL,
             workspaceRoots: workspaceURLs,
             pairingCode: pairingCode.isEmpty ? nil : pairingCode,
-            permissions: currentPermissions()
+            permissions: currentPermissions(),
+            novaActApiKey: novaActApiKey.isEmpty ? nil : novaActApiKey
         )
 
         let core = BridgeCore(configuration: config)
@@ -619,10 +626,13 @@ final class BridgeAppModel: ObservableObject {
     }
 
     private func checkApiKey() -> NovaActPrerequisite.Status {
-        if let key = ProcessInfo.processInfo.environment["NOVA_ACT_API_KEY"], !key.isEmpty {
-            return .passed("Set (\(key.prefix(8))…)")
+        if !novaActApiKey.isEmpty {
+            return .passed("Saved (\(novaActApiKey.prefix(8))…)")
         }
-        return .failed("Not set — must be set before launching app")
+        if let key = ProcessInfo.processInfo.environment["NOVA_ACT_API_KEY"], !key.isEmpty {
+            return .passed("From environment (\(key.prefix(8))…)")
+        }
+        return .failed("Not configured")
     }
 
     private func checkChrome() -> NovaActPrerequisite.Status {
@@ -642,6 +652,60 @@ final class BridgeAppModel: ObservableObject {
             let response = alert.runModal()
             continuation.resume(returning: response == .alertFirstButtonReturn)
         }
+    }
+
+    // MARK: - Nova Act API Key (Keychain)
+
+    func saveNovaActApiKey() {
+        guard !novaActApiKey.isEmpty else { return }
+        Self.saveKeychainString(novaActApiKey, account: Self.novaActApiKeyAccount)
+        Task {
+            await bridgeCore?.updateNovaActApiKey(novaActApiKey)
+        }
+    }
+
+    func clearNovaActApiKey() {
+        novaActApiKey = ""
+        Self.deleteKeychainString(account: Self.novaActApiKeyAccount)
+        Task {
+            await bridgeCore?.updateNovaActApiKey(nil)
+        }
+    }
+
+    private static func saveKeychainString(_ value: String, account: String) {
+        let data = value.data(using: .utf8)!
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+        var addQuery = query
+        addQuery[kSecValueData as String] = data
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private static func loadKeychainString(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func deleteKeychainString(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }
 
@@ -980,6 +1044,13 @@ struct NovaActSetupSheet: View {
         model.novaActPrerequisites.allSatisfy(\.isPassed)
     }
 
+    private var apiKeyStatus: NovaActPrerequisite.Status {
+        if let prereq = model.novaActPrerequisites.first(where: { $0.id == "api_key" }) {
+            return prereq.status
+        }
+        return .unchecked
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -990,7 +1061,7 @@ struct NovaActSetupSheet: View {
                         .padding(.horizontal)
 
                     VStack(spacing: 12) {
-                        ForEach(model.novaActPrerequisites) { prereq in
+                        ForEach(model.novaActPrerequisites.filter({ $0.id != "api_key" })) { prereq in
                             PrerequisiteRow(
                                 prerequisite: prereq,
                                 onInstall: prereq.isInstallable ? {
@@ -999,6 +1070,49 @@ struct NovaActSetupSheet: View {
                             )
                         }
                     }
+                    .padding(.horizontal)
+
+                    // Dedicated API key section
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            apiKeyStatusIcon
+                            Text("API Key")
+                                .font(.body)
+                            Spacer()
+                            apiKeyStatusDetail
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        SecureField("Paste your Nova Act API key", text: $model.novaActApiKey)
+                            .textFieldStyle(.roundedBorder)
+
+                        HStack(spacing: 8) {
+                            Button("Save") {
+                                model.saveNovaActApiKey()
+                                Task { await model.runAllNovaActChecks() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.novaActApiKey.isEmpty)
+
+                            if !model.novaActApiKey.isEmpty {
+                                Button("Clear") {
+                                    model.clearNovaActApiKey()
+                                    Task { await model.runAllNovaActChecks() }
+                                }
+                                .buttonStyle(.bordered)
+                                .foregroundStyle(.red)
+                            }
+
+                            Spacer()
+
+                            Text("Stored securely in Keychain")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .padding(12)
+                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                     .padding(.horizontal)
 
                     HStack {
@@ -1034,7 +1148,33 @@ struct NovaActSetupSheet: View {
                 }
             }
         }
-        .frame(minWidth: 480, minHeight: 360)
+        .frame(minWidth: 480, minHeight: 400)
+    }
+
+    @ViewBuilder
+    private var apiKeyStatusIcon: some View {
+        switch apiKeyStatus {
+        case .passed:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        case .checking:
+            ProgressView().controlSize(.small)
+        default:
+            Image(systemName: "circle").foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var apiKeyStatusDetail: some View {
+        switch apiKeyStatus {
+        case .passed(let detail):
+            Text(detail)
+        case .failed(let detail):
+            Text(detail)
+        default:
+            EmptyView()
+        }
     }
 }
 
