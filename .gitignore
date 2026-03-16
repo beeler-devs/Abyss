@@ -33,6 +33,9 @@ Pods/
 .claude/worktrees/
 .worktrees/
 
+# Scratch / test files
+test.txt
+
 # macOS
 .DS_Store
 *.swp
