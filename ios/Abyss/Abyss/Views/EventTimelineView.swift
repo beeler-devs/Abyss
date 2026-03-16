@@ -140,6 +140,8 @@ struct EventRow: View {
                 Image(systemName: "gearshape.fill").foregroundStyle(.gray)
             case .bridgeWorkspaceSet:
                 Image(systemName: "folder").foregroundStyle(.brown)
+            case .assistantImage:
+                Image(systemName: "photo").foregroundStyle(.cyan)
             }
         }
     }
@@ -207,6 +209,8 @@ struct EventRow: View {
             return "preferences.sync: \(prefs.preferences.count) keys"
         case .bridgeWorkspaceSet(let payload):
             return "bridge.workspace.set: \(payload.workspacePath)"
+        case .assistantImage:
+            return "assistant.image"
         }
     }
 
