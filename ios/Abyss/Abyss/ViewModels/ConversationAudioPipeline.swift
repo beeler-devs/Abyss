@@ -958,6 +958,11 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         )!
         self.playbackFormat = playbackFmt
         engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFmt)
+        // Explicitly set the mixer→output format to the voice-processing rate.
+        // Without this, the mixer→output path defaults to 44.1kHz stereo while
+        // voice-processing input runs at 48kHz mono — the rate mismatch causes
+        // the duplex graph to silently stop delivering mic frames.
+        engine.connect(engine.mainMixerNode, to: outputNode, format: playbackFmt)
         captureDiagnosticsRemaining = captureLogLimit
         captureStartToken += 1
         captureRunState.begin(token: captureStartToken)
