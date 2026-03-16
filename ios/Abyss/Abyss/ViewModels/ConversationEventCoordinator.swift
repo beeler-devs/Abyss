@@ -27,6 +27,7 @@ final class ConversationEventCoordinator: ObservableObject {
     private let agentManager: ConversationAgentManager
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
+    private var cancellables: Set<AnyCancellable> = []
     private var activeLiveResponseId: String?
     private var assistantPartialSpeechResponseId: String?
     private var invalidatedLiveResponseIds: Set<String> = []
@@ -60,6 +61,7 @@ final class ConversationEventCoordinator: ObservableObject {
 
         loadPairedBridgeDevices()
         refreshBridgeStatusesOnStartup()
+        observeLocalEvents()
     }
 
     deinit {
@@ -358,6 +360,33 @@ final class ConversationEventCoordinator: ObservableObject {
         return try? JSONDecoder().decode(type, from: Data(json.utf8))
     }
 
+    private func observeLocalEvents() {
+        eventBus.stream
+            .sink { [weak self] event in
+                self?.handleLocalEvent(event)
+            }
+            .store(in: &cancellables)
+    }
+
+    private func handleLocalEvent(_ event: Event) {
+        guard audioPipeline.isHandsFreeLiveConversationMode else { return }
+        guard case .audioOutputInterrupted = event.kind else { return }
+        handleLocalAudioOutputInterrupted()
+    }
+
+    private func handleLocalAudioOutputInterrupted() {
+        guard let liveResponseId = activeLiveResponseId ?? assistantPartialSpeechResponseId else {
+            return
+        }
+
+        registerPendingInterruptCandidate(for: liveResponseId)
+        invalidatedLiveResponseIds.insert(liveResponseId)
+        clearAssistantOverlay(for: liveResponseId)
+        if activeLiveResponseId == liveResponseId {
+            activeLiveResponseId = nil
+        }
+    }
+
     private func shouldIgnoreLiveResponse(_ liveResponseId: String) -> Bool {
         invalidatedLiveResponseIds.contains(liveResponseId)
     }
@@ -376,6 +405,9 @@ final class ConversationEventCoordinator: ObservableObject {
 
     private func completeLiveResponse(_ liveResponseId: String) {
         clearAssistantOverlay(for: liveResponseId)
+        if pendingInterruptCandidate?.liveResponseId == liveResponseId {
+            clearPendingInterruptCandidate()
+        }
         if activeLiveResponseId == liveResponseId {
             activeLiveResponseId = nil
         }
@@ -464,7 +496,10 @@ final class ConversationEventCoordinator: ObservableObject {
         guard let liveResponseId = interrupted.liveResponseId ?? activeLiveResponseId else {
             return
         }
+        registerPendingInterruptCandidate(for: liveResponseId)
+    }
 
+    private func registerPendingInterruptCandidate(for liveResponseId: String) {
         clearPendingInterruptCandidate()
 
         let assistantTextSnapshot = assistantTextSnapshot(for: liveResponseId)

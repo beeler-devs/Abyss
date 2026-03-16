@@ -45,6 +45,7 @@ final class ConversationAudioPipeline: ObservableObject {
     private var pendingPTTRelease = false
     private var remoteCaptureTransitionInFlight = false
     private var pendingRemoteCaptureReconcile = false
+    private var handsFreeBargeInInFlight = false
     private let remoteVoiceCapture: RemoteVoiceCapturing
 
     init(
@@ -262,6 +263,16 @@ final class ConversationAudioPipeline: ObservableObject {
             guard let self else { return }
             guard self.canRunLiveConversation else { return }
 
+            if self.recordingMode == .vadAuto, self.appState == .speaking {
+                guard !self.handsFreeBargeInInFlight else { return }
+                self.handsFreeBargeInInFlight = true
+                Task { @MainActor in
+                    defer { self.handsFreeBargeInInFlight = false }
+                    await self.bargeIn(reason: "local_speech_start")
+                }
+                return
+            }
+
             if self.appState == .idle || self.appState == .transcribing {
                 self.setState(.listening)
             }
@@ -270,7 +281,7 @@ final class ConversationAudioPipeline: ObservableObject {
         voiceActivityDetector.onSpeechEnded = { [weak self] _ in
             guard let self else { return }
             Task { @MainActor in
-                guard self.recordingMode == .vadAuto else { return }
+                guard self.recordingMode == .pushToTalk else { return }
                 guard self.canRunLiveConversation else { return }
                 guard self.transcriber.isListening else { return }
                 guard !self.isStoppingRecording else { return }
@@ -497,7 +508,9 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private func bargeIn(reason: String) async {
-        voiceActivityDetector.stopMonitoring()
+        if recordingMode == .pushToTalk {
+            voiceActivityDetector.stopMonitoring()
+        }
 
         if recordingMode == .pushToTalk {
             let stopEvent = Event.toolCall(
@@ -517,6 +530,10 @@ final class ConversationAudioPipeline: ObservableObject {
         eventBus.emit(interruptedEvent)
         Task {
             await sendConductorEvent(interruptedEvent, false)
+        }
+
+        if recordingMode == .vadAuto {
+            setState(.listening)
         }
 
         await refreshLiveConversationState()
@@ -583,17 +600,23 @@ final class ConversationAudioPipeline: ObservableObject {
         do {
             partialTranscript = ""
             setState(.listening)
+            voiceActivityDetector.startMonitoring()
             let pendingStart = PendingRemoteStreamStart()
-            try await remoteVoiceCapture.start(onChunk: { [weak self] base64Chunk in
-                guard let self else { return }
-                Task { @MainActor in
-                    if pendingStart.hasAnnouncedStart {
-                        await self.sendRemoteAudioChunk(base64Chunk)
-                    } else {
-                        pendingStart.bufferedChunks.append(base64Chunk)
+            try await remoteVoiceCapture.start(
+                onChunk: { [weak self] base64Chunk in
+                    guard let self else { return }
+                    Task { @MainActor in
+                        if pendingStart.hasAnnouncedStart {
+                            await self.sendRemoteAudioChunk(base64Chunk)
+                        } else {
+                            pendingStart.bufferedChunks.append(base64Chunk)
+                        }
                     }
+                },
+                onInputLevel: { [weak self] level in
+                    self?.voiceActivityDetector.processAudioLevel(level)
                 }
-            })
+            )
             let startEvent = Event.userAudioStreamStart(sessionId: sessionId)
             eventBus.emit(startEvent)
             await sendConductorEvent(startEvent, true)
@@ -603,6 +626,7 @@ final class ConversationAudioPipeline: ObservableObject {
             }
             pendingStart.bufferedChunks.removeAll(keepingCapacity: false)
         } catch {
+            voiceActivityDetector.stopMonitoring()
             AppLogger.audio.error("startRemoteVoiceCapture failed: \(error.localizedDescription, privacy: .public)")
             await handleError(error.localizedDescription)
         }
@@ -616,6 +640,7 @@ final class ConversationAudioPipeline: ObservableObject {
 
     private func stopRemoteVoiceCapture() async {
         guard remoteVoiceCapture.isStreaming else { return }
+        voiceActivityDetector.stopMonitoring()
         await remoteVoiceCapture.stop()
 
         // Send trailing silence so Nova Sonic's server-side VAD detects
@@ -663,11 +688,98 @@ final class ConversationAudioPipeline: ObservableObject {
 @MainActor
 protocol RemoteVoiceCapturing: AnyObject {
     var isStreaming: Bool { get }
-    func start(onChunk: @escaping (String) -> Void) async throws
+    func start(
+        onChunk: @escaping (String) -> Void,
+        onInputLevel: @escaping (Float) -> Void
+    ) async throws
     func stop() async
     func appendAssistantAudio(_ data: Data, sampleRate: Double) async throws
     func finishAssistantAudio() async
     func stopAssistantAudio() async
+}
+
+@MainActor
+final class BufferedPCMPlaybackQueue {
+    struct DrainResult {
+        let chunks: [Data]
+        let shouldStartPlayback: Bool
+    }
+
+    private let startupThresholdBytes: Int
+    private let scheduledChunkBytes: Int
+
+    private var pendingAudio = Data()
+    private var scheduledBufferCount = 0
+    private var playbackStarted = false
+    private var finishedReceivingAudio = false
+
+    init(
+        startupThresholdBytes: Int = 16_384,
+        scheduledChunkBytes: Int = 8_192
+    ) {
+        self.startupThresholdBytes = startupThresholdBytes
+        self.scheduledChunkBytes = scheduledChunkBytes
+    }
+
+    func enqueue(_ data: Data, bytesPerFrame: Int) -> DrainResult {
+        guard !data.isEmpty else { return DrainResult(chunks: [], shouldStartPlayback: false) }
+        finishedReceivingAudio = false
+        pendingAudio.append(data)
+        return drain(force: false, bytesPerFrame: bytesPerFrame)
+    }
+
+    func finish(bytesPerFrame: Int) -> DrainResult {
+        finishedReceivingAudio = true
+        return drain(force: true, bytesPerFrame: bytesPerFrame)
+    }
+
+    func didPlayBuffer(bytesPerFrame: Int) -> DrainResult {
+        scheduledBufferCount = max(0, scheduledBufferCount - 1)
+        let result = drain(force: finishedReceivingAudio, bytesPerFrame: bytesPerFrame)
+        if finishedReceivingAudio, scheduledBufferCount == 0, pendingAudio.isEmpty {
+            playbackStarted = false
+            finishedReceivingAudio = false
+        }
+        return result
+    }
+
+    func reset() {
+        pendingAudio.removeAll(keepingCapacity: false)
+        scheduledBufferCount = 0
+        playbackStarted = false
+        finishedReceivingAudio = false
+    }
+
+    var hasBufferedAudio: Bool {
+        !pendingAudio.isEmpty || scheduledBufferCount > 0
+    }
+
+    private func drain(force: Bool, bytesPerFrame: Int) -> DrainResult {
+        guard bytesPerFrame > 0 else {
+            return DrainResult(chunks: [], shouldStartPlayback: false)
+        }
+
+        var chunks: [Data] = []
+        while pendingAudio.count >= scheduledChunkBytes || (force && pendingAudio.count >= bytesPerFrame) {
+            let targetBytes = min(pendingAudio.count, scheduledChunkBytes)
+            let bufferBytes = targetBytes - (targetBytes % bytesPerFrame)
+            guard bufferBytes >= bytesPerFrame else { break }
+
+            chunks.append(Data(pendingAudio.prefix(bufferBytes)))
+            pendingAudio.removeFirst(bufferBytes)
+            scheduledBufferCount += 1
+        }
+
+        let bufferedBytes = pendingAudio.count + scheduledBufferCount * scheduledChunkBytes
+        let shouldStartPlayback = !playbackStarted
+            && scheduledBufferCount > 0
+            && (bufferedBytes >= startupThresholdBytes || finishedReceivingAudio)
+        if shouldStartPlayback {
+            playbackStarted = true
+        }
+
+        return DrainResult(chunks: chunks, shouldStartPlayback: shouldStartPlayback)
+    }
 }
 
 @MainActor
@@ -734,6 +846,7 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
 
     private let emissionChunkBytes = 3_200
     private let captureLogLimit = 5
+    private let assistantPlaybackQueue = BufferedPCMPlaybackQueue()
 
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
@@ -741,6 +854,7 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
     private var playbackFormat: AVAudioFormat?
     private var captureFormat: AVAudioFormat?
     private var onChunk: ((String) -> Void)?
+    private var onInputLevel: ((Float) -> Void)?
     private var pendingPCM = Data()
     private(set) var isStreaming = false
     private var captureDiagnosticsRemaining = 5
@@ -748,9 +862,13 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
     private var captureStartToken = 0
     private let captureRunState = CaptureRunState()
 
-    func start(onChunk: @escaping (String) -> Void) async throws {
+    func start(
+        onChunk: @escaping (String) -> Void,
+        onInputLevel: @escaping (Float) -> Void
+    ) async throws {
         guard !isStreaming else { return }
         self.onChunk = onChunk
+        self.onInputLevel = onInputLevel
 
         let session = AVAudioSession.sharedInstance()
         try configureAudioSession(session)
@@ -795,6 +913,11 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         )
         engine.prepare()
         try engine.start()
+        do {
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            AppLogger.audio.warning("Hands-free route override failed: \(error.localizedDescription, privacy: .public)")
+        }
         if !engine.isRunning {
             logSessionState(session, stage: "start-failed")
             logEngineGraph(
@@ -811,7 +934,6 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
                 userInfo: [NSLocalizedDescriptionKey: "Hands-free audio engine did not enter a running state"]
             )
         }
-        playerNode.play()
         self.engine = engine
         self.playerNode = playerNode
         self.captureSinkNode = sinkNode
@@ -840,6 +962,8 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         captureSinkNode = nil
         captureFormat = nil
         playbackFormat = nil
+        onInputLevel = nil
+        assistantPlaybackQueue.reset()
         flushRemaining()
         pendingPCM.removeAll(keepingCapacity: false)
         isStreaming = false
@@ -872,41 +996,37 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         let resampled = Self.resample(samples: floatSamples, from: sampleRate, to: playbackFormat.sampleRate)
         guard !resampled.isEmpty else { return }
 
-        let frameCount = AVAudioFrameCount(resampled.count)
-        guard let buffer = AVAudioPCMBuffer(
-            pcmFormat: playbackFormat,
-            frameCapacity: frameCount
-        ), let channelData = buffer.floatChannelData else {
+        let bytesPerFrame = Self.bytesPerFrame(for: playbackFormat)
+        guard bytesPerFrame > 0 else {
             throw NSError(
                 domain: "RemoteAudioCapture",
                 code: 2,
-                userInfo: [NSLocalizedDescriptionKey: "Failed to allocate assistant playback buffer"]
+                userInfo: [NSLocalizedDescriptionKey: "Invalid assistant playback format"]
             )
         }
 
-        buffer.frameLength = frameCount
-        resampled.withUnsafeBufferPointer { src in
-            channelData[0].update(from: src.baseAddress!, count: resampled.count)
-        }
-
-        if !engine.isRunning {
-            try engine.start()
-        }
-        if !playerNode.isPlaying {
-            playerNode.play()
-        }
-        await playerNode.scheduleBuffer(buffer)
+        let playbackData = Self.encodeFloat32(samples: resampled)
+        let drainResult = assistantPlaybackQueue.enqueue(playbackData, bytesPerFrame: bytesPerFrame)
+        try scheduleAssistantPlayback(drainResult, engine: engine, playerNode: playerNode, format: playbackFormat)
     }
 
     func finishAssistantAudio() async {
-        if playerNode?.isPlaying == false {
-            playerNode?.play()
+        guard let engine, let playerNode, let playbackFormat else { return }
+        let bytesPerFrame = Self.bytesPerFrame(for: playbackFormat)
+        guard bytesPerFrame > 0 else { return }
+
+        let drainResult = assistantPlaybackQueue.finish(bytesPerFrame: bytesPerFrame)
+        do {
+            try scheduleAssistantPlayback(drainResult, engine: engine, playerNode: playerNode, format: playbackFormat)
+        } catch {
+            AppLogger.audio.error("Hands-free assistant playback finish failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     func stopAssistantAudio() async {
         playerNode?.stop()
         playerNode?.reset()
+        assistantPlaybackQueue.reset()
     }
 
     private func flushIfNeeded() {
@@ -1059,6 +1179,7 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             guard !resampled.isEmpty else { return noErr }
 
             let chunk = Self.encodePCM16(samples: resampled)
+            let inputLevel = Self.computeAudioLevelDB(from: samples)
             guard let callback = self.captureRunState.recordCallback(token: startToken, frameCount: Int(frameCount)) else {
                 return noErr
             }
@@ -1068,9 +1189,77 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
                 if callback.isFirst {
                     self.handleCaptureStarted(snapshot: callback.snapshot, format: format)
                 }
+                self.onInputLevel?(inputLevel)
                 self.handleCapturedChunk(chunk)
             }
             return noErr
+        }
+    }
+
+    private func scheduleAssistantPlayback(
+        _ drainResult: BufferedPCMPlaybackQueue.DrainResult,
+        engine: AVAudioEngine,
+        playerNode: AVAudioPlayerNode,
+        format: AVAudioFormat
+    ) throws {
+        if !engine.isRunning {
+            try engine.start()
+        }
+
+        for chunk in drainResult.chunks {
+            try scheduleAssistantChunk(
+                chunk,
+                playerNode: playerNode,
+                format: format
+            )
+        }
+
+        if drainResult.shouldStartPlayback && !playerNode.isPlaying {
+            playerNode.play()
+        }
+    }
+
+    private func scheduleAssistantChunk(
+        _ chunk: Data,
+        playerNode: AVAudioPlayerNode,
+        format: AVAudioFormat
+    ) throws {
+        let bytesPerFrame = Self.bytesPerFrame(for: format)
+        let frameCount = UInt32(chunk.count / bytesPerFrame)
+        guard frameCount > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount),
+              let channelData = buffer.floatChannelData?[0] else {
+            throw NSError(
+                domain: "RemoteAudioCapture",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Failed to schedule assistant playback buffer"]
+            )
+        }
+
+        buffer.frameLength = frameCount
+        chunk.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            memcpy(channelData, baseAddress, chunk.count)
+        }
+
+        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.handleAssistantBufferPlaybackFinished()
+            }
+        }
+    }
+
+    private func handleAssistantBufferPlaybackFinished() async {
+        guard let engine, let playerNode, let playbackFormat else { return }
+        let bytesPerFrame = Self.bytesPerFrame(for: playbackFormat)
+        guard bytesPerFrame > 0 else { return }
+
+        let drainResult = assistantPlaybackQueue.didPlayBuffer(bytesPerFrame: bytesPerFrame)
+        do {
+            try scheduleAssistantPlayback(drainResult, engine: engine, playerNode: playerNode, format: playbackFormat)
+        } catch {
+            AppLogger.audio.error("Hands-free assistant playback drain failed: \(error.localizedDescription, privacy: .public)")
+            await stopAssistantAudio()
         }
     }
 
@@ -1163,6 +1352,29 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             }
         }
         return data
+    }
+
+    private nonisolated static func encodeFloat32(samples: [Float]) -> Data {
+        var data = Data(count: samples.count * MemoryLayout<Float>.size)
+        data.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.bindMemory(to: Float.self).baseAddress else { return }
+            baseAddress.update(from: samples, count: samples.count)
+        }
+        return data
+    }
+
+    private nonisolated static func bytesPerFrame(for format: AVAudioFormat) -> Int {
+        Int(format.streamDescription.pointee.mBytesPerFrame)
+    }
+
+    private nonisolated static func computeAudioLevelDB(from samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return -160.0 }
+        let sumSquares = samples.reduce(0.0) { partial, sample in
+            partial + (sample * sample)
+        }
+        let rms = sqrt(sumSquares / Float(samples.count))
+        guard rms > 0 else { return -160.0 }
+        return max(-160.0, 20.0 * log10(rms))
     }
 
     private nonisolated static func resample(samples: [Float], from sourceRate: Double, to targetRate: Double) -> [Float] {

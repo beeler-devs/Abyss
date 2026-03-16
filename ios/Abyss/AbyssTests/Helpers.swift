@@ -190,7 +190,8 @@ final class MockConductorClient: ConductorClient, @unchecked Sendable {
         gmailTokenExpiresAt: Double? = nil,
         canvasAccessToken: String? = nil,
         canvasBaseURL: String? = nil,
-        preferences: [String: String]? = nil
+        preferences: [String: String]? = nil,
+        memoryUserKey: String? = nil
     ) async throws {
         lock.withLock {
             connectCallCount += 1
