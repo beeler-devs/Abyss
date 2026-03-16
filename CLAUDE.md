@@ -137,7 +137,9 @@ Three bridge tools (`bridge.nova.start`, `bridge.nova.act`, `bridge.nova.stop`) 
 
 **Flow:** LLM calls `bridge.nova.start` with a URL → bridge spawns Python process → NovaAct opens Chrome. LLM calls `bridge.nova.act` with a natural-language instruction → bridge writes JSON to Python stdin → NovaAct executes → JSON result on stdout. LLM calls `bridge.nova.stop` → Python exits, Chrome closes.
 
-**Permission:** Gated by `BridgePermissions.allowNovaAct` (default false). Toggle in AbyssBridge GUI. `BridgeCapabilities.novaAct` field controls server-side tool availability.
+**Permission:** Gated by `BridgePermissions.allowNovaAct` (default false). Toggle in AbyssBridge GUI. `BridgeCapabilities.novaAct` field controls server-side tool availability. `effectiveCapabilities()` in BridgeCore.swift gates the `novaAct` capability by this permission.
+
+**Setup Sheet:** When the user toggles Nova Act ON, a `NovaActSetupSheet` appears in AbyssBridgeApp.swift that checks four prerequisites (Python 3, nova-act package, API key, Chrome) and shows pass/fail with copy-able fix commands. Cancel reverts the toggle; "Enable Anyway" force-enables.
 
 **Files:**
 - `mac/BridgeCore/Sources/BridgeCore/Resources/nova_act_bridge.py` — Python wrapper script
@@ -213,7 +215,7 @@ Assistant messages rendered via `MarkdownTextView` → parses into `.text` (inli
 
 ### Committing Changes
 - **Always commit when done** — at the end of any task, commit all changes with a descriptive message.
-- **Commit incrementally on large tasks** — if working on a multi-step or large feature, commit logical checkpoints along the way (e.g., after each major component is complete), not just at the end.
+- **Commit incrementally — never make massive commits.** Break work into logical, focused commits as you go (e.g., one commit per component, per subsystem, or per meaningful milestone). Do not accumulate all changes and commit everything at once at the end of a large task. Each commit should be understandable in isolation.
 - Use clear commit messages that describe what changed and why.
 
 ### Keeping CLAUDE.md Up to Date
