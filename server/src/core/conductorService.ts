@@ -136,7 +136,7 @@ const LEGACY_CLIENT_TOOLS: ToolDefinition[] = [
   {
     name: "repositories.list",
     description:
-      "List all GitHub repositories the user has connected to Cursor. Call this before agent.spawn when you do not know the exact owner/repo string, or when the user refers to a repo by name. Returns a list of {repository, owner, name} objects. Always prefer a repository from this list over guessing.",
+      "List all GitHub repositories the user has connected to Cursor. Call this before cursor.agent.spawn when you do not know the exact repo string, or when the user refers to a repo by name. Returns a list of {repository, owner, name} objects. Always use a repository value from this list as the repoUrl for cursor.agent.spawn — never guess or fabricate a URL. If the list is empty or the desired repo is not found, tell the user it is not connected to Cursor.",
     input_schema: {
       type: "object",
       properties: {},
@@ -166,12 +166,15 @@ const SERVER_CURSOR_TOOLS: ToolDefinition[] = [
   {
     name: "cursor.agent.spawn",
     description:
-      "Spawn a Cursor Cloud Agent from the server with webhook tracking enabled. Prefer this over agent.spawn when available.",
+      "Spawn a Cursor Cloud Agent from the server with webhook tracking enabled. Prefer this over agent.spawn when available. IMPORTANT: repoUrl must be a repository identifier returned by repositories.list (e.g. 'https://github.com/owner/repo'), NOT a guessed URL. If repositories.list returns an empty list or the desired repo is not found, tell the user the repository is not connected to Cursor instead of spawning.",
     input_schema: {
       type: "object",
       properties: {
         prompt: { type: "string" },
-        repoUrl: { type: "string" },
+        repoUrl: {
+          type: "string",
+          description: "Repository identifier from repositories.list. Do NOT guess or fabricate — only use values returned by repositories.list.",
+        },
         ref: { type: "string" },
         metadata: { type: "object" },
         mode: { type: "string", description: "code | computer_use | webqa" },
