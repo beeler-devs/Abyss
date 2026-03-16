@@ -210,6 +210,8 @@ export class CursorClient {
     if (!response.ok) {
       const errorPayload = parsed as CursorErrorPayload | null;
       const message = errorPayload?.error ?? errorPayload?.message ?? raw.slice(0, 240);
+      const bodyPreview = body ? JSON.stringify(body).slice(0, 500) : "(none)";
+      console.error(`[CursorClient] ${method} ${path} → ${response.status}: ${message} | request body: ${bodyPreview}`);
       throw new Error(`cursor_http_${response.status}:${message}`);
     }
 
