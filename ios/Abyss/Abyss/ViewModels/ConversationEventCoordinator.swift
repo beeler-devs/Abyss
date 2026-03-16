@@ -282,6 +282,15 @@ final class ConversationEventCoordinator: ObservableObject {
             }
             eventBus.emit(event)
 
+        case .assistantImage(let image):
+            let message = ConversationMessage(
+                role: .assistant,
+                text: "",
+                imageBase64: image.imageBase64
+            )
+            conversationStore.append(message)
+            eventBus.emit(event)
+
         case .bridgeExecOutput, .bridgeExecFinished, .bridgeWorkspaceSet:
             eventBus.emit(event)
 

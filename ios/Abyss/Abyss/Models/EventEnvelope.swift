@@ -242,6 +242,12 @@ struct EventEnvelope: Codable, Sendable {
                 "deviceId": .string(value.deviceId),
                 "workspacePath": .string(value.workspacePath),
             ]
+        case .assistantImage(let value):
+            type = "assistant.image"
+            payload = [
+                "imageBase64": .string(value.imageBase64),
+                "mimeType": .string(value.mimeType),
+            ]
         }
     }
 
@@ -416,6 +422,11 @@ struct EventEnvelope: Codable, Sendable {
             kind = .error(Event.ErrorInfo(
                 code: "bridge_device_selection_required",
                 message: "Multiple paired computers are available. Please choose one."
+            ))
+        case "assistant.image":
+            kind = .assistantImage(Event.AssistantImage(
+                imageBase64: try requireString("imageBase64"),
+                mimeType: payload["mimeType"]?.stringValue ?? "image/png"
             ))
         default:
             throw ConversionError.unsupportedType(type)

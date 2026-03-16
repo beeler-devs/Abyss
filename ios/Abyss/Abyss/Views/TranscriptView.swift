@@ -439,11 +439,26 @@ struct MessageBubble: View {
 
             VStack(alignment: isUser ? .trailing : .leading, spacing: 8) {
                 if isUser {
-                    Text(message.text)
-                        .font(.body)
-                        .foregroundStyle(textColor)
+                    if !message.text.isEmpty {
+                        Text(message.text)
+                            .font(.body)
+                            .foregroundStyle(textColor)
+                    }
                 } else {
-                    MarkdownTextView(text: message.text, foregroundColor: textColor, cardResolver: cardResolver)
+                    if !message.text.isEmpty {
+                        MarkdownTextView(text: message.text, foregroundColor: textColor, cardResolver: cardResolver)
+                    }
+                }
+
+                if let base64 = message.imageBase64,
+                   let data = Data(base64Encoded: base64),
+                   let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 280)
+                        .cornerRadius(12)
+                        .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
                 }
             }
             .padding(.horizontal, isUser ? 14 : 0)

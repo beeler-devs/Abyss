@@ -306,6 +306,7 @@ public actor BridgeCore {
         capabilities.gitCommit = capabilities.gitCommit && config.permissions.allowWritesApplyPatch
         capabilities.gitPush = capabilities.gitPush && config.permissions.allowGitPush
         capabilities.claudeRun = capabilities.claudeRun && config.permissions.allowClaudeRun
+        capabilities.screenshot = capabilities.screenshot && config.permissions.allowScreenshot
         return capabilities
     }
 
@@ -600,6 +601,31 @@ public actor BridgeCore {
                     novaActManager = nil
                 }
                 resultText = encodeJSONString(BridgeNovaStopResult(stopped: true))
+
+            case "bridge.screenshot":
+                guard config.permissions.allowScreenshot else {
+                    throw BridgeCoreError.permissionDenied("screenshot disabled")
+                }
+
+                let tempPath = "/tmp/abyss_screenshot_\(UUID().uuidString).png"
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                proc.arguments = ["-x", "-t", "png", tempPath]
+                try proc.run()
+                proc.waitUntilExit()
+
+                guard proc.terminationStatus == 0,
+                      let imageData = FileManager.default.contents(atPath: tempPath) else {
+                    throw BridgeCoreError.internalError("screencapture failed")
+                }
+
+                try? FileManager.default.removeItem(atPath: tempPath)
+
+                let base64 = imageData.base64EncodedString()
+                resultText = encodeJSONString(BridgeScreenshotResult(
+                    imageBase64: base64,
+                    mimeType: "image/png"
+                ))
 
             default:
                 throw BridgeCoreError.unsupportedTool(payload.name)

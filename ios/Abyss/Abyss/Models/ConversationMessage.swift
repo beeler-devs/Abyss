@@ -8,6 +8,7 @@ struct ConversationMessage: Identifiable, Codable, Sendable, Equatable {
     var isPartial: Bool
     let liveResponseId: String?
     let timestamp: Date
+    var imageBase64: String?
 
     enum Role: String, Codable, Sendable {
         case user
@@ -21,7 +22,8 @@ struct ConversationMessage: Identifiable, Codable, Sendable, Equatable {
         text: String,
         isPartial: Bool = false,
         liveResponseId: String? = nil,
-        timestamp: Date = Date()
+        timestamp: Date = Date(),
+        imageBase64: String? = nil
     ) {
         self.id = id
         self.role = role
@@ -29,5 +31,6 @@ struct ConversationMessage: Identifiable, Codable, Sendable, Equatable {
         self.isPartial = isPartial
         self.liveResponseId = liveResponseId
         self.timestamp = timestamp
+        self.imageBase64 = imageBase64
     }
 }
