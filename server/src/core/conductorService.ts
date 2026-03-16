@@ -1091,6 +1091,14 @@ export class ConductorService {
       && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
   }
 
+  /** Returns true for server-side tools whose results should also be emitted
+   *  to the iOS client so card managers can render inline cards. */
+  private shouldEmitServerToolToClient(toolName: string): boolean {
+    return toolName.startsWith("canvas.") ||
+      toolName.startsWith("gmail.") ||
+      toolName.startsWith("calendar.");
+  }
+
   /**
    * Build the conversation array for the LLM, prepending the history summary
    * as context if one exists.
@@ -1288,6 +1296,23 @@ export class ConductorService {
               tool_use_id: toolCall.id,
               tool_name: toolCall.name,
             });
+
+            // Emit tool.call + tool.result to iOS for tools with card representations
+            // so ConversationCanvasManager / ConversationEmailManager / ConversationCalendarManager
+            // can create inline cards from the results.
+            if (this.shouldEmitServerToolToClient(toolCall.name)) {
+              emit(makeEvent("tool.call", session.sessionId, {
+                callId,
+                name: toolCall.name,
+                arguments: JSON.stringify(toolCall.input),
+              }));
+              emit(makeEvent("tool.result", session.sessionId, {
+                callId,
+                result: execution.error ? null : (execution.result ?? "{}"),
+                error: execution.error ?? null,
+              }));
+            }
+
             continue;
           }
 
