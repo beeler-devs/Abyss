@@ -844,6 +844,21 @@ export class ConductorService {
         if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
           session.userPreferences = event.payload.preferences as Record<string, string>;
         }
+
+        // Pre-fetch Canvas courses for ambient context
+        if (session.canvasAccessToken && this.canvasClient) {
+          this.canvasClient.courses(session).then((courses) => {
+            if (Array.isArray(courses) && courses.length > 0) {
+              const summary = courses.map((c: any) =>
+                `${c.name} (ID: ${c.id}${c.course_code ? ', ' + c.course_code : ''})`
+              ).join(", ");
+              session.canvasCourseContext = `Canvas courses: ${summary}`;
+            }
+          }).catch((err) => {
+            logger.warn(`canvas course prefetch failed: ${String(err)}`);
+          });
+        }
+
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;
@@ -1180,7 +1195,7 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId), session.userPreferences);
+          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId), session.userPreferences, session.canvasCourseContext);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {

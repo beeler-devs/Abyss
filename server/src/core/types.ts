@@ -69,6 +69,7 @@ export interface SessionState {
   canvasAccessToken?: string;
   canvasBaseURL?: string;
   userPreferences?: Record<string, string>;
+  canvasCourseContext?: string;
   history: ConversationTurn[];
   historySummary?: string;
   pendingToolCalls: Map<string, PendingToolCall>;
@@ -112,5 +113,6 @@ export interface ModelProvider {
     conversation: ConversationTurn[],
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
+    canvasCourseContext?: string,
   ): Promise<ModelResponse>;
 }

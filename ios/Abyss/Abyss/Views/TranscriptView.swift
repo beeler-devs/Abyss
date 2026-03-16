@@ -27,6 +27,8 @@ struct TranscriptView: View {
     var calendarDraftCards: [CalendarDraftCard] = []
     var onConfirmCalendar: (String) -> Void = { _ in }
     var onCancelCalendar: (String) -> Void = { _ in }
+    var canvasCards: [CanvasCard] = []
+    var onToggleCanvasExpanded: (UUID) -> Void = { _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -82,6 +84,14 @@ struct TranscriptView: View {
                             )
                             .padding(.horizontal, 12)
                             .id(item.id)
+
+                        case .canvasCard(let card):
+                            CanvasCardView(
+                                card: card,
+                                onToggleExpanded: { onToggleCanvasExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
                         }
                     }
 
@@ -103,7 +113,7 @@ struct TranscriptView: View {
                     }
 
                     // Empty state
-                    if messages.isEmpty && agentProgressCards.isEmpty && emailCards.isEmpty && emailDraftCards.isEmpty && calendarEventCards.isEmpty && calendarDraftCards.isEmpty && assistantPartialSpeech.isEmpty {
+                    if messages.isEmpty && agentProgressCards.isEmpty && emailCards.isEmpty && emailDraftCards.isEmpty && calendarEventCards.isEmpty && calendarDraftCards.isEmpty && canvasCards.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -178,6 +188,11 @@ struct TranscriptView: View {
             return (anchor, card)
         }, by: \.0)
 
+        let anchoredCanvasCards = Dictionary(grouping: canvasCards.compactMap { card -> (UUID, CanvasCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
         var items: [TranscriptItem] = []
         for message in messages {
             items.append(.message(message))
@@ -206,6 +221,11 @@ struct TranscriptView: View {
                     items.append(.calendarDraftCard(entry.1))
                 }
             }
+            if let canvasCardsForMsg = anchoredCanvasCards[message.id] {
+                for entry in canvasCardsForMsg {
+                    items.append(.canvasCard(entry.1))
+                }
+            }
         }
 
         for card in agentProgressCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
@@ -223,6 +243,9 @@ struct TranscriptView: View {
         for card in calendarDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
             items.append(.calendarDraftCard(card))
         }
+        for card in canvasCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.canvasCard(card))
+        }
 
         return items
     }
@@ -235,6 +258,7 @@ private enum TranscriptItem: Identifiable {
     case emailDraftCard(EmailDraftCard)
     case calendarEventCard(CalendarEventCard)
     case calendarDraftCard(CalendarDraftCard)
+    case canvasCard(CanvasCard)
 
     var id: String {
         switch self {
@@ -250,6 +274,8 @@ private enum TranscriptItem: Identifiable {
             return "cal-\(card.id.uuidString)"
         case .calendarDraftCard(let card):
             return "cal-draft-\(card.id.uuidString)"
+        case .canvasCard(let card):
+            return "canvas-\(card.id.uuidString)"
         }
     }
 

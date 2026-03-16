@@ -17,6 +17,7 @@ final class ConversationViewModel: ObservableObject {
     @Published var emailDraftCards: [EmailDraftCard] = []
     @Published var calendarEventCards: [CalendarEventCard] = []
     @Published var calendarDraftCards: [CalendarDraftCard] = []
+    @Published var canvasCards: [CanvasCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
@@ -54,6 +55,7 @@ final class ConversationViewModel: ObservableObject {
     private var agentManager: ConversationAgentManager!
     private var emailManager: ConversationEmailManager!
     private var calendarManager: ConversationCalendarManager!
+    private var canvasCardManager: ConversationCanvasManager!
     private let emailDraftManager = EmailDraftManager()
     private let calendarDraftManager = CalendarDraftManager()
     let preferencesStore = UserPreferencesStore()
@@ -279,6 +281,10 @@ final class ConversationViewModel: ObservableObject {
         calendarDraftManager.cancel(callId: callId)
     }
 
+    func toggleCanvasCardExpanded(cardID: UUID) {
+        canvasCardManager.toggleExpanded(cardId: cardID)
+    }
+
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
@@ -358,6 +364,7 @@ final class ConversationViewModel: ObservableObject {
 
         emailManager = ConversationEmailManager(eventBus: eventBus)
         calendarManager = ConversationCalendarManager(eventBus: eventBus)
+        canvasCardManager = ConversationCanvasManager(eventBus: eventBus)
 
         eventCoordinator = ConversationEventCoordinator(
             eventBus: eventBus,
@@ -388,6 +395,7 @@ final class ConversationViewModel: ObservableObject {
                 self?.eventCoordinator.handleEventStream(event)
                 self?.emailManager.handleEventStream(event)
                 self?.calendarManager.handleEventStream(event)
+                self?.canvasCardManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -430,6 +438,10 @@ final class ConversationViewModel: ObservableObject {
         calendarDraftManager.$activeDrafts
             .receive(on: RunLoop.main)
             .assign(to: &$calendarDraftCards)
+
+        canvasCardManager.$canvasCards
+            .receive(on: RunLoop.main)
+            .assign(to: &$canvasCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)

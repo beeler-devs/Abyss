@@ -29,8 +29,8 @@ export class BedrockNovaProvider {
         this.bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
         this.client = client ?? new BedrockRuntimeClient({ region: config.region });
     }
-    async generateResponse(conversation, tools, userPreferences) {
-        const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences);
+    async generateResponse(conversation, tools, userPreferences, canvasCourseContext) {
+        const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences, canvasCourseContext);
         const chunks = chunkText(fullText, 30, 80);
         const response = {
             fullText,
@@ -41,7 +41,7 @@ export class BedrockNovaProvider {
         }
         return response;
     }
-    buildSystemPrompt(userPreferences) {
+    buildSystemPrompt(userPreferences, canvasCourseContext) {
         const parts = [
             "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
             "Keep spoken responses concise, practical, and voice-friendly.",
@@ -64,10 +64,16 @@ export class BedrockNovaProvider {
             "When the user asks to create, move, or schedule a calendar event, compose the details and call calendar.create or calendar.update immediately. The app will show a confirmation card.",
             "For calendar.delete, call the tool with the eventId. The app handles confirmation.",
             "Use preferences.set when the user asks you to remember something about themselves or their preferences. Common keys: user.name, user.timezone, communication.style, communication.verbosity, email.style, email.signoff. Use custom.<key> for anything else.",
+            "If canvas.courses, canvas.assignments, canvas.todo, canvas.upcoming, canvas.grades, or canvas.announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
+            "When the user asks about their classes or courses, call canvas.courses first to discover course IDs, then use those IDs for canvas.assignments, canvas.grades, or canvas.announcements.",
+            "If canvas tools are NOT available but canvas.authenticate IS available, call canvas.authenticate when the user asks about coursework — this opens the settings screen on their device.",
         ];
         if (userPreferences && Object.keys(userPreferences).length > 0) {
             const prefLines = Object.entries(userPreferences).map(([k, v]) => `- ${k}: ${v}`);
             parts.push(`User preferences (apply throughout):\n${prefLines.join("\n")}`);
+        }
+        if (canvasCourseContext) {
+            parts.push(canvasCourseContext);
         }
         return [{ text: parts.join(" ") }];
     }
@@ -185,11 +191,11 @@ export class BedrockNovaProvider {
             toolNameToOriginal,
         };
     }
-    async fetchResponse(conversation, tools, userPreferences) {
+    async fetchResponse(conversation, tools, userPreferences, canvasCourseContext) {
         const messages = this.buildMessages(conversation);
         const { toolConfig, toolNameToOriginal } = this.buildTools(tools);
         const maxTokens = toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens;
-        const systemPrompt = this.buildSystemPrompt(userPreferences);
+        const systemPrompt = this.buildSystemPrompt(userPreferences, canvasCourseContext);
         const contentBlocks = this.bearerToken
             ? await this.fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt)
             : await this.fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt);

@@ -382,7 +382,9 @@ private struct ChatContentView: View {
                 onToggleCalendarExpanded: { viewModel.toggleCalendarEventExpanded(cardID: $0) },
                 calendarDraftCards: viewModel.calendarDraftCards,
                 onConfirmCalendar: { viewModel.confirmCalendarAction(callId: $0) },
-                onCancelCalendar: { viewModel.cancelCalendarAction(callId: $0) }
+                onCancelCalendar: { viewModel.cancelCalendarAction(callId: $0) },
+                canvasCards: viewModel.canvasCards,
+                onToggleCanvasExpanded: { viewModel.toggleCanvasCardExpanded(cardID: $0) }
             )
 
             // Repository selection card (takes priority)

@@ -78,8 +78,9 @@ export class AnthropicProvider implements ModelProvider {
     conversation: ConversationTurn[],
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
+    canvasCourseContext?: string,
   ): Promise<ModelResponse> {
-    const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences);
+    const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences, canvasCourseContext);
     const chunks = chunkText(fullText, 30, 80);
 
     const response: ModelResponse = {
@@ -189,7 +190,7 @@ export class AnthropicProvider implements ModelProvider {
     return messages;
   }
 
-  private buildSystemPrompt(userPreferences?: Record<string, string>): string {
+  private buildSystemPrompt(userPreferences?: Record<string, string>, canvasCourseContext?: string): string {
     const parts: string[] = [
       "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
       "Keep spoken responses concise, practical, and voice-friendly.",
@@ -212,11 +213,18 @@ export class AnthropicProvider implements ModelProvider {
       "When the user asks to create, move, or schedule a calendar event, compose the details and call calendar_create or calendar_update immediately. The app will show a confirmation card.",
       "For calendar_delete, call the tool with the eventId. The app handles confirmation.",
       "Use preferences_set when the user asks you to remember something about themselves or their preferences. Common keys: user.name, user.timezone, communication.style, communication.verbosity, email.style, email.signoff. Use custom.<key> for anything else.",
+      "If canvas_courses, canvas_assignments, canvas_todo, canvas_upcoming, canvas_grades, or canvas_announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
+      "When the user asks about their classes or courses, call canvas_courses first to discover course IDs, then use those IDs for canvas_assignments, canvas_grades, or canvas_announcements.",
+      "If canvas tools are NOT available but canvas_authenticate IS available, call canvas_authenticate when the user asks about coursework — this opens the settings screen on their device.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {
       const prefLines = Object.entries(userPreferences).map(([k, v]) => `- ${k}: ${v}`);
       parts.push(`User preferences (apply throughout):\n${prefLines.join("\n")}`);
+    }
+
+    if (canvasCourseContext) {
+      parts.push(canvasCourseContext);
     }
 
     return parts.join(" ");
@@ -226,6 +234,7 @@ export class AnthropicProvider implements ModelProvider {
     conversation: ConversationTurn[],
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
+    canvasCourseContext?: string,
   ): Promise<FetchResult> {
     const messages = this.buildMessages(conversation);
     const toolList = (tools ?? []).filter((tool) => Boolean(tool.name));
@@ -257,7 +266,7 @@ export class AnthropicProvider implements ModelProvider {
       body: JSON.stringify({
         model: this.config.model,
         max_tokens: maxTokens,
-        system: this.buildSystemPrompt(userPreferences),
+        system: this.buildSystemPrompt(userPreferences, canvasCourseContext),
         ...(withTools ? { tools: safeTools } : {}),
         messages,
       }),
