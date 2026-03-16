@@ -167,7 +167,7 @@ When the iOS app connects or reconnects, `connectConductorClient` gathers any wo
 
 #### iOS Feature Systems
 
-**Multi-Chat Management:** `ChatListViewModel` manages multiple `ChatSession`s with sidebar navigation. Each session has its own `ConversationViewModel`. Persisted via UserDefaults.
+**Multi-Chat Management:** `ChatListViewModel` manages multiple `ChatSession`s with sidebar navigation. Each session has its own `ConversationViewModel`. Chat metadata persisted via UserDefaults. Message history persisted per-session via `ChatHistoryStore` to `Documents/chat-history/{sessionId}.json` — only finalized user/assistant messages are stored (no partials, system, or tool calls). Chats auto-name from the first 5 words of the first user message via `onFirstMessage` callback.
 
 **GitHub OAuth:** `GitHubAuthManager` implements full OAuth 2.0 via `ASWebAuthenticationSession`. Token stored in Keychain. Scopes: `repo`, `read:org`, `read:user`. Client ID from `GITHUB_CLIENT_ID` in Secrets.plist. Login UI in `GitHubLoginView`.
 
