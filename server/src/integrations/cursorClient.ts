@@ -80,12 +80,10 @@ export class CursorClient {
       throw new Error("cursor_invalid_prompt");
     }
 
-    const mode = input.mode ?? normalizeMode(asString(input.metadata?.mode)) ?? "code";
-    const metadata = { ...(input.metadata ?? {}), mode };
     const source: Record<string, unknown> = {};
 
     if (input.repoUrl?.trim()) {
-      source.repository = normalizeRepoUrl(input.repoUrl.trim());
+      source.repository = input.repoUrl.trim();
     }
     if (input.ref?.trim()) {
       source.ref = input.ref.trim();
@@ -97,7 +95,6 @@ export class CursorClient {
     const body: Record<string, unknown> = {
       prompt: { text: prompt },
       source,
-      metadata,
     };
 
     if (this.webhookUrl && this.webhookSecret) {
