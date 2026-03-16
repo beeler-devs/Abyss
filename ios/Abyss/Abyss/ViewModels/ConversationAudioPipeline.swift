@@ -872,7 +872,13 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         self.onInputLevel = onInputLevel
 
         let session = AVAudioSession.sharedInstance()
-        try configureAudioSession(session)
+        do {
+            try configureAudioSession(session)
+        } catch {
+            logAudioError("Hands-free audio session configuration failed", error: error)
+            logSessionState(session, stage: "config-failed")
+            throw error
+        }
         logSessionState(session, stage: "configured")
         logRuntimeEnvironment()
 
@@ -920,7 +926,21 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             stage: "pre-start"
         )
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            logAudioError("Hands-free audio engine start threw", error: error)
+            logSessionState(session, stage: "engine-start-threw")
+            logEngineGraph(
+                engine,
+                inputNode: inputNode,
+                outputNode: outputNode,
+                playerNode: playerNode,
+                sinkNode: sinkNode,
+                stage: "engine-start-threw"
+            )
+            throw error
+        }
         do {
             try session.overrideOutputAudioPort(.speaker)
         } catch {
@@ -1050,11 +1070,7 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
     }
 
     private func configureAudioSession(_ session: AVAudioSession) throws {
-        try session.setCategory(
-            .playAndRecord,
-            mode: .voiceChat,
-            options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers]
-        )
+        try configureSessionCategory(session)
         applySessionPreference("preferredSampleRate") {
             try session.setPreferredSampleRate(Self.preferredHardwareSampleRate)
         }
@@ -1065,6 +1081,38 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             try session.setPreferredInputNumberOfChannels(1)
         }
         try session.setActive(true)
+    }
+
+    private func configureSessionCategory(_ session: AVAudioSession) throws {
+        let optionAttempts: [AVAudioSession.CategoryOptions] = [
+            [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers],
+            [.defaultToSpeaker, .allowBluetoothHFP],
+            [.defaultToSpeaker]
+        ]
+
+        var lastError: Error?
+        for options in optionAttempts {
+            do {
+                try session.setCategory(.playAndRecord, mode: .voiceChat, options: options)
+                AppLogger.audio.debug(
+                    "Hands-free session category configured with options=\(self.describeCategoryOptions(options), privacy: .public)"
+                )
+                return
+            } catch {
+                lastError = error
+                logAudioError(
+                    "Hands-free session setCategory failed for options=\(describeCategoryOptions(options))",
+                    error: error,
+                    level: .warning
+                )
+            }
+        }
+
+        throw lastError ?? NSError(
+            domain: "RemoteAudioCapture",
+            code: 4,
+            userInfo: [NSLocalizedDescriptionKey: "Unable to configure AVAudioSession category"]
+        )
     }
 
     private func applySessionPreference(
@@ -1081,6 +1129,43 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
                 domain=\(nsError.domain, privacy: .public) code=\(nsError.code) \
                 message=\(nsError.localizedDescription, privacy: .public)
                 """
+            )
+        }
+    }
+
+    private func describeCategoryOptions(_ options: AVAudioSession.CategoryOptions) -> String {
+        var labels: [String] = []
+        if options.contains(.defaultToSpeaker) {
+            labels.append("defaultToSpeaker")
+        }
+        if options.contains(.allowBluetoothHFP) {
+            labels.append("allowBluetoothHFP")
+        }
+        if options.contains(.duckOthers) {
+            labels.append("duckOthers")
+        }
+        return labels.isEmpty ? "none" : labels.joined(separator: ",")
+    }
+
+    private enum AudioErrorLogLevel {
+        case warning
+        case error
+    }
+
+    private func logAudioError(
+        _ message: String,
+        error: Error,
+        level: AudioErrorLogLevel = .error
+    ) {
+        let nsError = error as NSError
+        switch level {
+        case .warning:
+            AppLogger.audio.warning(
+                "\(message, privacy: .public): domain=\(nsError.domain, privacy: .public) code=\(nsError.code) message=\(nsError.localizedDescription, privacy: .public)"
+            )
+        case .error:
+            AppLogger.audio.error(
+                "\(message, privacy: .public): domain=\(nsError.domain, privacy: .public) code=\(nsError.code) message=\(nsError.localizedDescription, privacy: .public)"
             )
         }
     }
