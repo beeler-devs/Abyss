@@ -971,6 +971,7 @@ export class ConductorService {
         }
         if (typeof event.payload.memoryUserKey === "string" && event.payload.memoryUserKey) {
           session.memoryUserKey = event.payload.memoryUserKey;
+          logger.info("memoryUserKey set", { sessionId: event.sessionId, memoryUserKey: session.memoryUserKey });
         }
         if (typeof event.payload.canvasAccessToken === "string" && event.payload.canvasAccessToken) {
           session.canvasAccessToken = event.payload.canvasAccessToken;
