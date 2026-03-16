@@ -455,6 +455,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
   private hasOpenAssistantTurn(session: SonicSession): boolean {
     return session.accumulatedAssistantText.trim().length > 0
+      || session.accumulatedSpeculativeText.trim().length > 0
       || session.sawAssistantAudio
       || session.liveResponseId !== null;
   }
@@ -525,7 +526,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if (session.closed) {
       return;
     }
-    if (!session.accumulatedAssistantText.trim()) {
+    if (!session.accumulatedAssistantText.trim() && !session.accumulatedSpeculativeText.trim()) {
       return;
     }
     if (session.pendingToolUse || session.toolExecutionInFlight) {
@@ -910,7 +911,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
   private handleBargeIn(session: SonicSession, reason: string): void {
     if (session.closed || session.bargedIn) return;
 
-    const liveResponseId = this.resetAssistantTurnState(session);
+    // Capture liveResponseId before finalization clears it
+    const liveResponseId = session.liveResponseId;
+
+    // Finalize any accumulated text as a completed (white) message before
+    // clearing state. iOS removePartialMessage() only deletes partial messages,
+    // so a finalized message survives the subsequent interrupted event.
+    this.finalizeAccumulatedAssistantText(session);
+
+    this.resetAssistantTurnState(session);
     session.bargedIn = true;
 
     if (liveResponseId) {
