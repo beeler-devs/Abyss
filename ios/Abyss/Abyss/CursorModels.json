@@ -2,23 +2,23 @@
   "models": [
     {
       "displayName": "Default",
-      "modelId": ""
+      "modelId": "composer-1.5"
     },
     {
       "displayName": "Composer 1.5",
-      "modelId": "claude-3-7-sonnet-20250219"
+      "modelId": "composer-1.5"
     },
     {
       "displayName": "GPT 5.3 Codex",
-      "modelId": "gpt-4.1"
+      "modelId": "gpt-5.3-codex"
     },
     {
       "displayName": "GPT 5.4",
-      "modelId": "gpt-4.5"
+      "modelId": "gpt-5.4"
     },
     {
       "displayName": "Opus 4.6",
-      "modelId": "claude-opus-4-5"
+      "modelId": "claude-opus-4-6"
     }
   ]
 }
