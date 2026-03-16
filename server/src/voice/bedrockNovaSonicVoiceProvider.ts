@@ -1091,9 +1091,25 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         session.toolFailureCounts.delete(circuitKey);
       }
 
-      this.sendToolResult(session, toolCall.id, result.error
+      let resultStr = result.error
         ? JSON.stringify({ error: result.error })
-        : (result.result ?? "{}"));
+        : (result.result ?? "{}");
+
+      // Strip URL fields from tool results so Nova Sonic doesn't read them aloud.
+      // URLs are already shown in the iOS card UI via agent.status events.
+      if (!result.error && resultStr.includes("Url")) {
+        try {
+          const parsed = JSON.parse(resultStr);
+          for (const key of Object.keys(parsed)) {
+            if (key.toLowerCase().includes("url") && typeof parsed[key] === "string") {
+              parsed[key] = "(available in the UI card)";
+            }
+          }
+          resultStr = JSON.stringify(parsed);
+        } catch { /* keep original */ }
+      }
+
+      this.sendToolResult(session, toolCall.id, resultStr);
     } finally {
       session.toolExecutionInFlight = false;
     }

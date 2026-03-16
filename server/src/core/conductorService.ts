@@ -935,6 +935,11 @@ export class ConductorService {
     return this.availableTools(sessionId);
   }
 
+  setLiveSession(sessionId: string, live: boolean): void {
+    const session = this.sessions.getOrCreate(sessionId);
+    session.isLiveSession = live;
+  }
+
   async executeDirectToolCall(
     sessionId: string,
     toolCall: ToolCallRequest,
@@ -1197,10 +1202,30 @@ export class ConductorService {
         const name = asString(event.payload.name);
         const prompt = asString(event.payload.prompt);
 
+        logger.info(`agent.completed received (live=${!!session.isLiveSession})`, {
+          sessionId: session.sessionId,
+          eventId: event.id,
+          agentId,
+          status,
+        });
+
+        if (session.isLiveSession) {
+          // During live conversations, Nova Sonic handles agent updates via
+          // cursor_agent_status tool calls. Emit agent.status to iOS so the
+          // card updates, but skip the text-based conductor loop — it would
+          // produce rogue tts.speak calls that destroy the audio session.
+          emit(makeEvent("agent.status", session.sessionId, {
+            agentId, status, summary, name, prompt,
+          }));
+          return;
+        }
+
         const outcome = status === "FINISHED" ? "finished successfully" : "failed";
         const agentRef = name ? `"${name}"` : `agent ${agentId}`;
         const taskDesc = prompt ? `Task: "${prompt}". ` : "";
-        const summaryDesc = summary ? `Summary: ${summary}` : "No summary was provided.";
+        const summaryDesc = summary && summary !== `Agent status updated: ${status}`
+          ? `Summary: ${summary}`
+          : "No detailed summary was provided.";
 
         const contextText = [
           `[Agent Update] Cursor agent ${agentRef} just ${outcome}.`,
@@ -1209,13 +1234,6 @@ export class ConductorService {
           "Tell the user what the agent accomplished (or what went wrong if it failed),",
           "in a concise, natural sentence or two. Do not repeat the raw summary verbatim.",
         ].join(" ").trim();
-
-        logger.info("agent.completed received", {
-          sessionId: session.sessionId,
-          eventId: event.id,
-          agentId,
-          status,
-        });
 
         await this.runConductorLoop(session, contextText, emit, event.id, {
           suppressUserMessage: true,

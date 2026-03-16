@@ -90,6 +90,8 @@ export interface SessionState {
     lastGoal?: string;
     activeExecutor?: string;
   };
+  /** True while Nova Sonic is actively streaming audio for this session. */
+  isLiveSession?: boolean;
 }
 
 export interface BridgeToolExecutionRequest {

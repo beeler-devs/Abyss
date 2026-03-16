@@ -348,6 +348,7 @@ wss.on("connection", (socket, request) => {
     }
 
     if (voiceProvider && event.type === "user.audio.stream.start") {
+      conductor.setLiveSession(event.sessionId, true);
       await voiceProvider.startStream(event.sessionId, {
         emit: (outbound) => emitToSession(outbound),
         listTools: (sessionId) => conductor.listAvailableTools(sessionId),
@@ -371,6 +372,7 @@ wss.on("connection", (socket, request) => {
 
     if (voiceProvider && event.type === "user.audio.stream.end") {
       await voiceProvider.endStream(event.sessionId);
+      conductor.setLiveSession(event.sessionId, false);
       return;
     }
 
@@ -393,6 +395,7 @@ wss.on("connection", (socket, request) => {
         void conductor.finalizeSession(context.sessionId);
       }
       if (voiceProvider) {
+        conductor.setLiveSession(context.sessionId, false);
         void voiceProvider.closeSession(context.sessionId);
       }
     }
