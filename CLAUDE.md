@@ -79,6 +79,12 @@ When server-side tools (gmail.*, calendar.*, canvas.*) return results, `Conducto
 - All card models (`EmailCard`, `CalendarEventCard`, `CanvasCard`, `BridgeExecCard`, `AgentProgressCard`) — `serverCardId: String?`
 - Card managers (`ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`) — parse `cardId` from enriched JSON
 
+### Chat Auto-Title
+After the first user message in a session, `ConductorService.tryGenerateTitle()` fires a lightweight LLM call to produce a 3-5 word title. The result is emitted as a `session.title` event. On iOS, `ConversationEventCoordinator.onTitleGenerated` propagates through `ConversationViewModel.onTitleGenerated` to `ContentView.syncActiveChat`, which renames the chat only if its title is still "New Chat" (preserving manual renames). `ChatListViewModel.renameChat(id:title:)` persists the change.
+
+### Sidebar Chat Row Menu
+Each sidebar chat row (`ChatRowButton` in `ContentView.swift`) shows an ellipsis `Menu` with Rename and Delete actions. Rename switches the title to an inline `TextField` with focus; submit or focus loss commits. The row uses `HStack` + `.onTapGesture` for selection so the `Menu` has its own tap target.
+
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
 
