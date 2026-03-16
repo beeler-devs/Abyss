@@ -43,6 +43,8 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeStatus(BridgeStatus)
         case bridgeExecOutput(BridgeExecOutput)
         case bridgeExecFinished(BridgeExecFinished)
+        case preferencesSync(PreferencesSync)
+        case bridgeWorkspaceSet(BridgeWorkspaceSet)
     }
 
     // MARK: - Payloads
@@ -53,6 +55,9 @@ struct Event: Identifiable, Codable, Sendable {
         let gmailAccessToken: String?
         let gmailRefreshToken: String?
         let gmailTokenExpiresAt: Double?
+        let canvasAccessToken: String?
+        let canvasBaseURL: String?
+        let preferences: [String: String]?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -186,6 +191,7 @@ struct Event: Identifiable, Codable, Sendable {
         let deviceId: String
         let deviceName: String
         let status: String
+        let workspaceRoot: String?
     }
 
     struct BridgeStatus: Codable, Sendable {
@@ -209,6 +215,15 @@ struct Event: Identifiable, Codable, Sendable {
         let stdoutTail: String
         let stderrTail: String
     }
+
+    struct PreferencesSync: Codable, Sendable {
+        let preferences: [String: String]
+    }
+
+    struct BridgeWorkspaceSet: Codable, Sendable {
+        let deviceId: String
+        let workspacePath: String
+    }
 }
 
 // MARK: - Convenience Factories
@@ -219,15 +234,25 @@ extension Event {
         githubToken: String? = nil,
         gmailAccessToken: String? = nil,
         gmailRefreshToken: String? = nil,
-        gmailTokenExpiresAt: Double? = nil
+        gmailTokenExpiresAt: Double? = nil,
+        canvasAccessToken: String? = nil,
+        canvasBaseURL: String? = nil,
+        preferences: [String: String]? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
             sessionId: sessionId,
             githubToken: githubToken,
             gmailAccessToken: gmailAccessToken,
             gmailRefreshToken: gmailRefreshToken,
-            gmailTokenExpiresAt: gmailTokenExpiresAt
+            gmailTokenExpiresAt: gmailTokenExpiresAt,
+            canvasAccessToken: canvasAccessToken,
+            canvasBaseURL: canvasBaseURL,
+            preferences: preferences
         )))
+    }
+
+    static func preferencesSync(preferences: [String: String], sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .preferencesSync(PreferencesSync(preferences: preferences)))
     }
 
     static func transcriptPartial(_ text: String, sessionId: String? = nil) -> Event {
@@ -375,6 +400,10 @@ extension Event {
         let payload = BridgePairRequest(pairingCode: code, deviceName: deviceName)
         return Event(sessionId: sessionId, kind: .bridgePairRequest(payload))
     }
+
+    static func bridgeWorkspaceSet(deviceId: String, workspacePath: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .bridgeWorkspaceSet(BridgeWorkspaceSet(deviceId: deviceId, workspacePath: workspacePath)))
+    }
 }
 
 // MARK: - Display Helpers
@@ -408,6 +437,8 @@ extension Event.Kind {
         case .bridgeStatus(let payload): return "bridge.status: \(payload.status)"
         case .bridgeExecOutput(let payload): return "bridge.exec.output: \(payload.commandId.prefix(8))"
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
+        case .preferencesSync: return "preferences.sync"
+        case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
         }
     }
 }

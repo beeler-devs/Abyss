@@ -562,6 +562,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       }
 
       if (info.role === "USER" && info.type === "TEXT" && info.text.trim().length > 0) {
+        // Finalize any pending assistant text before emitting the user message,
+        // so the iOS partial-replacement logic sees isPartial:false before the user message.
+        this.finalizeAccumulatedAssistantText(session);
+
         session.context.emit(makeEvent("user.audio.transcript.final", session.sessionId, {
           text: info.text.trim(),
         }));
@@ -613,16 +617,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
       if (info.role === "ASSISTANT" && info.type === "AUDIO") {
         session.context.emit(makeEvent("assistant.audio.end", session.sessionId, {}));
-
-        // Audio completion still marks playback completion, but text can be finalized earlier.
-        this.finalizeAccumulatedAssistantText(session);
-
-        session.context.emit(makeEvent("tool.call", session.sessionId, {
-          callId: crypto.randomUUID(),
-          name: "convo.setState",
-          arguments: JSON.stringify({ state: "idle" }),
-        }));
-        session.sawAssistantAudio = false;
+        session.sawAssistantAudio = true;
       }
       return;
     }
@@ -645,6 +640,12 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
       if (stopReason === "END_TURN") {
         this.finalizeAccumulatedAssistantText(session);
+        session.context.emit(makeEvent("tool.call", session.sessionId, {
+          callId: crypto.randomUUID(),
+          name: "convo.setState",
+          arguments: JSON.stringify({ state: "idle" }),
+        }));
+        session.sawAssistantAudio = false;
       }
     }
   }

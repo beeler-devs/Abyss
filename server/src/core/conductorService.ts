@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 
+import { CalendarClient } from "../integrations/calendarClient.js";
+import { CanvasClient } from "../integrations/canvasClient.js";
 import { CursorClient } from "../integrations/cursorClient.js";
 import { GmailClient } from "../integrations/gmailClient.js";
+import { GitHubClient } from "../integrations/githubClient.js";
 import {
   isTerminalAgentStatus,
   normalizeMode,
@@ -14,9 +17,11 @@ import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
 import { MemoryService } from "./memory/memoryService.js";
 import { SessionStore } from "./sessionStore.js";
+import { summarizeIfNeeded, SummarizationConfig, DEFAULT_SUMMARIZATION_CONFIG } from "./contextSummarizer.js";
 import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
 import {
   BridgeToolExecutor,
+  ConversationTurn,
   CursorAgentMode,
   CursorAgentRunRecord,
   EventEnvelope,
@@ -36,12 +41,16 @@ export interface ConductorServiceConfig {
 export interface ConductorServiceDependencies {
   cursorClient?: CursorClient;
   gmailClient?: GmailClient;
+  canvasClient?: CanvasClient;
+  calendarClient?: CalendarClient;
+  githubClient?: GitHubClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
   bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   verboseToolRoutingLogs?: boolean;
   memoryService?: MemoryService;
+  summarizationConfig?: SummarizationConfig;
 }
 
 export interface CursorWebhookHandleResult {
@@ -483,7 +492,7 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
   {
     name: "gmail.send",
     description:
-      "Send a new email. IMPORTANT: You MUST present the draft (To, Subject, Body) to the user and get explicit confirmation before calling this tool. Never send without user approval.",
+      "Send a new email on behalf of the user. The app will show the draft in a confirmation card before actually sending. Just call this tool with the composed email content.",
     input_schema: {
       type: "object",
       properties: {
@@ -498,7 +507,7 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
   {
     name: "gmail.reply",
     description:
-      "Reply to an existing email by message ID. IMPORTANT: You MUST present the draft reply to the user and get explicit confirmation before calling this tool. Never reply without user approval.",
+      "Reply to an existing email by message ID. The app will show the draft reply in a confirmation card before actually sending. Just call this tool with the composed reply.",
     input_schema: {
       type: "object",
       properties: {
@@ -508,6 +517,276 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
         cc: { type: "string", description: "CC email address (optional)." },
       },
       required: ["messageId", "body"],
+    },
+  },
+];
+
+const SERVER_CALENDAR_TOOLS: ToolDefinition[] = [
+  {
+    name: "calendar.list",
+    description:
+      "List events from the user's Google Calendar within a date range. Returns title, start/end times, location, and attendees for each event.",
+    input_schema: {
+      type: "object",
+      properties: {
+        timeMin: { type: "string", description: "Start of time range in ISO 8601 format (e.g. '2026-03-15T00:00:00Z'). Required." },
+        timeMax: { type: "string", description: "End of time range in ISO 8601 format (e.g. '2026-03-16T00:00:00Z'). Required." },
+        maxResults: { type: "number", description: "Max events to return (default 10, max 50)." },
+        q: { type: "string", description: "Free-text search filter (optional)." },
+      },
+      required: ["timeMin", "timeMax"],
+    },
+  },
+  {
+    name: "calendar.get",
+    description:
+      "Get full details of a specific calendar event by its event ID.",
+    input_schema: {
+      type: "object",
+      properties: {
+        eventId: { type: "string", description: "The Google Calendar event ID." },
+      },
+      required: ["eventId"],
+    },
+  },
+  {
+    name: "calendar.create",
+    description:
+      "Create a new Google Calendar event. The app will show a confirmation card for the user to review before creating. Just call this tool with the event details.",
+    input_schema: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "Event title." },
+        startTime: { type: "string", description: "Start time in ISO 8601 format." },
+        endTime: { type: "string", description: "End time in ISO 8601 format." },
+        description: { type: "string", description: "Event description (optional)." },
+        location: { type: "string", description: "Event location (optional)." },
+        attendees: { type: "string", description: "Comma-separated attendee email addresses (optional)." },
+      },
+      required: ["summary", "startTime", "endTime"],
+    },
+  },
+  {
+    name: "calendar.update",
+    description:
+      "Update an existing Google Calendar event (change time, title, etc.). The app will show a confirmation card before applying changes.",
+    input_schema: {
+      type: "object",
+      properties: {
+        eventId: { type: "string", description: "The event ID to update." },
+        summary: { type: "string", description: "New event title (optional)." },
+        startTime: { type: "string", description: "New start time in ISO 8601 (optional)." },
+        endTime: { type: "string", description: "New end time in ISO 8601 (optional)." },
+        description: { type: "string", description: "New description (optional)." },
+        location: { type: "string", description: "New location (optional)." },
+        attendees: { type: "string", description: "New comma-separated attendee emails (optional)." },
+      },
+      required: ["eventId"],
+    },
+  },
+  {
+    name: "calendar.delete",
+    description:
+      "Delete a Google Calendar event. The app will show a confirmation card before deleting.",
+    input_schema: {
+      type: "object",
+      properties: {
+        eventId: { type: "string", description: "The event ID to delete." },
+        summary: { type: "string", description: "Event title for display in the confirmation card." },
+      },
+      required: ["eventId"],
+    },
+  },
+];
+
+const SERVER_CANVAS_TOOLS: ToolDefinition[] = [
+  {
+    name: "canvas.courses",
+    description:
+      "List the user's active Canvas LMS courses. Returns course names, IDs, and enrollment info.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "canvas.assignments",
+    description:
+      "List assignments for a Canvas course, ordered by due date. Returns assignment names, due dates, points, and submission status.",
+    input_schema: {
+      type: "object",
+      properties: {
+        courseId: { type: "string", description: "The Canvas course ID." },
+      },
+      required: ["courseId"],
+    },
+  },
+  {
+    name: "canvas.todo",
+    description:
+      "Get the user's Canvas TODO items across all courses. Returns upcoming assignments and grading tasks.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "canvas.upcoming",
+    description:
+      "Get upcoming calendar events from Canvas. Returns event titles, dates, and course associations.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "canvas.grades",
+    description:
+      "Get the user's grades/enrollment for a specific Canvas course. Returns current score, grade, and enrollment details.",
+    input_schema: {
+      type: "object",
+      properties: {
+        courseId: { type: "string", description: "The Canvas course ID." },
+      },
+      required: ["courseId"],
+    },
+  },
+  {
+    name: "canvas.announcements",
+    description:
+      "Get announcements for a Canvas course. Returns announcement titles, messages, and post dates.",
+    input_schema: {
+      type: "object",
+      properties: {
+        courseId: { type: "string", description: "The Canvas course ID." },
+      },
+      required: ["courseId"],
+    },
+  },
+];
+
+const SERVER_GITHUB_TOOLS: ToolDefinition[] = [
+  {
+    name: "github.repos.list",
+    description:
+      "List GitHub repositories accessible to the authenticated user. Use this before other GitHub tools when the exact owner/repo string is unknown. Never guess a repository name when this tool is available.",
+    input_schema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max results to return (default 20, max 100)." },
+      },
+    },
+  },
+  {
+    name: "github.pr.list",
+    description:
+      "List the user's pull requests. Pass repo in owner/repo format when the user names a repo; otherwise omit it to search across repos for PRs authored by the user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        state: { type: "string", description: "'open' (default), 'closed', or 'all'." },
+        limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+      },
+    },
+  },
+  {
+    name: "github.pr.get",
+    description:
+      "Get details for a specific pull request, including branches, file change counts, mergeability, and review state.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        prNumber: { type: "number", description: "Pull request number." },
+      },
+      required: ["repo", "prNumber"],
+    },
+  },
+  {
+    name: "github.pr.reviews",
+    description:
+      "Summarize reviews and inline review comments on a pull request. Use when the user asks what feedback or approvals a PR has received.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        prNumber: { type: "number", description: "Pull request number." },
+      },
+      required: ["repo", "prNumber"],
+    },
+  },
+  {
+    name: "github.actions.status",
+    description:
+      "Get recent GitHub Actions status for a repository, branch, or pull request. Use this for CI questions.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        branch: { type: "string", description: "Branch name to inspect." },
+        prNumber: { type: "number", description: "Optional pull request number if branch is unknown." },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "github.issues.list",
+    description:
+      "List GitHub issues. Pass repo when known; otherwise omit it to search globally. If the user asks for issues assigned to them, set assignee to 'me'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        state: { type: "string", description: "'open' (default) or 'closed'." },
+        assignee: { type: "string", description: "Use 'me' for the authenticated user or pass a GitHub login." },
+        limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+      },
+    },
+  },
+  {
+    name: "github.pr.create",
+    description:
+      "Create a pull request. IMPORTANT: You MUST present the repo, title, head branch, base branch, and body to the user and get explicit confirmation before calling this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        title: { type: "string", description: "Pull request title." },
+        body: { type: "string", description: "Pull request body (optional)." },
+        head: { type: "string", description: "Source branch name." },
+        base: { type: "string", description: "Target branch name (optional)." },
+      },
+      required: ["repo", "title", "head"],
+    },
+  },
+  {
+    name: "github.pr.merge",
+    description:
+      "Merge a pull request. IMPORTANT: You MUST confirm the repo, PR number, and merge method with the user before calling this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        prNumber: { type: "number", description: "Pull request number." },
+        mergeMethod: { type: "string", description: "'merge', 'squash', or 'rebase'." },
+      },
+      required: ["repo", "prNumber"],
+    },
+  },
+  {
+    name: "github.issues.create",
+    description:
+      "Create a GitHub issue. IMPORTANT: You MUST present the repo, title, body, and labels to the user and get explicit confirmation before calling this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        title: { type: "string", description: "Issue title." },
+        body: { type: "string", description: "Issue body (optional)." },
+        labels: { type: "array", description: "Optional list of labels." },
+      },
+      required: ["repo", "title"],
     },
   },
 ];
@@ -539,6 +818,9 @@ export class ConductorService {
   private readonly sessions: SessionStore;
   private readonly cursorClient: CursorClient;
   private readonly gmailClient?: GmailClient;
+  private readonly canvasClient?: CanvasClient;
+  private readonly calendarClient?: CalendarClient;
+  private readonly githubClient?: GitHubClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
@@ -547,6 +829,7 @@ export class ConductorService {
   private readonly bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   private readonly verboseToolRoutingLogs: boolean;
   private readonly memoryService?: MemoryService;
+  private readonly summarizationConfig: SummarizationConfig;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
@@ -557,12 +840,16 @@ export class ConductorService {
     );
     this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
     this.gmailClient = dependencies.gmailClient;
+    this.canvasClient = dependencies.canvasClient;
+    this.calendarClient = dependencies.calendarClient;
+    this.githubClient = dependencies.githubClient;
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
     this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
     this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
     this.memoryService = dependencies.memoryService;
+    this.summarizationConfig = dependencies.summarizationConfig ?? DEFAULT_SUMMARIZATION_CONFIG;
   }
 
   createRateLimiter() {
@@ -685,6 +972,31 @@ export class ConductorService {
         if (typeof event.payload.memoryUserKey === "string" && event.payload.memoryUserKey) {
           session.memoryUserKey = event.payload.memoryUserKey;
         }
+        if (typeof event.payload.canvasAccessToken === "string" && event.payload.canvasAccessToken) {
+          session.canvasAccessToken = event.payload.canvasAccessToken;
+        }
+        if (typeof event.payload.canvasBaseURL === "string" && event.payload.canvasBaseURL) {
+          session.canvasBaseURL = event.payload.canvasBaseURL;
+        }
+        if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
+          session.userPreferences = event.payload.preferences as Record<string, string>;
+        }
+
+        // Pre-fetch Canvas courses for ambient context
+        if (session.canvasAccessToken && this.canvasClient) {
+          this.canvasClient.courses(session).then((courses) => {
+            if (Array.isArray(courses) && courses.length > 0) {
+              const summary = courses.map((c: any) =>
+                `${c.name} (ID: ${c.id}${c.course_code ? ', ' + c.course_code : ''})`
+              ).join(", ");
+              session.canvasCourseContext = `Canvas courses: ${summary}`;
+            }
+          }).catch((err) => {
+            logger.warn(`canvas course prefetch failed: ${String(err)}`);
+          });
+        }
+
+
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;
@@ -721,6 +1033,7 @@ export class ConductorService {
         }
 
         await this.runConductorLoop(session, text, emit, event.id);
+        this.trySummarizeHistory(session);
         return;
       }
 
@@ -791,6 +1104,14 @@ export class ConductorService {
         return;
       }
 
+      case "preferences.sync": {
+        if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
+          session.userPreferences = event.payload.preferences as Record<string, string>;
+          logger.info(`preferences synced: ${Object.keys(session.userPreferences).join(", ")}`, { sessionId: session.sessionId });
+        }
+        return;
+      }
+
       case "agent.completed": {
         const agentId = asString(event.payload.agentId) ?? "unknown";
         const status = asString(event.payload.status) ?? "UNKNOWN";
@@ -821,6 +1142,7 @@ export class ConductorService {
         await this.runConductorLoop(session, contextText, emit, event.id, {
           suppressUserMessage: true,
         });
+        this.trySummarizeHistory(session);
         return;
       }
 
@@ -864,6 +1186,12 @@ export class ConductorService {
         : SERVER_BRIDGE_TOOLS;
       tools.push(...bridgeTools);
     }
+    if (this.githubClient) {
+      const session = this.sessions.getOrCreate(sessionId);
+      if (session.githubToken) {
+        tools.push(...SERVER_GITHUB_TOOLS);
+      }
+    }
     if (this.gmailClient?.isConfigured()) {
       const session = this.sessions.getOrCreate(sessionId);
       if (session.gmailAccessToken) {
@@ -873,6 +1201,31 @@ export class ConductorService {
           name: "gmail.authenticate",
           description:
             "Prompt the user to connect their Gmail account. Call this when the user wants to use email features but hasn't connected Gmail yet. This opens the Google sign-in screen on their device.",
+          input_schema: {
+            type: "object",
+            properties: {},
+          },
+        });
+      }
+    }
+
+    if (this.calendarClient?.isConfigured()) {
+      const session = this.sessions.getOrCreate(sessionId);
+      if (session.gmailAccessToken) {
+        tools.push(...SERVER_CALENDAR_TOOLS);
+      }
+    }
+
+    // Canvas tools: available when token is present, otherwise offer authenticate
+    {
+      const session = this.sessions.getOrCreate(sessionId);
+      if (session.canvasAccessToken) {
+        tools.push(...SERVER_CANVAS_TOOLS);
+      } else {
+        tools.push({
+          name: "canvas.authenticate",
+          description:
+            "Prompt the user to connect their Canvas LMS account. Call this when the user wants to check courses, assignments, or grades but hasn't connected Canvas yet. Directs the user to Settings → Connections → Canvas.",
           input_schema: {
             type: "object",
             properties: {},
@@ -893,12 +1246,72 @@ export class ConductorService {
       return true;
     }
 
+    if (toolName.startsWith("calendar.") && toolName !== "calendar.authenticate") {
+      return true;
+    }
+
+    if (toolName.startsWith("canvas.") && toolName !== "canvas.authenticate") {
+      return true;
+    }
+
+    if (toolName.startsWith("github.")) {
+      return Boolean(this.githubClient);
+    }
+
     if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
       return true;
     }
 
     return this.cursorClient.isConfigured()
       && (toolName.startsWith("cursor.agent.") || toolName.startsWith("webqa.cursor."));
+  }
+
+  /**
+   * Build the conversation array for the LLM, prepending the history summary
+   * as context if one exists.
+   */
+  private buildConversation(session: SessionState): ConversationTurn[] {
+    if (!session.historySummary) {
+      return session.history;
+    }
+
+    return [
+      {
+        role: "user" as const,
+        content: `[Context from earlier in this conversation]\n${session.historySummary}\n[End of context — conversation continues below]`,
+      },
+      {
+        role: "assistant" as const,
+        content: "Understood, I have the context from our earlier conversation.",
+      },
+      ...session.history,
+    ];
+  }
+
+  /**
+   * Fire-and-forget: summarize history if it exceeds the threshold.
+   * Runs after the conductor loop completes so it doesn't add latency.
+   */
+  private trySummarizeHistory(session: SessionState): void {
+    if (session.history.length <= this.summarizationConfig.summarizeAfter) {
+      return;
+    }
+
+    // Run asynchronously — don't block the current response
+    summarizeIfNeeded(
+      session.history,
+      session.historySummary,
+      this.provider,
+      this.summarizationConfig,
+    ).then(({ summarized, newSummary, newHistory }) => {
+      if (summarized && newSummary && newHistory) {
+        session.historySummary = newSummary;
+        session.history = newHistory;
+        logger.info(`History summarized for session ${session.sessionId}: summary=${newSummary.length} chars, history=${newHistory.length} turns`);
+      }
+    }).catch((error) => {
+      logger.warn(`History summarization error for session ${session.sessionId}: ${error}`);
+    });
   }
 
   private async runConductorLoop(
@@ -975,7 +1388,7 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(session.history, this.availableTools(session.sessionId));
+          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId), session.userPreferences, session.canvasCourseContext);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {
@@ -1545,6 +1958,40 @@ export class ConductorService {
             return { result: null, error: "gmail_send_requires_to_subject_body" };
           }
           const cc = stringFromRecord(args, "cc");
+
+          // Emit draft to iOS for user confirmation
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "gmail.send.confirm",
+            arguments: JSON.stringify({ to, cc: cc ?? undefined, subject, body }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "gmail.send.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { to, cc, subject, body },
+          });
+          emit(confirmEnvelope);
+
+          // Wait for user confirmation (120s timeout — user needs time to read)
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
+          }
+
+          let confirmed = false;
+          try {
+            const parsed = JSON.parse(confirmResult);
+            confirmed = parsed.confirmed === true;
+          } catch {
+            return { result: null, error: "gmail_send_invalid_confirmation" };
+          }
+
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
+          }
+
           const sendResult = await this.gmailClient.send(session, { to, cc, subject, body });
           return { result: stableJSONStringify(sendResult), error: null };
         }
@@ -1560,8 +2007,403 @@ export class ConductorService {
           }
           const to = stringFromRecord(args, "to");
           const cc = stringFromRecord(args, "cc");
+
+          // Emit draft to iOS for user confirmation
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "gmail.reply.confirm",
+            arguments: JSON.stringify({ messageId, body, to: to ?? undefined, cc: cc ?? undefined }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "gmail.reply.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { messageId, body, to, cc },
+          });
+          emit(confirmEnvelope);
+
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
+          }
+
+          let confirmed = false;
+          try {
+            const parsed = JSON.parse(confirmResult);
+            confirmed = parsed.confirmed === true;
+          } catch {
+            return { result: null, error: "gmail_reply_invalid_confirmation" };
+          }
+
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };
+          }
+
           const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
           return { result: stableJSONStringify(replyResult), error: null };
+        }
+
+        // Canvas LMS tools
+        case "canvas.courses": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courses = await this.canvasClient.courses(session);
+          return { result: stableJSONStringify(courses), error: null };
+        }
+
+        case "canvas.assignments": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courseId = stringFromRecord(args, "courseId");
+          if (!courseId) {
+            return { result: null, error: "canvas_missing_course_id" };
+          }
+          const assignments = await this.canvasClient.assignments(session, courseId);
+          return { result: stableJSONStringify(assignments), error: null };
+        }
+
+        case "canvas.todo": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const todoItems = await this.canvasClient.todo(session);
+          return { result: stableJSONStringify(todoItems), error: null };
+        }
+
+        case "canvas.upcoming": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const events = await this.canvasClient.upcomingEvents(session);
+          return { result: stableJSONStringify(events), error: null };
+        }
+
+        case "canvas.grades": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courseId = stringFromRecord(args, "courseId");
+          if (!courseId) {
+            return { result: null, error: "canvas_missing_course_id" };
+          }
+          const grades = await this.canvasClient.grades(session, courseId);
+          return { result: stableJSONStringify(grades), error: null };
+        }
+
+        case "canvas.announcements": {
+          if (!this.canvasClient) {
+            return { result: null, error: "canvas_not_configured" };
+          }
+          const courseId = stringFromRecord(args, "courseId");
+          if (!courseId) {
+            return { result: null, error: "canvas_missing_course_id" };
+          }
+          const announcements = await this.canvasClient.announcements(session, courseId);
+          return { result: stableJSONStringify(announcements), error: null };
+        }
+
+        case "calendar.list": {
+          if (!this.calendarClient) {
+            return { result: null, error: "calendar_not_configured" };
+          }
+          const timeMin = stringFromRecord(args, "timeMin");
+          const timeMax = stringFromRecord(args, "timeMax");
+          if (!timeMin || !timeMax) {
+            return { result: null, error: "calendar_list_requires_timeMin_and_timeMax" };
+          }
+          const maxResults = Math.min(typeof args.maxResults === "number" ? args.maxResults : 10, 50);
+          const q = stringFromRecord(args, "q");
+          const listResult = await this.calendarClient.listEvents(session, { timeMin, timeMax, maxResults, q: q ?? undefined });
+          return { result: stableJSONStringify(listResult), error: null };
+        }
+
+        case "calendar.get": {
+          if (!this.calendarClient) {
+            return { result: null, error: "calendar_not_configured" };
+          }
+          const eventId = stringFromRecord(args, "eventId");
+          if (!eventId) {
+            return { result: null, error: "calendar_get_requires_eventId" };
+          }
+          const eventDetail = await this.calendarClient.getEvent(session, eventId);
+          return { result: stableJSONStringify(eventDetail), error: null };
+        }
+
+        case "calendar.create": {
+          if (!this.calendarClient) {
+            return { result: null, error: "calendar_not_configured" };
+          }
+          const summary = stringFromRecord(args, "summary");
+          const startTime = stringFromRecord(args, "startTime");
+          const endTime = stringFromRecord(args, "endTime");
+          if (!summary || !startTime || !endTime) {
+            return { result: null, error: "calendar_create_requires_summary_startTime_endTime" };
+          }
+          const description = stringFromRecord(args, "description");
+          const location = stringFromRecord(args, "location");
+          const attendees = stringFromRecord(args, "attendees");
+
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "calendar.create.confirm",
+            arguments: JSON.stringify({ summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "calendar.create.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { summary, startTime, endTime, description, location, attendees },
+          });
+          emit(confirmEnvelope);
+
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "calendar_create_not_confirmed" };
+          }
+          let confirmed = false;
+          try { const parsed = JSON.parse(confirmResult); confirmed = parsed.confirmed === true; } catch { return { result: null, error: "calendar_create_invalid_confirmation" }; }
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to create the event." }), error: null };
+          }
+
+          const attendeeList = attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined;
+          const createResult = await this.calendarClient.createEvent(session, { summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendeeList });
+          return { result: stableJSONStringify(createResult), error: null };
+        }
+
+        case "calendar.update": {
+          if (!this.calendarClient) {
+            return { result: null, error: "calendar_not_configured" };
+          }
+          const eventId = stringFromRecord(args, "eventId");
+          if (!eventId) {
+            return { result: null, error: "calendar_update_requires_eventId" };
+          }
+          const summary = stringFromRecord(args, "summary");
+          const startTime = stringFromRecord(args, "startTime");
+          const endTime = stringFromRecord(args, "endTime");
+          const description = stringFromRecord(args, "description");
+          const location = stringFromRecord(args, "location");
+          const attendees = stringFromRecord(args, "attendees");
+
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "calendar.update.confirm",
+            arguments: JSON.stringify({ eventId, summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "calendar.update.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { eventId, summary, startTime, endTime, description, location, attendees },
+          });
+          emit(confirmEnvelope);
+
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "calendar_update_not_confirmed" };
+          }
+          let confirmed = false;
+          try { const parsed = JSON.parse(confirmResult); confirmed = parsed.confirmed === true; } catch { return { result: null, error: "calendar_update_invalid_confirmation" }; }
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to update the event." }), error: null };
+          }
+
+          const attendeeList = attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined;
+          const updateResult = await this.calendarClient.updateEvent(session, eventId, { summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendeeList });
+          return { result: stableJSONStringify(updateResult), error: null };
+        }
+
+        case "calendar.delete": {
+          if (!this.calendarClient) {
+            return { result: null, error: "calendar_not_configured" };
+          }
+          const eventId = stringFromRecord(args, "eventId");
+          if (!eventId) {
+            return { result: null, error: "calendar_delete_requires_eventId" };
+          }
+          const summary = stringFromRecord(args, "summary");
+
+          const confirmCallId = crypto.randomUUID();
+          const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
+            callId: confirmCallId,
+            name: "calendar.delete.confirm",
+            arguments: JSON.stringify({ eventId, summary: summary ?? undefined }),
+          });
+          session.pendingToolCalls.set(confirmCallId, {
+            callId: confirmCallId,
+            toolName: "calendar.delete.confirm",
+            emittedAt: confirmEnvelope.timestamp,
+            toolArguments: { eventId, summary },
+          });
+          emit(confirmEnvelope);
+
+          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
+          if (confirmError || !confirmResult) {
+            return { result: null, error: confirmError ?? "calendar_delete_not_confirmed" };
+          }
+          let confirmed = false;
+          try { const parsed = JSON.parse(confirmResult); confirmed = parsed.confirmed === true; } catch { return { result: null, error: "calendar_delete_invalid_confirmation" }; }
+          if (!confirmed) {
+            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to delete the event." }), error: null };
+          }
+
+          const deleteResult = await this.calendarClient.deleteEvent(session, eventId);
+          return { result: stableJSONStringify(deleteResult), error: null };
+        }
+
+        case "github.repos.list": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const limit = typeof args.limit === "number" ? args.limit : undefined;
+          const repositories = await this.githubClient.listRepos(session, { limit });
+          return {
+            result: stableJSONStringify({
+              repositories,
+              count: repositories.length,
+            }),
+            error: null,
+          };
+        }
+
+        case "github.pr.list": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const stateRaw = stringFromRecord(args, "state");
+          const state = stateRaw === "closed" || stateRaw === "all" ? stateRaw : "open";
+          const limit = typeof args.limit === "number" ? args.limit : undefined;
+          const pullRequests = await this.githubClient.listPRs(session, { repo, state, limit });
+          return {
+            result: stableJSONStringify({
+              pullRequests,
+              count: pullRequests.length,
+            }),
+            error: null,
+          };
+        }
+
+        case "github.pr.get": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          if (!repo || !prNumber || prNumber <= 0) {
+            return { result: null, error: "github_pr_get_requires_repo_and_prNumber" };
+          }
+          const pullRequest = await this.githubClient.getPR(session, { repo, prNumber });
+          return { result: stableJSONStringify(pullRequest), error: null };
+        }
+
+        case "github.pr.reviews": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          if (!repo || !prNumber || prNumber <= 0) {
+            return { result: null, error: "github_pr_reviews_requires_repo_and_prNumber" };
+          }
+          const reviews = await this.githubClient.getReviews(session, { repo, prNumber });
+          return { result: stableJSONStringify(reviews), error: null };
+        }
+
+        case "github.actions.status": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          if (!repo) {
+            return { result: null, error: "github_actions_status_requires_repo" };
+          }
+          const branch = stringFromRecord(args, "branch");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          const status = await this.githubClient.getActionsStatus(session, {
+            repo,
+            branch,
+            ...(prNumber && prNumber > 0 ? { prNumber } : {}),
+          });
+          return { result: stableJSONStringify(status), error: null };
+        }
+
+        case "github.issues.list": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const stateRaw = stringFromRecord(args, "state");
+          const state = stateRaw === "closed" ? "closed" : "open";
+          const assignee = stringFromRecord(args, "assignee");
+          const limit = typeof args.limit === "number" ? args.limit : undefined;
+          const issues = await this.githubClient.listIssues(session, {
+            repo,
+            state,
+            ...(assignee ? { assignee } : {}),
+            limit,
+          });
+          return {
+            result: stableJSONStringify({
+              issues,
+              count: issues.length,
+            }),
+            error: null,
+          };
+        }
+
+        case "github.pr.create": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const title = stringFromRecord(args, "title");
+          const head = stringFromRecord(args, "head");
+          if (!repo || !title || !head) {
+            return { result: null, error: "github_pr_create_requires_repo_title_head" };
+          }
+          const body = stringFromRecord(args, "body");
+          const base = stringFromRecord(args, "base");
+          const pullRequest = await this.githubClient.createPR(session, { repo, title, head, body, base });
+          return { result: stableJSONStringify(pullRequest), error: null };
+        }
+
+        case "github.pr.merge": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          if (!repo || !prNumber || prNumber <= 0) {
+            return { result: null, error: "github_pr_merge_requires_repo_and_prNumber" };
+          }
+          const mergeMethodRaw = stringFromRecord(args, "mergeMethod");
+          const mergeMethod = mergeMethodRaw === "squash" || mergeMethodRaw === "rebase" ? mergeMethodRaw : "merge";
+          const mergeResult = await this.githubClient.mergePR(session, { repo, prNumber, mergeMethod });
+          return { result: stableJSONStringify(mergeResult), error: null };
+        }
+
+        case "github.issues.create": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const title = stringFromRecord(args, "title");
+          if (!repo || !title) {
+            return { result: null, error: "github_issue_create_requires_repo_and_title" };
+          }
+          const body = stringFromRecord(args, "body");
+          const labels = Array.isArray(args.labels)
+            ? args.labels.filter((label): label is string => typeof label === "string" && label.trim().length > 0)
+            : undefined;
+          const issue = await this.githubClient.createIssue(session, { repo, title, body, labels });
+          return { result: stableJSONStringify(issue), error: null };
         }
 
         default:

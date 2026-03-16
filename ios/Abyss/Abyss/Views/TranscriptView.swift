@@ -17,6 +17,18 @@ struct TranscriptView: View {
     var onDismissAgent: (UUID) -> Void = { _ in }
     var onToggleAgentConversation: (UUID) -> Void = { _ in }
     var onToggleAgentExpanded: (UUID) -> Void = { _ in }
+    var emailCards: [EmailCard] = []
+    var onToggleEmailExpanded: (UUID) -> Void = { _ in }
+    var emailDraftCards: [EmailDraftCard] = []
+    var onSendDraft: (String) -> Void = { _ in }
+    var onCancelDraft: (String) -> Void = { _ in }
+    var calendarEventCards: [CalendarEventCard] = []
+    var onToggleCalendarExpanded: (UUID) -> Void = { _ in }
+    var calendarDraftCards: [CalendarDraftCard] = []
+    var onConfirmCalendar: (String) -> Void = { _ in }
+    var onCancelCalendar: (String) -> Void = { _ in }
+    var canvasCards: [CanvasCard] = []
+    var onToggleCanvasExpanded: (UUID) -> Void = { _ in }
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -38,11 +50,53 @@ struct TranscriptView: View {
                             )
                             .padding(.horizontal, 12)
                             .id(item.id)
+
+                        case .emailCard(let card):
+                            EmailCardView(
+                                card: card,
+                                onToggleExpanded: { onToggleEmailExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
+                        case .emailDraftCard(let card):
+                            EmailDraftCardView(
+                                card: card,
+                                onSend: { onSendDraft(card.callId) },
+                                onCancel: { onCancelDraft(card.callId) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
+                        case .calendarEventCard(let card):
+                            CalendarEventCardView(
+                                card: card,
+                                onToggleExpanded: { onToggleCalendarExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
+                        case .calendarDraftCard(let card):
+                            CalendarDraftCardView(
+                                card: card,
+                                onConfirm: { onConfirmCalendar(card.callId) },
+                                onCancel: { onCancelCalendar(card.callId) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
+
+                        case .canvasCard(let card):
+                            CanvasCardView(
+                                card: card,
+                                onToggleExpanded: { onToggleCanvasExpanded(card.id) }
+                            )
+                            .padding(.horizontal, 12)
+                            .id(item.id)
                         }
                     }
 
                     // Live AI response building up
-                    if !assistantPartialSpeech.isEmpty {
+                    if !assistantPartialSpeech.isEmpty && !hasPersistedAssistantPartial {
                         MessageBubble(message: ConversationMessage(
                             role: .assistant,
                             text: assistantPartialSpeech,
@@ -59,7 +113,7 @@ struct TranscriptView: View {
                     }
 
                     // Empty state
-                    if messages.isEmpty && agentProgressCards.isEmpty && assistantPartialSpeech.isEmpty {
+                    if messages.isEmpty && agentProgressCards.isEmpty && emailCards.isEmpty && emailDraftCards.isEmpty && calendarEventCards.isEmpty && calendarDraftCards.isEmpty && canvasCards.isEmpty && assistantPartialSpeech.isEmpty {
                         VStack(spacing: 12) {
                             Image(systemName: "waveform.circle")
                                 .font(.system(size: 48))
@@ -75,11 +129,10 @@ struct TranscriptView: View {
                 .padding(.vertical, 12)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: messages.count) { _, _ in
-                if let last = messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(TranscriptItem.message(last).id, anchor: .bottom)
-                    }
+            .onChange(of: lastMessageSnapshot) { _, newValue in
+                guard let snapshot = newValue else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(TranscriptItem.messageID(snapshot.id), anchor: .bottom)
                 }
             }
             .onChange(of: agentProgressCards.map(\.id)) { oldValue, newValue in
@@ -108,7 +161,33 @@ struct TranscriptView: View {
 
     private var transcriptItems: [TranscriptItem] {
         let messageIDs = Set(messages.map(\.id))
-        let anchoredCards = Dictionary(grouping: agentProgressCards.compactMap { card -> (UUID, AgentProgressCard)? in
+
+        let anchoredAgentCards = Dictionary(grouping: agentProgressCards.compactMap { card -> (UUID, AgentProgressCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredEmailCards = Dictionary(grouping: emailCards.compactMap { card -> (UUID, EmailCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredDraftCards = Dictionary(grouping: emailDraftCards.compactMap { card -> (UUID, EmailDraftCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredCalEventCards = Dictionary(grouping: calendarEventCards.compactMap { card -> (UUID, CalendarEventCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredCalDraftCards = Dictionary(grouping: calendarDraftCards.compactMap { card -> (UUID, CalendarDraftCard)? in
+            guard let anchor = card.anchorMessageID else { return nil }
+            return (anchor, card)
+        }, by: \.0)
+
+        let anchoredCanvasCards = Dictionary(grouping: canvasCards.compactMap { card -> (UUID, CanvasCard)? in
             guard let anchor = card.anchorMessageID else { return nil }
             return (anchor, card)
         }, by: \.0)
@@ -116,9 +195,34 @@ struct TranscriptView: View {
         var items: [TranscriptItem] = []
         for message in messages {
             items.append(.message(message))
-            if let cardsForMessage = anchoredCards[message.id] {
-                for entry in cardsForMessage {
+            if let agentCards = anchoredAgentCards[message.id] {
+                for entry in agentCards {
                     items.append(.agentCard(entry.1))
+                }
+            }
+            if let emailCardsForMsg = anchoredEmailCards[message.id] {
+                for entry in emailCardsForMsg {
+                    items.append(.emailCard(entry.1))
+                }
+            }
+            if let draftCardsForMsg = anchoredDraftCards[message.id] {
+                for entry in draftCardsForMsg {
+                    items.append(.emailDraftCard(entry.1))
+                }
+            }
+            if let calEventCards = anchoredCalEventCards[message.id] {
+                for entry in calEventCards {
+                    items.append(.calendarEventCard(entry.1))
+                }
+            }
+            if let calDraftCards = anchoredCalDraftCards[message.id] {
+                for entry in calDraftCards {
+                    items.append(.calendarDraftCard(entry.1))
+                }
+            }
+            if let canvasCardsForMsg = anchoredCanvasCards[message.id] {
+                for entry in canvasCardsForMsg {
+                    items.append(.canvasCard(entry.1))
                 }
             }
         }
@@ -126,27 +230,76 @@ struct TranscriptView: View {
         for card in agentProgressCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
             items.append(.agentCard(card))
         }
+        for card in emailCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.emailCard(card))
+        }
+        for card in emailDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.emailDraftCard(card))
+        }
+        for card in calendarEventCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.calendarEventCard(card))
+        }
+        for card in calendarDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.calendarDraftCard(card))
+        }
+        for card in canvasCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
+            items.append(.canvasCard(card))
+        }
 
         return items
+    }
+
+    private var hasPersistedAssistantPartial: Bool {
+        messages.contains { $0.role == .assistant && $0.isPartial }
+    }
+
+    private var lastMessageSnapshot: MessageSnapshot? {
+        guard let last = messages.last else { return nil }
+        return MessageSnapshot(id: last.id, text: last.text, isPartial: last.isPartial)
     }
 }
 
 private enum TranscriptItem: Identifiable {
     case message(ConversationMessage)
     case agentCard(AgentProgressCard)
+    case emailCard(EmailCard)
+    case emailDraftCard(EmailDraftCard)
+    case calendarEventCard(CalendarEventCard)
+    case calendarDraftCard(CalendarDraftCard)
+    case canvasCard(CanvasCard)
 
     var id: String {
         switch self {
         case .message(let message):
-            return "message-\(message.id.uuidString)"
+            return Self.messageID(message.id)
         case .agentCard(let card):
             return Self.agentCardID(card.id)
+        case .emailCard(let card):
+            return "email-\(card.id.uuidString)"
+        case .emailDraftCard(let card):
+            return "draft-\(card.id.uuidString)"
+        case .calendarEventCard(let card):
+            return "cal-\(card.id.uuidString)"
+        case .calendarDraftCard(let card):
+            return "cal-draft-\(card.id.uuidString)"
+        case .canvasCard(let card):
+            return "canvas-\(card.id.uuidString)"
         }
     }
 
     static func agentCardID(_ id: UUID) -> String {
         "agent-card-\(id.uuidString)"
     }
+
+    static func messageID(_ id: UUID) -> String {
+        "message-\(id.uuidString)"
+    }
+}
+
+private struct MessageSnapshot: Equatable {
+    let id: UUID
+    let text: String
+    let isPartial: Bool
 }
 
 struct MessageBubble: View {

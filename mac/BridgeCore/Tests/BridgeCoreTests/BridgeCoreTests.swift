@@ -148,3 +148,61 @@ func normalizedClaudeTools() {
     #expect(normalizedClaudeToolList(" Bash, Read ,Write  ") == "Bash,Read,Write")
     #expect(normalizedClaudeToolList("   ") == nil)
 }
+
+@Test("updateWorkspaceRoot changes the primary workspace root")
+func updateWorkspaceRootChangesPrimary() async throws {
+    let originalDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bridge-ws-orig-\(UUID().uuidString)")
+    let newDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bridge-ws-new-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: originalDir, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: newDir, withIntermediateDirectories: true)
+    defer {
+        try? FileManager.default.removeItem(at: originalDir)
+        try? FileManager.default.removeItem(at: newDir)
+    }
+
+    let config = BridgeConfiguration(
+        serverURL: URL(string: "ws://localhost:8080/ws")!,
+        deviceName: "Test Bridge",
+        workspaceRoot: originalDir
+    )
+    let bridge = BridgeCore(configuration: config)
+
+    await bridge.updateWorkspaceRoot(newDir)
+
+    let snapshot = await bridge.snapshot()
+    #expect(snapshot.workspaceRoot == newDir.standardizedFileURL.path)
+}
+
+@Test("updateWorkspaceRoot preserves additional workspace roots")
+func updateWorkspaceRootPreservesAdditional() async throws {
+    let dir1 = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bridge-ws-1-\(UUID().uuidString)")
+    let dir2 = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bridge-ws-2-\(UUID().uuidString)")
+    let dir3 = FileManager.default.temporaryDirectory
+        .appendingPathComponent("bridge-ws-3-\(UUID().uuidString)")
+    for d in [dir1, dir2, dir3] {
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+    }
+    defer {
+        for d in [dir1, dir2, dir3] { try? FileManager.default.removeItem(at: d) }
+    }
+
+    let config = BridgeConfiguration(
+        serverURL: URL(string: "ws://localhost:8080/ws")!,
+        deviceName: "Test Bridge",
+        workspaceRoot: dir1,
+        workspaceRoots: [dir2]
+    )
+    let bridge = BridgeCore(configuration: config)
+
+    await bridge.updateWorkspaceRoot(dir3)
+
+    let snapshot = await bridge.snapshot()
+    #expect(snapshot.workspaceRoot == dir3.standardizedFileURL.path)
+    #expect(snapshot.workspaceRoots.contains(dir1.standardizedFileURL.path))
+    #expect(snapshot.workspaceRoots.contains(dir2.standardizedFileURL.path))
+    #expect(snapshot.workspaceRoots.contains(dir3.standardizedFileURL.path))
+}

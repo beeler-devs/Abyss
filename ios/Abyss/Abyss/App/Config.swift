@@ -160,6 +160,15 @@ enum Config {
             ?? valueFromEnvironment("GITHUB_CLIENT_ID")
     }
 
+    // MARK: - Canvas LMS
+
+    /// Optional default Canvas base URL from config.
+    static var canvasBaseURL: String? {
+        valueFromSecretsPlist("CANVAS_BASE_URL")
+            ?? valueFromInfoPlist("CANVAS_BASE_URL")
+            ?? valueFromEnvironment("CANVAS_BASE_URL")
+    }
+
     // MARK: - Google / Gmail
 
     /// Google OAuth client ID for Gmail integration.

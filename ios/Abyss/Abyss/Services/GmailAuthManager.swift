@@ -114,7 +114,7 @@ final class GmailAuthManager: NSObject, ObservableObject {
             URLQueryItem(name: "client_id", value: clientId),
             URLQueryItem(name: "redirect_uri", value: redirectUri),
             URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send"),
+            URLQueryItem(name: "scope", value: "https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar"),
             URLQueryItem(name: "access_type", value: "offline"),
             URLQueryItem(name: "prompt", value: "consent"),
             URLQueryItem(name: "state", value: state),
@@ -304,16 +304,16 @@ final class GmailAuthManager: NSObject, ObservableObject {
 
 extension GmailAuthManager: ASWebAuthenticationPresentationContextProviding {
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        let findWindow = {
+        let findWindow = { @MainActor in
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .compactMap { $0.keyWindow }
                 .first ?? UIWindow()
         }
         if Thread.isMainThread {
-            return findWindow()
+            return MainActor.assumeIsolated { findWindow() }
         }
-        return DispatchQueue.main.sync { findWindow() }
+        return DispatchQueue.main.sync { MainActor.assumeIsolated { findWindow() } }
     }
 }
 

@@ -59,11 +59,16 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
     }
 
+    private var _isWarmedUp = false
+    private var _isWarmingUp = false
+
     init() {}
 
     deinit {
         let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
             _isListening = false
+            _isWarmedUp = false
+            _isWarmingUp = false
             isTornDown = true
             #if canImport(WhisperKit)
             partialTranscriptionTask?.cancel()
@@ -75,7 +80,12 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         }
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
+        audioEngine = nil
         continuation?.finish()
+    }
+
+    var isWarmedUp: Bool {
+        lock.withLock { _isWarmedUp }
     }
 
     func preload() async {
@@ -84,10 +94,80 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         #endif
     }
 
-    func start() async throws {
+    /// Prepare the audio engine once. Keeps it running so start()/stop() are near-instant.
+    func warmUp() async throws {
+        let shouldProceed = lock.withLock {
+            guard !_isWarmedUp, !_isWarmingUp else { return false }
+            _isWarmingUp = true
+            return true
+        }
+        guard shouldProceed else { return }
+
+        defer {
+            lock.withLock { _isWarmingUp = false }
+        }
+
+        // Bail out if torn down between the guard and here
+        guard !lock.withLock({ isTornDown }) else { return }
+
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: .duckOthers)
         try session.setActive(true)
+
+        let engine = AVAudioEngine()
+        // Access inputNode before prepare/start so the engine configures its audio graph
+        // with hardware I/O nodes — otherwise start() crashes with "inputNode != nullptr".
+        let inputNode = engine.inputNode
+        let hwFormat = inputNode.inputFormat(forBus: 0)
+        engine.prepare()
+        try engine.start()
+
+        // Check torn down again — tearDown() could have run while we were awaiting
+        guard !lock.withLock({ isTornDown }) else {
+            engine.stop()
+            return
+        }
+
+        audioEngine = engine
+        #if canImport(WhisperKit)
+        let sampleRate = hwFormat.sampleRate > 0 ? hwFormat.sampleRate : 48_000
+        lock.withLock {
+            inputSampleRate = sampleRate
+        }
+        AppLogger.audio.debug("Audio engine warmed up at \(sampleRate, privacy: .public) Hz")
+        #endif
+
+        lock.withLock {
+            _isWarmedUp = true
+            isTornDown = false
+        }
+
+        #if canImport(WhisperKit)
+        Task { [weak self] in
+            await self?.ensureWhisperKitLoaded()
+        }
+        #endif
+    }
+
+    /// Begin recording by installing a tap on the already-warm engine.
+    func start() async throws {
+        // If engine isn't warm yet, warm it up first (fallback for first use).
+        if !lock.withLock({ _isWarmedUp }) {
+            try await warmUp()
+        }
+
+        guard let engine = audioEngine else {
+            throw NSError(domain: "WhisperKitSpeechTranscriber", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Audio engine not available"])
+        }
+
+        // If engine stopped (e.g. audio interruption), restart it.
+        if !engine.isRunning {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.record, mode: .measurement, options: .duckOthers)
+            try session.setActive(true)
+            try engine.start()
+        }
 
         let (stream, continuation) = AsyncStream<String>.makeStream()
         lock.withLock {
@@ -95,7 +175,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             partialContinuation = continuation
             _isListening = true
             accumulatedText = ""
-            isTornDown = false
             #if canImport(WhisperKit)
             audioBuffers = []
             partialTranscriptionTask?.cancel()
@@ -106,7 +185,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             #endif
         }
 
-        let engine = AVAudioEngine()
         let inputNode = engine.inputNode
         let hwFormat = inputNode.inputFormat(forBus: 0)
         let format: AVAudioFormat
@@ -126,7 +204,7 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
         lock.withLock {
             inputSampleRate = format.sampleRate
         }
-        AppLogger.audio.debug("Audio engine started at \(format.sampleRate, privacy: .public) Hz")
+        AppLogger.audio.debug("[PTT] Tap installed, recording at \(format.sampleRate, privacy: .public) Hz")
         continuation.yield("Listening…")
         #else
         continuation.yield("Listening… (no transcription)")
@@ -164,24 +242,14 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             }
             #endif
         }
-
-        engine.prepare()
-        try engine.start()
-        audioEngine = engine
-
-        #if canImport(WhisperKit)
-        Task { [weak self] in
-            await self?.ensureWhisperKitLoaded()
-        }
-        #endif
     }
 
+    /// Stop recording by removing the tap. Engine stays warm for next start().
     func stop() async throws -> String {
-        AppLogger.audio.debug("Stopping transcription session")
+        AppLogger.audio.debug("[PTT] Removing tap, engine stays warm")
 
+        // Remove the tap but keep the engine running
         audioEngine?.inputNode.removeTap(onBus: 0)
-        audioEngine?.stop()
-        audioEngine = nil
 
         let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
             _isListening = false
@@ -218,7 +286,6 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
         if snapshot.samples.isEmpty {
             continuation?.finish()
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
             return snapshot.accumulatedText.isEmpty ? "[No audio captured]" : snapshot.accumulatedText
         }
 
@@ -258,8 +325,28 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
 
         let finalText = lock.withLock { accumulatedText }
         continuation?.finish()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return finalText
+    }
+
+    /// Fully tear down the audio engine and release hardware resources.
+    func tearDown() {
+        let continuation = lock.withLock { () -> AsyncStream<String>.Continuation? in
+            _isListening = false
+            _isWarmedUp = false
+            _isWarmingUp = false
+            isTornDown = true
+            #if canImport(WhisperKit)
+            partialTranscriptionTask?.cancel()
+            partialTranscriptionTask = nil
+            #endif
+            return partialContinuation
+        }
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        audioEngine?.stop()
+        audioEngine = nil
+        continuation?.finish()
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        AppLogger.audio.debug("[PTT] Audio engine torn down")
     }
 
     private func computeAudioLevelDB(from samples: [Float]) -> Float {
@@ -286,6 +373,13 @@ final class WhisperKitSpeechTranscriber: SpeechTranscriber, @unchecked Sendable 
             do {
                 let kit = try await WhisperKit(model: "base.en")
                 AppLogger.audio.notice("WhisperKit initialized successfully")
+
+                // Run a tiny dummy transcription to force CoreML model compilation now,
+                // rather than on the first real transcription (which adds ~9s latency).
+                let silence = [Float](repeating: 0, count: 16_000) // 1s of silence at 16kHz
+                _ = try? await kit.transcribe(audioArray: silence)
+                AppLogger.audio.notice("WhisperKit model compilation complete")
+
                 return kit
             } catch {
                 AppLogger.audio.error("WhisperKit initialization failed: \(error.localizedDescription, privacy: .public)")

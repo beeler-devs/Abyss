@@ -14,13 +14,18 @@ struct TTSSpeakTool: Tool, @unchecked Sendable {
     }
 
     private let tts: TextToSpeech
+    private let isMuted: @MainActor @Sendable () -> Bool
 
-    init(tts: TextToSpeech) {
+    init(tts: TextToSpeech, isMuted: @escaping @MainActor @Sendable () -> Bool = { false }) {
         self.tts = tts
+        self.isMuted = isMuted
     }
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
+        guard !isMuted() else {
+            return Result(spoken: false)
+        }
         try await tts.speak(arguments.text)
         return Result(spoken: true)
     }

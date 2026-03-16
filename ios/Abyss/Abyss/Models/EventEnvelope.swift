@@ -53,6 +53,9 @@ struct EventEnvelope: Codable, Sendable {
             if let gmailExpires = value.gmailTokenExpiresAt {
                 sessionPayload["gmailTokenExpiresAt"] = .number(gmailExpires)
             }
+            if let prefs = value.preferences, !prefs.isEmpty {
+                sessionPayload["preferences"] = .object(prefs.mapValues { .string($0) })
+            }
             payload = sessionPayload
         case .userAudioTranscriptPartial(let value):
             type = "user.audio.transcript.partial"
@@ -176,11 +179,15 @@ struct EventEnvelope: Codable, Sendable {
             payload = p
         case .bridgePaired(let value):
             type = "bridge.paired"
-            payload = [
+            var p: [String: JSONValue] = [
                 "deviceId": .string(value.deviceId),
                 "deviceName": .string(value.deviceName),
                 "status": .string(value.status),
             ]
+            if let workspaceRoot = value.workspaceRoot {
+                p["workspaceRoot"] = .string(workspaceRoot)
+            }
+            payload = p
         case .bridgeStatus(let value):
             var p: [String: JSONValue] = [
                 "deviceId": .string(value.deviceId),
@@ -209,6 +216,15 @@ struct EventEnvelope: Codable, Sendable {
                 "stdoutTail": .string(value.stdoutTail),
                 "stderrTail": .string(value.stderrTail),
             ]
+        case .preferencesSync(let value):
+            type = "preferences.sync"
+            payload = ["preferences": .object(value.preferences.mapValues { .string($0) })]
+        case .bridgeWorkspaceSet(let value):
+            type = "bridge.workspace.set"
+            payload = [
+                "deviceId": .string(value.deviceId),
+                "workspacePath": .string(value.workspacePath),
+            ]
         }
     }
 
@@ -228,10 +244,10 @@ struct EventEnvelope: Codable, Sendable {
         switch type {
         case "session.start":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil))
         case "session.started":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil))
         case "user.audio.transcript.partial":
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":
@@ -336,7 +352,8 @@ struct EventEnvelope: Codable, Sendable {
             kind = .bridgePaired(Event.BridgePaired(
                 deviceId: try requireString("deviceId"),
                 deviceName: try requireString("deviceName"),
-                status: payload["status"]?.stringValue ?? "online"
+                status: payload["status"]?.stringValue ?? "online",
+                workspaceRoot: payload["workspaceRoot"]?.stringValue
             ))
         case "bridge.status":
             kind = .bridgeStatus(Event.BridgeStatus(
@@ -360,6 +377,14 @@ struct EventEnvelope: Codable, Sendable {
                 stdoutTail: payload["stdoutTail"]?.stringValue ?? "",
                 stderrTail: payload["stderrTail"]?.stringValue ?? ""
             ))
+        case "preferences.sync":
+            var prefs: [String: String] = [:]
+            if case .object(let obj) = payload["preferences"] {
+                for (k, v) in obj {
+                    if let s = v.stringValue { prefs[k] = s }
+                }
+            }
+            kind = .preferencesSync(Event.PreferencesSync(preferences: prefs))
         case "bridge.device.selection.required":
             kind = .error(Event.ErrorInfo(
                 code: "bridge_device_selection_required",

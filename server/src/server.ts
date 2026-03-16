@@ -11,8 +11,11 @@ import { logger } from "./core/logger.js";
 import { EventEnvelope } from "./core/types.js";
 import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
+import { CalendarClient } from "./integrations/calendarClient.js";
+import { CanvasClient } from "./integrations/canvasClient.js";
 import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
+import { GitHubClient } from "./integrations/githubClient.js";
 import { buildProvider } from "./providers/index.js";
 import { MemoryService } from "./core/memory/memoryService.js";
 import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
@@ -26,6 +29,8 @@ const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
 const SESSION_RATE_LIMIT_PER_MIN = parseInteger(process.env.SESSION_RATE_LIMIT_PER_MIN, 30);
 const TRANSCRIPT_TRACE_MAX_ENTRIES = parseInteger(process.env.TRANSCRIPT_TRACE_MAX_ENTRIES, 120);
 const VERBOSE_TOOL_ROUTING_LOGS = parseBoolean(process.env.VERBOSE_TOOL_ROUTING_LOGS, false);
+const SUMMARIZE_AFTER_TURNS = parseInteger(process.env.SUMMARIZE_AFTER_TURNS, 30);
+const SUMMARIZE_RECENT_KEEP = parseInteger(process.env.SUMMARIZE_RECENT_KEEP, 10);
 const GITHUB_CLIENT_ID = process.env.GITHUB_CLIENT_ID ?? "";
 const GITHUB_CLIENT_SECRET = process.env.GITHUB_CLIENT_SECRET ?? "";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
@@ -127,6 +132,12 @@ const conductor = new ConductorService(
       googleClientId: GOOGLE_CLIENT_ID,
       googleClientSecret: GOOGLE_CLIENT_SECRET,
     }),
+    calendarClient: new CalendarClient({
+      googleClientId: GOOGLE_CLIENT_ID,
+      googleClientSecret: GOOGLE_CLIENT_SECRET,
+    }),
+    canvasClient: new CanvasClient(),
+    githubClient: new GitHubClient(),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
       let devices = bridgeState
@@ -142,6 +153,10 @@ const conductor = new ConductorService(
     },
     verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
     memoryService,
+    summarizationConfig: {
+      summarizeAfter: SUMMARIZE_AFTER_TURNS,
+      recentToKeep: SUMMARIZE_RECENT_KEEP,
+    },
   },
 );
 
@@ -272,6 +287,25 @@ wss.on("connection", (socket, request) => {
 
     if (event.type === "session.start") {
       emitBridgeStatusSnapshot(event.sessionId, socket);
+    }
+
+    if (event.type === "bridge.workspace.set") {
+      const sessionId = context.sessionId;
+      const deviceId = typeof event.payload.deviceId === "string" ? event.payload.deviceId : undefined;
+      const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
+      if (!deviceId || !workspacePath || workspacePath.length > 4096) return;
+
+      const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
+      if (!resolved.device) return;
+
+      const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
+      if (bridgeSocket) {
+        safeSend(bridgeSocket, makeEvent("bridge.workspace.set", resolved.device.sessionId, {
+          deviceId,
+          workspacePath,
+        }));
+      }
+      return;
     }
 
     if (event.type === "audio.output.interrupted") {
@@ -427,6 +461,7 @@ async function handleBridgeRegister(
     emitToSession(makeEvent("bridge.paired", registration.device.sessionId, {
       deviceId: registration.device.deviceId,
       deviceName: registration.device.deviceName,
+      workspaceRoot: registration.device.workspaceRoot,
       status: "online",
     }));
 

@@ -1,276 +1,413 @@
-# BEE-45: Bedrock Knowledge Bases — Semantic Conversation Memory
+You are a senior full-stack engineer working in the existing Abyss codebase. Implement BEE-45: Bedrock Knowledge Bases — Semantic Conversation Memory as a hackathon-optimized “resume context memory” system that fits the current repository architecture.
 
-## Overview
+This is not a generic chat-memory feature. It is a developer workflow resume system for Abyss.
 
-Add persistent, semantically-searchable memory to Abyss using AWS Bedrock Knowledge Bases. When a session ends, key facts and decisions are summarized and stored in S3, indexed by Bedrock Knowledge Bases, and retrieved at the start of future sessions to give the assistant prior context.
+The implementation must fit the current codebase shape:
+- server/src/core/conductorService.ts owns the model/tool loop and session history
+- server/src/core/sessionStore.ts stores SessionState
+- server/src/server.ts wires dependencies and handles websocket close
+- the app already has significant bridge/cursor/tooling context, so memory should remember development workflow state, not just chat summaries
 
----
+GOAL
 
-## Architecture
+When an iOS session ends, Abyss should store a concise structured summary of the work done.
+When a future session starts, Abyss should retrieve relevant prior memory and inject it as a short system context block before the first user turn.
 
-```
-Session ends
-    │
-    ▼
-MemoryService.summarizeAndStore(sessionId, history)
-    │
-    ├── Nova generates a summary → S3 (abyss-memory bucket)
-    │
-    └── Bedrock KB sync job picks up new S3 document
-            │
-            ▼
-        OpenSearch Serverless (vector store)
+Example desired UX:
+- User opens Abyss and says: “Let’s continue the auth work.”
+- Abyss already knows:
+  - repo/branch/PR they were working on
+  - what was accomplished
+  - blockers / next steps
+- Abyss responds with continuity:
+  “You were working in storefront-web on branch feature/auth-v2. Unit tests passed after the refresh-token fix, but checkout validation still needs to be rerun before merging PR #42.”
 
-New session starts
-    │
-    ▼
-MemoryService.retrieveContext(sessionId, firstMessage?)
-    │
-    └── Bedrock KB RetrieveAndGenerate → injects into system prompt
-```
+NON-NEGOTIABLE PRODUCT REQUIREMENTS
 
----
+1. Memory must be optional and fully gated by env vars.
+2. Memory must never block the first model call for more than a short timeout.
+3. Memory must store summaries only, not full raw conversation history.
+4. Memory must fit the current codebase with minimal churn:
+   - inject memory as a normal "system" ConversationTurn
+   - do not redesign the conversation model
+5. Memory must be developer-workflow aware:
+   - repo / branch / PR / tools used / decisions / blockers / next steps
+6. Use AWS-native components where possible:
+   - S3 for stored memory documents
+   - Bedrock Knowledge Bases for semantic retrieval
+   - Nova 2 Lite (Bedrock) for summarization
+7. For hackathon robustness, do not rely exclusively on KB retrieval:
+   - add a recent-memory fallback path so resume works even if KB ingestion is delayed
 
-## Integration Points with Existing Code
+CURRENT CODEBASE FACTS YOU MUST DESIGN AROUND
 
-### 1. `SessionStore` (server/src/core/sessionStore.ts)
-- `getOrCreate()` is the session creation point — this is where we inject retrieved memory into the initial system prompt turn
-- `appendTurn()` tracks history — no changes needed here
-- The session `history: ConversationTurn[]` is the source material for summarization
+- ConductorService currently handles session.start, user.audio.transcript.final, tool.result, audio.output.interrupted, agent.completed, etc.
+- runConductorLoop appends user turns into SessionStore.history and then calls the model.
+- SessionStore currently stores session history, pending tool calls, transcript trace, active bridge command/device, but does not yet have memory fields.
+- server.ts already injects optional dependencies into ConductorService and already owns websocket close cleanup.
+- There is no full user-auth system here yet, so memory should use a stable client-provided user key rather than sessionId.
 
-### 2. `ConductorService` (server/src/core/conductorService.ts)
-- Add `memoryService?: MemoryService` to `ConductorServiceDependencies`
-- On `handleEvent` for `user.speech.final` — if it's the **first turn** of a session, call `memoryService.retrieveContext()` and prepend results as a system turn in history before calling the LLM
-- Add a `finalizeSession(sessionId)` method that triggers summarization — called from `server.ts` on WebSocket close
+KEY DESIGN REFINEMENTS (MUST FOLLOW)
 
-### 3. `server.ts`
-- On WebSocket `close` event (iOS disconnect) — call `conductor.finalizeSession(sessionId)` after the existing `voiceProvider.closeSession()` call
-- Pass `memoryService` into `ConductorService` constructor
-- Add `MEMORY_BUCKET_NAME`, `MEMORY_KB_ID`, `MEMORY_ENABLED` env vars
+A) DO NOT key memory retrieval by sessionId alone.
+A new websocket session gets a new sessionId, so retrieval must use a more stable identity.
 
-### 4. New file: `server/src/core/memory/memoryService.ts`
-- Self-contained module, injected as a dependency — no coupling to voice, bridge, or Cursor systems
-- Optional: if `MEMORY_ENABLED` is false or KB is not configured, all methods are no-ops
+Implement a stable field:
+- memoryUserKey
 
----
+This should come from session.start payload if provided.
+If it is absent, memory should no-op gracefully.
 
-## Implementation Plan
+B) Use structured developer memory documents.
+Do not just store one freeform summary string.
+Store both:
+- structured metadata
+- a short natural-language summary
 
-### Phase 1 — AWS Infrastructure
+Required memory document shape:
 
-**S3 Bucket**
-```
-Bucket: abyss-memory
-Region: us-east-1
-Prefix structure: memories/{sessionId}/{timestamp}.json
-```
-
-Document schema stored in S3:
-```json
 {
+  "memoryUserKey": "user-123",
   "sessionId": "abc123",
   "timestamp": "2026-03-15T20:00:00Z",
-  "summary": "User worked on auth refactor. Decided to use JWT with 24h expiry. Branch: feature/auth-v2. Nova Sonic hands-free mode was working correctly.",
-  "topics": ["auth", "jwt", "nova-sonic"],
-  "toolsUsed": ["bridge.git.commit", "agent.spawn"],
+  "summary": "Worked on auth refactor in storefront-web. Unit tests were run locally on the bridge. Checkout validation is still pending.",
+  "repo": "storefront-web",
+  "branch": "feature/auth-v2",
+  "prUrl": "https://github.com/org/repo/pull/42",
+  "status": "in_progress",
+  "decisions": [
+    "Use JWT with 24h expiry",
+    "Keep refresh-token rotation"
+  ],
+  "blockers": [
+    "Checkout validation not rerun after latest patch"
+  ],
+  "nextSteps": [
+    "Re-run checkout validation on preview URL",
+    "Merge if browser flow passes"
+  ],
+  "toolsUsed": [
+    "bridge.exec.run",
+    "bridge.git.commit",
+    "cursor.agent.spawn"
+  ],
   "turnCount": 14
 }
-```
 
-**Bedrock Knowledge Base**
-- Data source: S3 bucket `abyss-memory`
-- Embedding model: `amazon.titan-embed-text-v2:0`
-- Vector store: Amazon OpenSearch Serverless (auto-provisioned by Bedrock KB)
-- Sync: on-demand after each new S3 document is written (call `StartIngestionJob` API)
+C) Use a hybrid retrieval strategy for hackathon reliability.
+Do not rely only on Bedrock KB, because ingestion may lag.
 
-**IAM — add to `abyss-ecs-task-role`**
-```json
-{
-  "Effect": "Allow",
-  "Action": [
-    "s3:PutObject", "s3:GetObject", "s3:ListBucket",
-    "bedrock:RetrieveAndGenerate", "bedrock:Retrieve",
-    "bedrock:StartIngestionJob"
-  ],
-  "Resource": [
-    "arn:aws:s3:::abyss-memory/*",
-    "arn:aws:bedrock:us-east-1::knowledge-base/*"
-  ]
-}
-```
+On session start:
+1. Retrieve the most recent memory docs for the memoryUserKey from S3-backed metadata/index (fast path)
+2. Also query Bedrock KB semantically if configured and retrieval succeeds in time
+3. Merge results and inject a short “Prior context” system turn
+4. If KB is slow or unavailable, continue with recent-memory fallback only
 
----
+D) Keep prompt injection small.
+Inject at most:
+- 1 to 3 memory items
+- about 600 to 1000 chars total
+- concise “Prior context” bullets, not a giant dump
 
-### Phase 2 — `MemoryService` Module
+E) Only summarize meaningful sessions.
+Do not summarize if:
+- fewer than 3 turns AND
+- no tools, decisions, repo context, blockers, or next steps
 
-**File:** `server/src/core/memory/memoryService.ts`
+IMPLEMENTATION PLAN
 
-```typescript
+PART 1 — Extend core types
+
+Update:
+- server/src/core/types.ts
+
+Add to SessionState:
+- memoryUserKey?: string
+- memoryHydrated?: boolean
+- workingContext?: {
+    repo?: string;
+    branch?: string;
+    prUrl?: string;
+    lastGoal?: string;
+    activeExecutor?: "bridge" | "cursor" | "server";
+  }
+
+Do not break existing fields.
+
+PART 2 — Extend SessionStore minimally
+
+Update:
+- server/src/core/sessionStore.ts
+
+Add:
+- get(sessionId: string): SessionState | undefined
+
+Keep:
+- getOrCreate()
+- appendTurn()
+- existing bridge/cursor helpers
+
+Do not redesign SessionStore.
+
+PART 3 — Add MemoryService
+
+Create:
+- server/src/core/memory/memoryService.ts
+
+Implement the following types and class:
+
 export interface MemoryServiceConfig {
+  enabled: boolean;
   bucketName: string;
-  knowledgeBaseId: string;
+  knowledgeBaseId?: string;
   region: string;
-  modelArn: string; // e.g. "arn:aws:bedrock:us-east-1::foundation-model/us.amazon.nova-2-lite-v1:0"
+  modelIdOrArn: string;
+  maxRetrieveMs?: number;
+  maxInjectedChars?: number;
+}
+
+export interface MemoryRetrieveInput {
+  memoryUserKey: string;
+  firstMessage?: string;
+  repoHint?: string;
+  branchHint?: string;
+}
+
+export interface WorkingContextSnapshot {
+  repo?: string;
+  branch?: string;
+  prUrl?: string;
+  lastGoal?: string;
+  activeExecutor?: string;
 }
 
 export class MemoryService {
-  constructor(private config: MemoryServiceConfig) {}
+  constructor(config: MemoryServiceConfig) {}
 
-  // Called at session end — summarize history and store to S3
-  async summarizeAndStore(
-    sessionId: string,
-    history: ConversationTurn[],
-  ): Promise<void>
+  async summarizeAndStore(params: {
+    memoryUserKey: string;
+    sessionId: string;
+    history: ConversationTurn[];
+    workingContext?: WorkingContextSnapshot;
+  }): Promise<void> {}
 
-  // Called at session start — retrieve relevant prior context
-  // Returns a formatted string to inject as a system prompt addition
-  async retrieveContext(
-    sessionId: string,
-    firstMessage?: string,
-  ): Promise<string | null>
+  async retrieveContext(input: MemoryRetrieveInput): Promise<string | null> {}
 }
-```
 
-**`summarizeAndStore` flow:**
-1. Filter history to only `user` and `assistant` turns (skip tool calls/results for brevity)
-2. If fewer than 3 turns, skip (not worth summarizing a short session)
-3. Call Nova (via AWS Bedrock `InvokeModel`) with a summarization prompt:
-   > "Summarize this conversation in 3-5 sentences. Focus on: what was accomplished, decisions made, tools used, and any important context for future sessions."
-4. Write the resulting JSON document to S3
-5. Call `StartIngestionJob` to trigger KB re-sync
+MemoryService behavior:
 
-**`retrieveContext` flow:**
-1. Call Bedrock KB `Retrieve` API with query: `"Recent work and context for this user"` (optionally include the first message as the query for better relevance)
-2. Take top 3 results, format as:
-   > "Prior context from past sessions: [summary 1]. [summary 2]..."
-3. Return the formatted string — caller injects it as a system `ConversationTurn` before the first user message
+If disabled or not configured:
+- behave as a no-op
 
----
+summarizeAndStore:
+1. Filter history to user and assistant turns only
+2. Extract structured workflow context from workingContext
+3. If not meaningful, skip
+4. Use Bedrock Nova 2 Lite to generate:
+   - short summary
+   - decisions
+   - blockers
+   - nextSteps
+   - toolsUsed (heuristic extraction is acceptable)
+   - status
+5. Write one JSON memory doc to S3
+6. Path:
+   memories/{memoryUserKey}/{timestamp}-{sessionId}.json
+7. Trigger Bedrock KB ingestion if KB ID is configured
+8. Log errors and swallow them
 
-### Phase 3 — ConductorService Integration
+retrieveContext:
+1. Run under a hard timeout (default 1500 to 2000 ms)
+2. Load recent memory docs for memoryUserKey (latest few)
+3. Optionally query KB using a semantic query composed from:
+   - firstMessage
+   - repoHint
+   - branchHint
+4. Merge and dedupe memories
+5. Return a short formatted string like:
 
-**In `ConductorServiceDependencies`:**
-```typescript
-export interface ConductorServiceDependencies {
-  // ... existing fields ...
-  memoryService?: MemoryService;
-}
-```
+   Prior context:
+   - You were working in storefront-web on branch feature/auth-v2.
+   - Unit tests passed after the refresh-token fix.
+   - Checkout validation still needs to be rerun before merging PR #42.
 
-**In `handleEvent` — inject memory on first turn:**
-```typescript
-// In the user.speech.final handler, before calling the LLM:
-const session = this.sessionStore.getOrCreate(event.sessionId);
-if (session.history.length === 0 && this.deps.memoryService) {
-  const priorContext = await this.deps.memoryService.retrieveContext(
-    event.sessionId,
-    speechText,
-  );
-  if (priorContext) {
-    this.sessionStore.appendTurn(session, {
-      role: "system",
-      content: priorContext,
-    });
-  }
-}
-```
+6. If nothing useful is found, return null
 
-**New public method `finalizeSession`:**
-```typescript
-async finalizeSession(sessionId: string): Promise<void> {
-  if (!this.deps.memoryService) return;
-  const session = this.sessionStore.getOrCreate(sessionId);
-  if (session.history.length < 3) return;
-  await this.deps.memoryService.summarizeAndStore(sessionId, session.history);
-}
-```
+Important:
+- Bedrock KB is an enhancement, not the only retrieval path
+- implement recent-memory fallback even if KB is disabled
 
----
+PART 4 — Add lightweight memory index helper
 
-### Phase 4 — server.ts Wiring
+For recent-memory fallback, implement a fast path that does not depend on semantic retrieval.
 
-**On iOS socket close:**
-```typescript
-socket.on("close", () => {
-  const context = socketContexts.get(socket);
-  if (context?.kind === "ios" && context.sessionId) {
-    // ... existing cleanup ...
-    void conductor.finalizeSession(context.sessionId); // NEW
-  }
-  // ... rest of close handler ...
-});
-```
+Preferred option:
+- list latest S3 objects under memories/{memoryUserKey}/ and fetch the top few JSON docs
 
-**New env vars in `.env.example`:**
-```
-MEMORY_ENABLED=false
-MEMORY_BUCKET_NAME=abyss-memory
-MEMORY_KB_ID=                   # Bedrock Knowledge Base ID (from AWS console)
-MEMORY_MODEL_ARN=arn:aws:bedrock:us-east-1::foundation-model/us.amazon.nova-2-lite-v1:0
-```
+Optional fallback:
+- maintain a tiny in-memory cache plus S3 fallback
 
-**Constructor in `server.ts`:**
-```typescript
-const memoryService = parseBoolean(process.env.MEMORY_ENABLED, false)
-  ? new MemoryService({
-      bucketName: process.env.MEMORY_BUCKET_NAME ?? "abyss-memory",
-      knowledgeBaseId: process.env.MEMORY_KB_ID ?? "",
-      region: process.env.AWS_REGION ?? "us-east-1",
-      modelArn: process.env.MEMORY_MODEL_ARN ?? "...",
-    })
-  : undefined;
+Keep it simple and reliable.
 
-const conductor = new ConductorService(provider, config, {
-  // ... existing deps ...
-  memoryService,
-});
-```
+PART 5 — ConductorService integration
 
----
+Update:
+- server/src/core/conductorService.ts
 
-### Phase 5 — iOS (Optional Polish)
+Add to ConductorServiceDependencies:
+- memoryService?: MemoryService
 
-No functional iOS changes are required. The memory is transparent — the LLM simply has more context. Optional additions:
+Handle session.start:
+- if payload.memoryUserKey is a string, store it in session
+- do not require it
 
-- A small "memory active" indicator in the conversation header when prior context was injected (server can emit a `session.memory.loaded` event on first turn with retrieved context)
-- The existing `ConversationViewModel` event handling can listen for this and show a subtle UI hint
+Handle first user.audio.transcript.final:
+Before the first call to runConductorLoop, if:
+- session.memoryHydrated is not true
+- session.memoryUserKey exists
+- memoryService exists
 
----
+Then:
+1. call memoryService.retrieveContext(...)
+2. if non-null, append one "system" turn to session history
+3. set session.memoryHydrated = true
+4. optionally emit:
+   - session.memory.loaded with a small preview string for UI/debugging
 
-## Environment Variables Summary
+Important:
+- do this only once per session
+- do not block for more than the configured timeout
 
-| Variable | Default | Notes |
-|---|---|---|
-| `MEMORY_ENABLED` | `false` | Set to `true` to enable memory |
-| `MEMORY_BUCKET_NAME` | `abyss-memory` | S3 bucket for conversation summaries |
-| `MEMORY_KB_ID` | — | Bedrock Knowledge Base ID |
-| `MEMORY_MODEL_ARN` | Nova 2 Lite ARN | Model used for summarization and retrieval |
+Add a new public method:
 
----
+async finalizeSession(sessionId: string): Promise<void>
 
-## AWS Services Used
+Implementation:
+- use this.sessions.get(sessionId), not getOrCreate
+- if no session, return
+- if no memoryUserKey, return
+- if no memoryService, return
+- gather history and workingContext
+- call memoryService.summarizeAndStore(...)
+- swallow and log errors
 
-| Service | Purpose |
-|---|---|
-| Amazon S3 | Stores raw conversation summary documents |
-| Amazon Bedrock Knowledge Bases | Manages chunking, embeddings, and vector indexing |
-| Amazon OpenSearch Serverless | Vector store (auto-managed by Bedrock KB) |
-| Amazon Titan Embed Text v2 | Embedding model for semantic search |
-| Amazon Nova 2 Lite | Summarization LLM (reuses existing Bedrock setup) |
+PART 6 — Working-context tracking inside ConductorService
 
----
+This is required so memory is useful.
 
-## What to Avoid
+Add lightweight updates to session.workingContext in places where data already exists:
+- In runConductorLoop, set workingContext.lastGoal = transcript for normal user turns
+- When bridge tools are used:
+  - bridge.git.status result can populate branch
+  - bridge.git.push can preserve branch/executor
+  - any bridge tool use can set activeExecutor = "bridge"
+- When cursor tools are used:
+  - cursor.agent.spawn and webhook routing should update:
+    - activeExecutor = "cursor"
+    - prUrl
+    - branch
+- If repo URLs or repo names are available in spawn args, capture repo
+- Keep this heuristic and lightweight; do not overcomplicate
 
-- **Do not** store full conversation history in S3 — only summaries. Full history is PII-sensitive and expensive to index.
-- **Do not** block the session close on summarization — fire-and-forget with `void`.
-- **Do not** block the first LLM call if KB retrieval is slow — set a 2s timeout on `retrieveContext` and proceed without context if it times out.
-- **Do not** change the `ConversationTurn` type or `SessionStore` interface — memory is injected as a standard system turn, using existing infrastructure.
+PART 7 — server.ts wiring
 
----
+Update:
+- server/src/server.ts
 
-## Testing
+Add env vars:
+- MEMORY_ENABLED=false
+- MEMORY_BUCKET_NAME=abyss-memory
+- MEMORY_KB_ID=
+- MEMORY_MODEL_ID=us.amazon.nova-2-lite-v1:0
+- MEMORY_MAX_RETRIEVE_MS=1500
+- MEMORY_MAX_INJECTED_CHARS=900
 
-- Unit test `MemoryService` with mocked S3 and Bedrock clients
-- Integration test: mock KB returns a prior summary → verify it appears as a system turn before the first user message in `conductorService`
-- Gate behind `MEMORY_ENABLED=false` default so existing tests are unaffected
+Construct memoryService if enabled and pass it into ConductorService.
+
+On iOS websocket close:
+after existing cleanup, call:
+- void conductor.finalizeSession(context.sessionId)
+
+Do not await it.
+
+PART 8 — AWS implementation details
+
+Use:
+- S3 for memory docs
+- Bedrock Runtime / Converse or InvokeModel for summarization
+- Bedrock Knowledge Bases Retrieve or RetrieveAndGenerate and StartIngestionJob for semantic memory
+- Titan embeddings are handled by KB setup, not by app code
+
+Memory S3 path:
+- memories/{memoryUserKey}/{timestamp}-{sessionId}.json
+
+IAM needs:
+- S3 Put/Get/List on the memory bucket
+- Bedrock Retrieve / RetrieveAndGenerate / StartIngestionJob
+- Bedrock model invoke for Nova summarization
+
+PART 9 — Documentation
+
+Add:
+- docs/memory/overview.md
+- docs/memory/aws-setup.md
+- docs/memory/schema.md
+
+Update:
+- .env.example
+- README or server setup docs to mention optional memory
+
+Document:
+- why memory uses memoryUserKey, not sessionId
+- why there is a recent-memory fallback in addition to KB
+- that full transcripts are not stored
+
+TESTING REQUIREMENTS
+
+Unit tests:
+1. MemoryService.summarizeAndStore
+   - skips meaningless sessions
+   - writes structured JSON doc
+   - triggers ingestion when configured
+2. MemoryService.retrieveContext
+   - returns null when disabled
+   - returns recent-memory fallback when KB is unavailable
+   - obeys timeout
+   - truncates injected context
+3. ConductorService
+   - on first user turn, injects memory as a system turn when available
+   - does not inject twice in the same session
+4. finalizeSession
+   - no-ops safely when session is missing, short, or disabled
+   - calls summarize when meaningful
+
+Integration tests:
+- mock recent memory plus mocked KB retrieval and verify that the system turn is inserted before first user turn
+- simulate socket close and verify finalizeSession is triggered fire-and-forget
+
+IMPORTANT IMPLEMENTATION CONSTRAINTS
+
+- Do not redesign the model/provider abstraction for the main conductor
+- Do not store raw tool output or full transcripts in S3
+- Do not make KB retrieval mandatory
+- Do not make memory depend on bridge, cursor, or gmail internals
+- Do not break existing Stage 2, bridge, cursor, or gmail flows
+
+ACCEPTANCE CRITERIA
+
+1. With MEMORY_ENABLED=false, behavior is unchanged.
+2. With MEMORY_ENABLED=true, ending a meaningful session writes a structured memory document to S3.
+3. Starting a new session with the same memoryUserKey can inject relevant prior context before the first model turn.
+4. If KB retrieval is slow or not yet ingested, recent-memory fallback still provides useful resume context.
+5. Memory injection is short, helpful, and developer-workflow-specific.
+
+OUTPUT REQUIREMENTS
+
+When done:
+1. show the updated file tree
+2. provide full contents of all new and modified files
+3. include .env.example updates
+4. include any AWS setup notes required to run the feature
+5. ensure the feature is safe-by-default and disabled unless configured
+
+START NOW: implement this refined memory system so it fits the current Abyss codebase exactly.

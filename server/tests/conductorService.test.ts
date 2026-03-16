@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { ConductorService } from "../src/core/conductorService.js";
 import { makeEvent } from "../src/core/events.js";
 import { logger } from "../src/core/logger.js";
+import { GitHubClient } from "../src/integrations/githubClient.js";
 import { ModelProvider, ConversationTurn, ModelResponse, ToolCallRequest } from "../src/core/types.js";
 
 type CapturedInfoLog = {
@@ -360,6 +361,105 @@ test("bridge tools exposed to the model are filtered by session availability", a
   assert.equal(provider.toolNames.includes("bridge.exec.run"), true);
   assert.equal(provider.toolNames.includes("bridge.fs.readFile"), true);
   assert.equal(provider.toolNames.includes("bridge.claude.run"), false);
+});
+
+test("github tools are exposed only when the session has a github token", async () => {
+  const provider = new ToolCaptureProvider();
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    githubClient: new GitHubClient(),
+  });
+
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-no-github", {
+    text: "hello",
+  }), () => undefined);
+  assert.equal(provider.toolNames.includes("github.repos.list"), false);
+
+  await service.handleEvent(makeEvent("session.start", "session-with-github", {
+    githubToken: "gho_test",
+  }), () => undefined);
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-with-github", {
+    text: "show my repos",
+  }), () => undefined);
+
+  assert.equal(provider.toolNames.includes("github.repos.list"), true);
+  assert.equal(provider.toolNames.includes("github.pr.list"), true);
+});
+
+test("github.repos.list executes through githubClient as a server tool", async () => {
+  const provider = new SequenceProvider([
+    {
+      toolCalls: [{
+        id: "tc-gh-1",
+        name: "github.repos.list",
+        input: { limit: 3 },
+      }],
+    },
+    { text: "You have one repo." },
+  ]);
+
+  const githubClient = new GitHubClient();
+  const repoCalls: Array<{ token?: string; limit?: number }> = [];
+  githubClient.listRepos = async (session, options = {}) => {
+    repoCalls.push({ token: session.githubToken, limit: options.limit });
+    return [{
+      fullName: "acme/voicebot",
+      name: "voicebot",
+      defaultBranch: "main",
+      isPrivate: true,
+      updatedAt: "2026-03-15T12:00:00Z",
+    }];
+  };
+
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    githubClient,
+  });
+
+  await service.handleEvent(makeEvent("session.start", "session-github", {
+    githubToken: "gho_test",
+  }), () => undefined);
+
+  const emitted = [] as ReturnType<typeof makeEvent>[];
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-github", {
+    text: "list my repos",
+  }), (event) => emitted.push(event));
+
+  assert.equal(repoCalls.length, 1);
+  assert.equal(repoCalls[0]?.token, "gho_test");
+  assert.equal(repoCalls[0]?.limit, 3);
+  assert.equal(emitted.some((event) => event.type === "assistant.speech.final"), true);
+});
+
+test("github write tools reject missing required arguments", async () => {
+  const service = new ConductorService(new StubProvider("ok", ["ok"]), {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    githubClient: new GitHubClient(),
+  });
+
+  await service.handleEvent(makeEvent("session.start", "session-github-write", {
+    githubToken: "gho_test",
+  }), () => undefined);
+
+  const createResult = await service.executeDirectToolCall("session-github-write", {
+    id: "tc-gh-create",
+    name: "github.pr.create",
+    input: { repo: "acme/voicebot" },
+  }, () => undefined);
+  assert.equal(createResult.error, "github_pr_create_requires_repo_title_head");
+
+  const mergeResult = await service.executeDirectToolCall("session-github-write", {
+    id: "tc-gh-merge",
+    name: "github.pr.merge",
+    input: { repo: "acme/voicebot" },
+  }, () => undefined);
+  assert.equal(mergeResult.error, "github_pr_merge_requires_repo_and_prNumber");
 });
 
 test("trace contains one server marker per bridge tool execution", async () => {
