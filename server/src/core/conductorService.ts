@@ -1122,6 +1122,7 @@ export class ConductorService {
 
           const resolver = session.toolResultResolvers.get(callId);
           if (resolver) {
+            logger.info(`tool.result resolver found for callId=${callId} tool=${pending?.toolName ?? "?"}`, { sessionId: session.sessionId, callId });
             resolver(resultPayload ?? null, errorText ?? null);
           }
         }
@@ -2157,10 +2158,12 @@ export class ConductorService {
             toolArguments: { to, cc, subject, body },
           });
           emit(confirmEnvelope);
+          logger.info(`gmail.send waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           // Wait for user confirmation (120s timeout — user needs time to read)
           const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
           if (confirmError || !confirmResult) {
+            logger.warn(`gmail.send confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
             return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
           }
 
@@ -2171,6 +2174,8 @@ export class ConductorService {
           } catch {
             return { result: null, error: "gmail_send_invalid_confirmation" };
           }
+
+          logger.info(`gmail.send confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           if (!confirmed) {
             return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
@@ -2206,9 +2211,11 @@ export class ConductorService {
             toolArguments: { messageId, body, to, cc },
           });
           emit(confirmEnvelope);
+          logger.info(`gmail.reply waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
           if (confirmError || !confirmResult) {
+            logger.warn(`gmail.reply confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
             return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
           }
 
@@ -2219,6 +2226,8 @@ export class ConductorService {
           } catch {
             return { result: null, error: "gmail_reply_invalid_confirmation" };
           }
+
+          logger.info(`gmail.reply confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
 
           if (!confirmed) {
             return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };

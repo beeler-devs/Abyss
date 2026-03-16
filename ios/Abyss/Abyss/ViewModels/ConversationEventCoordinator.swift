@@ -167,16 +167,26 @@ final class ConversationEventCoordinator: ObservableObject {
                 return
             }
 
+            // Confirmation tools (gmail.send.confirm, calendar.create.confirm, etc.)
+            // are dispatched locally on iOS — they show draft cards and await user input.
+            let isConfirmTool = toolCall.name.hasSuffix(".confirm")
+
             // Server-side tools (canvas/gmail/calendar) are executed on the server.
             // The server sends tool.call + tool.result events so card managers can
             // render inline cards. Do NOT dispatch these locally — there are no iOS
             // tools registered for them, and dispatching would emit an error result
             // that poisons the card manager's pending-call tracking.
-            if toolCall.name.hasPrefix("canvas.") ||
-               toolCall.name.hasPrefix("gmail.") ||
-               toolCall.name.hasPrefix("calendar.") {
+            if !isConfirmTool &&
+               (toolCall.name.hasPrefix("canvas.") ||
+                toolCall.name.hasPrefix("gmail.") ||
+                toolCall.name.hasPrefix("calendar.")) {
+                AppLogger.tooling.debug("Skipping local dispatch for server-side tool: \(toolCall.name, privacy: .public)")
                 eventBus.emit(event)
                 return
+            }
+
+            if isConfirmTool {
+                AppLogger.tooling.info("Dispatching confirm tool locally: \(toolCall.name, privacy: .public) callId=\(toolCall.callId, privacy: .public)")
             }
 
             if audioPipeline.isHandsFreeLiveConversationMode,
