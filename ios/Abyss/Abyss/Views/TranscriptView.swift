@@ -131,6 +131,12 @@ struct TranscriptView: View {
         emailCards.count + calendarEventCards.count + canvasCards.count
         + agentProgressCards.count + bridgeExecCards.count
         + emailDraftCards.count
+        + emailCards.compactMap(\.serverCardId).count
+        + calendarEventCards.compactMap(\.serverCardId).count
+        + canvasCards.compactMap(\.serverCardId).count
+        + agentProgressCards.compactMap(\.serverCardId).count
+        + bridgeExecCards.compactMap(\.serverCardId).count
+        + emailDraftCards.compactMap(\.serverCardId).count
     }
 
     private var transcriptItems: [TranscriptItem] {
