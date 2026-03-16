@@ -241,7 +241,7 @@ final class ConversationEventCoordinator: ObservableObject {
             deviceId: deviceId,
             deviceName: deviceName,
             status: status,
-            lastSeen: lastSeen,
+            lastSeen: lastSeen ?? existing?.lastSeen,
             workspaceRoot: workspaceRoot ?? existing?.workspaceRoot,
             workspaceOverride: workspaceOverride ?? existing?.workspaceOverride
         )

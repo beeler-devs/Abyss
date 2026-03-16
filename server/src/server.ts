@@ -232,12 +232,17 @@ wss.on("connection", (socket, request) => {
       const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
       if (!deviceId || !workspacePath) return;
 
+      if (workspacePath.length > 4096) return;
+
       const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
       if (!resolved.device) return;
 
       const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
       if (bridgeSocket) {
-        safeSend(bridgeSocket, event);
+        safeSend(bridgeSocket, makeEvent("bridge.workspace.set", resolved.device.sessionId, {
+          deviceId,
+          workspacePath,
+        }));
       }
       return;
     }

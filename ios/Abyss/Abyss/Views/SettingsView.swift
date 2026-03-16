@@ -306,6 +306,9 @@ private struct WorkspaceField: View {
             .textInputAutocapitalization(.never)
             .foregroundStyle(.secondary)
             .onSubmit { commit() }
+            .onChange(of: device.workspaceOverride) { _, newValue in
+                text = newValue ?? ""
+            }
     }
 
     private func commit() {

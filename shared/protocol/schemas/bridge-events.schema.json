@@ -97,6 +97,15 @@
         "stderrTail": { "type": "string" }
       },
       "additionalProperties": false
+    },
+    "bridge.workspace.set": {
+      "type": "object",
+      "required": ["deviceId", "workspacePath"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "workspacePath": { "type": "string" }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
