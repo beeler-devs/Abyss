@@ -208,9 +208,9 @@ private struct ChatSidebarPanel: View {
                     chatList.createChat()
                 } label: {
                     Image(systemName: "square.and.pencil")
-                        .font(.system(size: AppTheme.sidebarIconSize, weight: .semibold))
-                        .frame(width: AppTheme.sidebarIconFrame, height: AppTheme.sidebarIconFrame)
-                        .foregroundStyle(.primary)
+                        .font(.system(size: UIConstants.actionBarIconSize, weight: .semibold))
+                        .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
+                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
                 }
             }
             .padding(.horizontal, 20)
