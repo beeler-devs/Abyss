@@ -46,6 +46,8 @@ final class ConversationAudioPipeline: ObservableObject {
     private var remoteCaptureTransitionInFlight = false
     private var pendingRemoteCaptureReconcile = false
     private var handsFreeBargeInInFlight = false
+    private var currentPlayingLiveResponseId: String?
+    private var rejectedLiveResponseId: String?
     private let remoteVoiceCapture: RemoteVoiceCapturing
 
     init(
@@ -523,6 +525,10 @@ final class ConversationAudioPipeline: ObservableObject {
                 await toolRouter.dispatch(toolCall)
             }
         } else {
+            // Capture the current response ID as rejected BEFORE stopping audio.
+            // Late-arriving chunks with this ID will be dropped by handleAssistantAudioChunk.
+            rejectedLiveResponseId = currentPlayingLiveResponseId
+            currentPlayingLiveResponseId = nil
             await stopRemoteAssistantAudio()
         }
 
@@ -546,6 +552,18 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
         guard recordingMode == .vadAuto else { return }
+
+        // Gate: drop chunks from a rejected (interrupted) response
+        if let rejected = rejectedLiveResponseId {
+            if chunk.liveResponseId == rejected {
+                return
+            }
+            // New response arrived — clear the gate
+            rejectedLiveResponseId = nil
+        }
+
+        currentPlayingLiveResponseId = chunk.liveResponseId
+
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
         do {
             try await remoteVoiceCapture.appendAssistantAudio(
@@ -559,6 +577,7 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func handleAssistantAudioEnd() async {
         guard recordingMode == .vadAuto else { return }
+        currentPlayingLiveResponseId = nil
         await remoteVoiceCapture.finishAssistantAudio()
     }
 
