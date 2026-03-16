@@ -856,7 +856,7 @@ test("nova-sonic drops the audio-end fallback when the stream fails before the t
 test("nova-sonic emits interruption and returns to listening on interrupted completions", async (t) => {
   const harness = createHarness();
   t.after(async () => {
-    harness.client.closeResponse();
+    harness.client.closeAllResponses();
     await harness.provider.closeSession("session-1");
   });
 
@@ -886,9 +886,14 @@ test("nova-sonic emits interruption and returns to listening on interrupted comp
 
   await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
   assert.equal(findStateTransitions(harness.emitted, "listening").length, 2);
+  await waitFor(() => harness.client.sendCallCount === 2);
+  assert.equal(
+    harness.client.outboundEvents.filter((event) => "sessionStart" in event).length,
+    2,
+  );
 });
 
-test("nova-sonic interrupt closes the active session, drops stale events, and starts a fresh response", async (t) => {
+test("nova-sonic interrupt restarts the active stream, drops stale events, and starts a fresh response", async (t) => {
   const harness = createHarness();
   t.after(async () => {
     harness.client.closeAllResponses();
@@ -928,12 +933,10 @@ test("nova-sonic interrupt closes the active session, drops stale events, and st
 
   await harness.provider.interrupt("session-1");
   await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
+  await waitFor(() => harness.client.sendCallCount === 2);
 
   const interruptedEvent = eventsOfType(harness.emitted, "assistant.audio.interrupted")[0];
   assert.equal(interruptedEvent?.payload.liveResponseId, firstPartial.liveResponseId);
-
-  await harness.provider.startStream("session-1", harness.context);
-  await waitFor(() => harness.client.sendCallCount === 2);
 
   harness.client.emitEvent({
     completionEnd: {

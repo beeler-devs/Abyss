@@ -612,7 +612,8 @@ final class ConversationViewModel: ObservableObject {
 
     private func sendEventToConductor(_ event: Event, surfaceErrors: Bool = true) async {
         let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "pending"
-        if case .userAudioStreamChunk = event.kind {} else {
+        let isAudioChunk = { if case .userAudioStreamChunk = event.kind { return true } else { return false } }()
+        if !isAudioChunk {
             AppLogger.conductor.debug("Sending \(event.kind.displayName, privacy: .public) via \(clientType, privacy: .public)")
         }
 
