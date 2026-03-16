@@ -29,6 +29,7 @@ function makeMockGraphStore(hybridResult?: ResumeNeighborhood): { store: GraphSt
       calls.hybridResumeQuery++;
       return hybridResult ?? { goals: [], sessions: [], episodes: [], repos: [], branches: [], blockers: [], nextSteps: [], decisions: [] };
     },
+    async healthCheck() { return true; },
   };
   return { store, calls };
 }
@@ -158,6 +159,7 @@ test("apply catches errors and does not throw", async () => {
     async queryNeighborhood() { throw new Error("boom"); },
     async queryByType() { throw new Error("boom"); },
     async hybridResumeQuery() { throw new Error("boom"); },
+    async healthCheck() { throw new Error("boom"); },
   };
 
   const service = new ContextGraphService(defaultConfig, { graphStore: throwingStore });
@@ -291,4 +293,77 @@ test("summarizeAndStore delegates to memoryService", async () => {
   assert.equal((calledWith as SummarizeCall).memoryUserKey, "alice");
   assert.equal((calledWith as SummarizeCall).sessionId, "sess-1");
   assert.deepEqual(result, expectedDoc);
+});
+
+// --- Payload validation tests ---
+
+test("apply session.start with empty memoryUserKey creates no nodes", async () => {
+  const { store, calls } = makeMockGraphStore();
+  const service = new ContextGraphService(defaultConfig, { graphStore: store });
+
+  await service.apply({
+    type: "session.start",
+    sessionId: "sess-empty",
+    payload: { memoryUserKey: "" },
+    timestamp: "2026-03-16T00:00:00Z",
+  });
+
+  assert.equal(calls.upsertNode.length, 0, "no nodes should be created for empty memoryUserKey");
+  assert.equal(calls.upsertEdge.length, 0, "no edges should be created for empty memoryUserKey");
+});
+
+test("apply goal.started with empty goalText creates no nodes", async () => {
+  const { store, calls } = makeMockGraphStore();
+  const service = new ContextGraphService(defaultConfig, { graphStore: store });
+
+  await service.apply({
+    type: "goal.started",
+    sessionId: "sess-empty",
+    payload: { goalText: "", memoryUserKey: "alice" },
+    timestamp: "2026-03-16T00:00:00Z",
+  });
+
+  assert.equal(calls.upsertNode.length, 0, "no nodes should be created for empty goalText");
+});
+
+test("apply goal.started with empty memoryUserKey creates no nodes", async () => {
+  const { store, calls } = makeMockGraphStore();
+  const service = new ContextGraphService(defaultConfig, { graphStore: store });
+
+  await service.apply({
+    type: "goal.started",
+    sessionId: "sess-empty",
+    payload: { goalText: "Fix the bug", memoryUserKey: "" },
+    timestamp: "2026-03-16T00:00:00Z",
+  });
+
+  assert.equal(calls.upsertNode.length, 0, "no nodes should be created for empty memoryUserKey");
+});
+
+test("apply session.finalized with empty summary creates no nodes", async () => {
+  const { store, calls } = makeMockGraphStore();
+  const service = new ContextGraphService(defaultConfig, { graphStore: store });
+
+  await service.apply({
+    type: "session.finalized",
+    sessionId: "sess-empty",
+    payload: { memoryUserKey: "alice", summary: "" },
+    timestamp: "2026-03-16T00:00:00Z",
+  });
+
+  assert.equal(calls.upsertNode.length, 0, "no nodes should be created for empty summary");
+});
+
+test("apply session.finalized with empty memoryUserKey creates no nodes", async () => {
+  const { store, calls } = makeMockGraphStore();
+  const service = new ContextGraphService(defaultConfig, { graphStore: store });
+
+  await service.apply({
+    type: "session.finalized",
+    sessionId: "sess-empty",
+    payload: { memoryUserKey: "", summary: "Some summary" },
+    timestamp: "2026-03-16T00:00:00Z",
+  });
+
+  assert.equal(calls.upsertNode.length, 0, "no nodes should be created for empty memoryUserKey");
 });

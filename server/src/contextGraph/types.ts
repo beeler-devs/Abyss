@@ -4,7 +4,6 @@ export type GraphNodeType =
   | "Goal"
   | "Repo"
   | "Branch"
-  | "PullRequest"
   | "Decision"
   | "Blocker"
   | "NextStep"
@@ -46,12 +45,6 @@ export interface BranchNode extends GraphNodeBase {
   repoId: string;
 }
 
-export interface PullRequestNode extends GraphNodeBase {
-  type: "PullRequest";
-  url: string;
-  repoId: string;
-}
-
 export interface DecisionNode extends GraphNodeBase {
   type: "Decision";
   text: string;
@@ -83,7 +76,6 @@ export type GraphNode =
   | GoalNode
   | RepoNode
   | BranchNode
-  | PullRequestNode
   | DecisionNode
   | BlockerNode
   | NextStepNode

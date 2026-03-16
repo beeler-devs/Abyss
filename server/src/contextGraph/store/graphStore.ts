@@ -9,4 +9,5 @@ export interface GraphStore {
   queryNeighborhood(startId: string, maxDepth: number): Promise<GraphSubgraph>;
   queryByType(type: GraphNodeType): Promise<GraphNode[]>;
   hybridResumeQuery(embedding: number[], memoryUserKey: string, k: number): Promise<ResumeNeighborhood>;
+  healthCheck(): Promise<boolean>;
 }

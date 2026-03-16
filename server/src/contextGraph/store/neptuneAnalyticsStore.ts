@@ -213,12 +213,15 @@ export class NeptuneAnalyticsStore implements GraphStore {
     memoryUserKey: string,
     k: number,
   ): Promise<ResumeNeighborhood> {
-    // Step 1: Find top-K similar Goal nodes via vector search
+    // Step 1: Find top-K similar Goal nodes via vector search, post-filtered by user
+    const wideK = k * 3;
     const vectorResults = await this.executeQuery(
-      `CALL neptune.algo.vectors.topKByEmbedding(embedding := $embedding, k := $k, label := 'Goal')
+      `CALL neptune.algo.vectors.topKByEmbedding(embedding := $embedding, k := $wideK, label := 'Goal')
        YIELD node, score
-       RETURN node.id AS goalId, node.text AS goalText, node.sessionId AS sessionId, score`,
-      { embedding, k },
+       MATCH (u:User {memoryUserKey: $memoryUserKey})-[:STARTED]->(s:Session)-[:HAS_GOAL]->(node)
+       RETURN node.id AS goalId, node.text AS goalText, node.sessionId AS sessionId, score
+       LIMIT $k`,
+      { embedding, wideK, memoryUserKey, k },
     );
 
     if (vectorResults.length === 0) {
@@ -288,6 +291,18 @@ export class NeptuneAnalyticsStore implements GraphStore {
     }
 
     return result;
+  }
+
+  async healthCheck(): Promise<boolean> {
+    try {
+      await this.executeQuery(`RETURN 1 AS ping`);
+      logger.info(`[neptune] health check passed`);
+      return true;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.warn(`[neptune] health check failed: ${msg}`);
+      return false;
+    }
   }
 
   private collectNode<T>(

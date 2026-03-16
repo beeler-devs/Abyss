@@ -18,6 +18,10 @@ export class EmbeddingService {
   constructor(config: EmbeddingServiceConfig, clients?: EmbeddingServiceClients) {
     this.config = config;
     this.bedrock = clients?.bedrock ?? new BedrockRuntimeClient({ region: config.awsRegion });
+    const validDimensions = [256, 384, 512, 1024];
+    if (!validDimensions.includes(config.dimensions)) {
+      logger.warn(`[embedding] dimensions=${config.dimensions} not in recommended set ${JSON.stringify(validDimensions)}`);
+    }
   }
 
   async embed(text: string): Promise<number[]> {

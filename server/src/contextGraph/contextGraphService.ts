@@ -33,6 +33,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
 export interface ContextGraphServiceConfig {
   retrieveTimeoutMs: number;  // timeout for Neptune hybrid queries
   maxInjectedChars: number;   // max chars for formatted resume context
+  vectorSearchK?: number;     // top-K for vector search (default 5)
+  neighborhoodLimit?: number; // max items per neighborhood category (default 3)
 }
 
 export class ContextGraphService {
@@ -98,7 +100,7 @@ export class ContextGraphService {
 
         const queryStart = Date.now();
         const neighborhood = await withTimeout(
-          this.graphStore.hybridResumeQuery(embedding, input.memoryUserKey, 5),
+          this.graphStore.hybridResumeQuery(embedding, input.memoryUserKey, this.config.vectorSearchK ?? 5),
           this.config.retrieveTimeoutMs,
         );
 
@@ -157,6 +159,10 @@ export class ContextGraphService {
   private async handleSessionStart(update: Extract<ContextGraphUpdate, { type: "session.start" }>): Promise<void> {
     const now = update.timestamp;
     const { memoryUserKey } = update.payload;
+    if (!memoryUserKey) {
+      logger.warn(`[contextGraph] session.start skipped — empty memoryUserKey`, { sessionId: update.sessionId });
+      return;
+    }
 
     logger.info(`[contextGraph] session.start — upsert User(${memoryUserKey}) + Session(${update.sessionId})`, { sessionId: update.sessionId });
 
@@ -186,6 +192,10 @@ export class ContextGraphService {
   private async handleGoalStarted(update: Extract<ContextGraphUpdate, { type: "goal.started" }>): Promise<void> {
     const now = update.timestamp;
     const { goalText, memoryUserKey } = update.payload;
+    if (!goalText || !memoryUserKey) {
+      logger.warn(`[contextGraph] goal.started skipped — empty goalText or memoryUserKey`, { sessionId: update.sessionId });
+      return;
+    }
     const goalId = `goal:${this.hashShort(goalText)}:${update.sessionId}`;
 
     logger.info(`[contextGraph] goal.started — upsert Goal(${goalId}) text="${goalText.slice(0, 80)}"`, { sessionId: update.sessionId });
@@ -218,6 +228,10 @@ export class ContextGraphService {
   private async handleSessionFinalized(update: Extract<ContextGraphUpdate, { type: "session.finalized" }>): Promise<void> {
     const now = update.timestamp;
     const { memoryUserKey, workingContext, summary, decisions, blockers, nextSteps } = update.payload;
+    if (!summary || !memoryUserKey) {
+      logger.warn(`[contextGraph] session.finalized skipped — empty summary or memoryUserKey`, { sessionId: update.sessionId });
+      return;
+    }
     const sessionNodeId = `session:${update.sessionId}`;
 
     logger.info(`[contextGraph] session.finalized — user=${memoryUserKey} repo=${workingContext?.repo ?? "none"} branch=${workingContext?.branch ?? "none"} decisions=${decisions?.length ?? 0} blockers=${blockers?.length ?? 0} nextSteps=${nextSteps?.length ?? 0} summaryLen=${summary.length}`, { sessionId: update.sessionId });
@@ -315,33 +329,34 @@ export class ContextGraphService {
   }
 
   private formatResumeContext(neighborhood: ResumeNeighborhood): string | null {
+    const limit = this.config.neighborhoodLimit ?? 3;
     const lines: string[] = ["Prior context (graph):"];
 
-    for (const goal of neighborhood.goals.slice(0, 3)) {
+    for (const goal of neighborhood.goals.slice(0, limit)) {
       lines.push(`• Goal: ${goal.text}`);
     }
 
-    for (const episode of neighborhood.episodes.slice(0, 3)) {
+    for (const episode of neighborhood.episodes.slice(0, limit)) {
       lines.push(`• Session: ${episode.summary}`);
     }
 
-    for (const repo of neighborhood.repos.slice(0, 2)) {
+    for (const repo of neighborhood.repos.slice(0, limit)) {
       lines.push(`  Repo: ${repo.name}`);
     }
 
-    for (const branch of neighborhood.branches.slice(0, 2)) {
+    for (const branch of neighborhood.branches.slice(0, limit)) {
       lines.push(`  Branch: ${branch.name}`);
     }
 
-    for (const blocker of neighborhood.blockers.slice(0, 2)) {
+    for (const blocker of neighborhood.blockers.slice(0, limit)) {
       lines.push(`  Blocker: ${blocker.text}`);
     }
 
-    for (const step of neighborhood.nextSteps.slice(0, 3)) {
+    for (const step of neighborhood.nextSteps.slice(0, limit)) {
       lines.push(`  Next: ${step.text}`);
     }
 
-    for (const decision of neighborhood.decisions.slice(0, 2)) {
+    for (const decision of neighborhood.decisions.slice(0, limit)) {
       lines.push(`  Decision: ${decision.text}`);
     }
 
@@ -349,7 +364,13 @@ export class ContextGraphService {
 
     const result = lines.join("\n");
     if (result.length <= this.config.maxInjectedChars) return result;
-    return result.slice(0, this.config.maxInjectedChars - 3) + "...";
+    // Truncate at last newline before the limit to avoid cutting mid-line
+    const truncated = result.slice(0, this.config.maxInjectedChars - 3);
+    const lastNewline = truncated.lastIndexOf("\n");
+    if (lastNewline > 0) {
+      return truncated.slice(0, lastNewline) + "\n...";
+    }
+    return truncated + "...";
   }
 
   private hashShort(text: string): string {

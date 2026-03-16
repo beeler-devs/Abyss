@@ -99,9 +99,9 @@ test("hybridResumeQuery returns empty neighborhood when no vectors match", async
   assert.deepEqual(result.decisions, []);
 });
 
-test("hybridResumeQuery performs vector search then graph traversal", async () => {
-  const { store, queries } = makeStore([
-    // First call: vector search returns matching goals
+test("hybridResumeQuery performs user-scoped vector search then graph traversal", async () => {
+  const { store, queries, paramsList } = makeStore([
+    // First call: vector search with user filtering returns matching goals
     [
       { goalId: "goal-1", goalText: "Implement auth", sessionId: "sess-1", score: 0.9 },
       { goalId: "goal-2", goalText: "Add tests", sessionId: "sess-2", score: 0.7 },
@@ -125,7 +125,12 @@ test("hybridResumeQuery performs vector search then graph traversal", async () =
   // Should have made 2 queries: vector search + graph traversal
   assert.equal(queries.length, 2);
   assert.ok(queries[0].includes("topKByEmbedding"), "first query should be vector search");
+  assert.ok(queries[0].includes("memoryUserKey"), "vector search should filter by user");
   assert.ok(queries[1].includes("MATCH (u:User"), "second query should be graph traversal");
+
+  // Vector search should use wideK (k*3) for over-fetching
+  assert.equal(paramsList[0]?.wideK, 15, "wideK should be k*3");
+  assert.equal(paramsList[0]?.k, 5, "k should be passed for LIMIT");
 
   // Goals from vector search
   assert.equal(result.goals.length, 2);
