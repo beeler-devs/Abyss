@@ -20,7 +20,7 @@
       "environment": [
         { "name": "PORT", "value": "8080" },
         { "name": "MODEL_PROVIDER", "value": "bedrock" },
-        { "name": "VOICE_PROVIDER", "value": "local" },
+        { "name": "VOICE_PROVIDER", "value": "nova-sonic" },
         { "name": "BEDROCK_TEXT_MODEL_ID", "value": "us.amazon.nova-2-lite-v1:0" },
         { "name": "BEDROCK_SONIC_MODEL_ID", "value": "us.amazon.nova-2-sonic-v1:0" },
         { "name": "BEDROCK_SONIC_VOICE_ID", "value": "tiffany" },

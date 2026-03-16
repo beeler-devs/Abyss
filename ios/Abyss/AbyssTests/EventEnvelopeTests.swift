@@ -7,8 +7,8 @@ final class EventEnvelopeTests: XCTestCase {
         let events: [Event] = [
             Event.sessionStart(sessionId: "session-1"),
             Event.transcriptFinal("hello world", sessionId: "session-1"),
-            Event.speechPartial("hello", sessionId: "session-1"),
-            Event.speechFinal("hello world", sessionId: "session-1"),
+            Event.speechPartial("hello", liveResponseId: "live-1", sessionId: "session-1"),
+            Event.speechFinal("hello world", liveResponseId: "live-1", sessionId: "session-1"),
             Event.toolCall(name: "convo.setState", arguments: "{\"state\":\"thinking\"}", callId: "call-1", sessionId: "session-1"),
             Event.toolResult(callId: "call-1", result: "{\"ok\":true}", sessionId: "session-1"),
             Event.agentStatus("thinking", detail: "processing", sessionId: "session-1"),
@@ -41,5 +41,54 @@ final class EventEnvelopeTests: XCTestCase {
         XCTAssertEqual(envelope.payload["text"]?.stringValue, "hi")
         XCTAssertEqual(envelope.payload["sessionId"]?.stringValue, "session-abc")
         XCTAssertNotNil(envelope.payload["timestamp"]?.stringValue)
+    }
+
+    func testBridgeWorkspaceSetEncodesCorrectly() {
+        let event = Event.bridgeWorkspaceSet(deviceId: "dev-1", workspacePath: "/Users/benton/Dev", sessionId: "session-1")
+        let envelope = EventEnvelope(event: event)
+        XCTAssertEqual(envelope.type, "bridge.workspace.set")
+        XCTAssertEqual(envelope.payload["deviceId"]?.stringValue, "dev-1")
+        XCTAssertEqual(envelope.payload["workspacePath"]?.stringValue, "/Users/benton/Dev")
+    }
+
+    func testAssistantSpeechPartialPreservesLiveResponseId() throws {
+        let envelope = EventEnvelope(event: Event.speechPartial(
+            "hello",
+            liveResponseId: "live-123",
+            sessionId: "session-1"
+        ))
+
+        XCTAssertEqual(envelope.payload["liveResponseId"]?.stringValue, "live-123")
+
+        let roundTrip = try envelope.toEvent()
+        guard case .assistantSpeechPartial(let partial) = roundTrip.kind else {
+            XCTFail("Expected assistant speech partial")
+            return
+        }
+        XCTAssertEqual(partial.liveResponseId, "live-123")
+    }
+
+    func testBridgePairedDecodesWorkspaceRoot() throws {
+        let json = """
+        {"id":"abc","type":"bridge.paired","timestamp":"2026-03-15T00:00:00.000Z","protocolVersion":1,"sessionId":"s1","payload":{"deviceId":"dev-1","deviceName":"My Mac","status":"online","workspaceRoot":"/Users/benton/Dev"}}
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let envelope = try decoder.decode(EventEnvelope.self, from: json)
+        let event = try envelope.toEvent()
+        guard case .bridgePaired(let paired) = event.kind else { XCTFail("wrong kind"); return }
+        XCTAssertEqual(paired.workspaceRoot, "/Users/benton/Dev")
+    }
+
+    func testBridgePairedDecodesWithoutWorkspaceRoot() throws {
+        let json = """
+        {"id":"abc","type":"bridge.paired","timestamp":"2026-03-15T00:00:00.000Z","protocolVersion":1,"sessionId":"s1","payload":{"deviceId":"dev-1","deviceName":"My Mac","status":"online"}}
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let envelope = try decoder.decode(EventEnvelope.self, from: json)
+        let event = try envelope.toEvent()
+        guard case .bridgePaired(let paired) = event.kind else { XCTFail("wrong kind"); return }
+        XCTAssertNil(paired.workspaceRoot)
     }
 }

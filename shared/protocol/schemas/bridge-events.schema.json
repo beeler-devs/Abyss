@@ -59,7 +59,8 @@
       "properties": {
         "deviceId": { "type": "string" },
         "deviceName": { "type": "string" },
-        "status": { "type": "string", "enum": ["online", "offline"] }
+        "status": { "type": "string", "enum": ["online", "offline"] },
+        "workspaceRoot": { "type": "string" }
       },
       "additionalProperties": false
     },
@@ -94,6 +95,15 @@
         "exitCode": { "type": "integer" },
         "stdoutTail": { "type": "string" },
         "stderrTail": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "bridge.workspace.set": {
+      "type": "object",
+      "required": ["deviceId", "workspacePath"],
+      "properties": {
+        "deviceId": { "type": "string" },
+        "workspacePath": { "type": "string" }
       },
       "additionalProperties": false
     }

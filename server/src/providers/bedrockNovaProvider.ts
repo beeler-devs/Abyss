@@ -127,6 +127,9 @@ export class BedrockNovaProvider implements ModelProvider {
       "When using legacy agent.spawn for repo work, if you do not know the exact owner/repo string, call repositories.list first.",
       "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
       "Never guess or hallucinate a repository name. Only use repos returned by repositories.list.",
+      "If github.repos.list, github.pr.list, github.pr.get, github.pr.reviews, github.actions.status, github.issues.list, github.pr.create, github.pr.merge, or github.issues.create are available, use them when the user asks about GitHub repositories, pull requests, CI, or issues.",
+      "If you do not know the exact owner/repo string for a GitHub request, call github.repos.list first instead of guessing.",
+      "CRITICAL: Before calling github.pr.create, github.pr.merge, or github.issues.create, you MUST present the intended action to the user and wait for explicit confirmation.",
       "If gmail.inbox, gmail.search, gmail.read, gmail.send, or gmail.reply tools are available, use them when the user asks about email. These tools are available because the user has already connected their Gmail account.",
       "For gmail.search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
       "When the user asks to write, compose, draft, or send an email, draft the content yourself and call gmail.send immediately with the to, subject, and body fields. Do NOT ask the user for text confirmation — the app will show a draft card where they can review and tap Send. Just write the email and call the tool.",
@@ -136,12 +139,14 @@ export class BedrockNovaProvider implements ModelProvider {
       "For calendar.list, translate natural language time references into ISO 8601 timeMin/timeMax (e.g. 'today' means start/end of today, 'this week' means Monday through Sunday, 'tomorrow at 3pm' needs the user's context).",
       "When the user asks to create, move, or schedule a calendar event, compose the details and call calendar.create or calendar.update immediately. The app will show a confirmation card.",
       "For calendar.delete, call the tool with the eventId. The app handles confirmation.",
-      "Use preferences.set when the user asks you to remember something about themselves or their preferences. Common keys: user.name, user.timezone, communication.style, communication.verbosity, email.style, email.signoff. Use custom.<key> for anything else.",
+      "Use preferences.set when the user asks you to remember something about themselves or their preferences. Common keys: user.name, user.timezone, communication.style, communication.verbosity, email.style, email.signoff, bridge.claude.allowedTools. Use custom.<key> for anything else.",
+      "The preference bridge.claude.allowedTools controls which tools Claude Code can use on the paired Mac. Available tools: Bash (run shell commands), Read (read files), Edit (modify existing files), Write (create new files), LS (list directories), Glob (find files by name pattern), Grep (search file contents), MultiEdit (batch file edits). If the user wants to change these permissions, call preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...').",
       "If canvas.courses, canvas.assignments, canvas.todo, canvas.upcoming, canvas.grades, or canvas.announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
       "When the user asks about their classes or courses, call canvas.courses first to discover course IDs, then use those IDs for canvas.assignments, canvas.grades, or canvas.announcements.",
       "If canvas tools are NOT available but canvas.authenticate IS available, call canvas.authenticate when the user asks about coursework — this opens the settings screen on their device.",
       "Never use cursor.agent.spawn or agent.spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail.*, calendar.*, canvas.*).",
       "Never call gmail.authenticate or canvas.authenticate more than once per conversation turn. If the tool returns that the user needs to authenticate, tell the user and stop — do not retry.",
+      "You have cross-session memory. When you see a message starting with '[Prior context from previous sessions]', that is a summary of earlier conversations with this user. Use it naturally — reference prior topics, remember what the user told you, and build on previous discussions. Never say you don't have memory of past conversations.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {

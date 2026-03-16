@@ -33,6 +33,16 @@ final class ConversationViewModel: ObservableObject {
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
 
+    private static let memoryUserKey: String = {
+        let key = "memoryUserKey"
+        if let existing = UserDefaults.standard.string(forKey: key) {
+            return existing
+        }
+        let newKey = UUID().uuidString
+        UserDefaults.standard.set(newKey, forKey: key)
+        return newKey
+    }()
+
     let eventBus = EventBus()
     let conversationStore = ConversationStore()
     let appStateStore = AppStateStore()
@@ -321,6 +331,10 @@ final class ConversationViewModel: ObservableObject {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
 
+    func setWorkspaceOverride(deviceId: String, path: String?) {
+        eventCoordinator.setWorkspaceOverride(deviceId: deviceId, path: path)
+    }
+
     private func setupToolSystem(transcriber: SpeechTranscriber? = nil, tts: TextToSpeech? = nil) {
         let registry = ToolRegistry()
         let sttImpl = transcriber ?? self.transcriber
@@ -400,6 +414,7 @@ final class ConversationViewModel: ObservableObject {
         canvasCardManager = ConversationCanvasManager(eventBus: eventBus)
 
         eventCoordinator = ConversationEventCoordinator(
+            conversationStore: conversationStore,
             eventBus: eventBus,
             toolRouter: toolRouter,
             audioPipeline: audioPipeline,
@@ -613,7 +628,8 @@ final class ConversationViewModel: ObservableObject {
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
-            preferences: prefs.isEmpty ? nil : prefs
+            preferences: prefs.isEmpty ? nil : prefs,
+            memoryUserKey: Self.memoryUserKey
         )
 
         inboundEventsTask?.cancel()
@@ -638,7 +654,8 @@ final class ConversationViewModel: ObservableObject {
 
     private func sendEventToConductor(_ event: Event, surfaceErrors: Bool = true) async {
         let clientType = activeConductorClient.map { "\(type(of: $0))" } ?? "pending"
-        if case .userAudioStreamChunk = event.kind {} else {
+        let isAudioChunk = { if case .userAudioStreamChunk = event.kind { return true } else { return false } }()
+        if !isAudioChunk {
             AppLogger.conductor.debug("Sending \(event.kind.displayName, privacy: .public) via \(clientType, privacy: .public)")
         }
 

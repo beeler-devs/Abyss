@@ -143,6 +143,8 @@ struct EventRow: View {
                 Image(systemName: "terminal").foregroundStyle(.green)
             case .preferencesSync:
                 Image(systemName: "gearshape.fill").foregroundStyle(.gray)
+            case .bridgeWorkspaceSet:
+                Image(systemName: "folder").foregroundStyle(.brown)
             }
         }
     }
@@ -208,6 +210,8 @@ struct EventRow: View {
             return "bridge.exec.finished: \(payload.commandId.prefix(8)) exit=\(payload.exitCode)"
         case .preferencesSync(let prefs):
             return "preferences.sync: \(prefs.preferences.count) keys"
+        case .bridgeWorkspaceSet(let payload):
+            return "bridge.workspace.set: \(payload.workspacePath)"
         }
     }
 

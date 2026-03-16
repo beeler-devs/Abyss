@@ -6,6 +6,7 @@ struct ConversationMessage: Identifiable, Codable, Sendable, Equatable {
     let role: Role
     var text: String
     var isPartial: Bool
+    let liveResponseId: String?
     let timestamp: Date
 
     enum Role: String, Codable, Sendable {
@@ -19,12 +20,14 @@ struct ConversationMessage: Identifiable, Codable, Sendable, Equatable {
         role: Role,
         text: String,
         isPartial: Bool = false,
+        liveResponseId: String? = nil,
         timestamp: Date = Date()
     ) {
         self.id = id
         self.role = role
         self.text = text
         self.isPartial = isPartial
+        self.liveResponseId = liveResponseId
         self.timestamp = timestamp
     }
 }

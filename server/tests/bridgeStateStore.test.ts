@@ -96,3 +96,16 @@ test("resolveDeviceForTool allows explicit deviceId across session churn", () =>
   assert.equal(store.getSessionDevices("session-original").length, 0);
   assert.equal(store.getSessionDevices("session-new")[0]?.deviceId, "device-explicit");
 });
+
+test("registerBridge stores workspaceRoot from registration payload", () => {
+  const store = new BridgeStateStore();
+  store.createPairingRequest("session-ws", "WSTEST", "Test Mac");
+  const reg = store.registerBridge({
+    pairingCode: "WSTEST",
+    deviceId: "device-ws",
+    deviceName: "Test Mac",
+    workspaceRoot: "/Users/test/project",
+    capabilities: { execRun: true, readFile: true, claudeRun: false },
+  });
+  assert.equal(reg.device?.workspaceRoot, "/Users/test/project");
+});

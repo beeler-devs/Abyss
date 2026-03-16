@@ -21,6 +21,10 @@ export class SessionStore {
     this.traceMaxEntries = Math.max(1, traceMaxEntries);
   }
 
+  get(sessionId: string): SessionState | undefined {
+    return this.sessions.get(sessionId);
+  }
+
   getOrCreate(sessionId: string): SessionState {
     const existing = this.sessions.get(sessionId);
     if (existing) {

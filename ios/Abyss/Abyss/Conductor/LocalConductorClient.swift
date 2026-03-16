@@ -16,7 +16,7 @@ final class LocalConductorClient: ConductorClient, @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func connect(sessionId: String, githubToken: String? = nil, gmailAccessToken: String? = nil, gmailRefreshToken: String? = nil, gmailTokenExpiresAt: Double? = nil, canvasAccessToken: String? = nil, canvasBaseURL: String? = nil, preferences: [String: String]? = nil) async throws {
+    func connect(sessionId: String, githubToken: String? = nil, gmailAccessToken: String? = nil, gmailRefreshToken: String? = nil, gmailTokenExpiresAt: Double? = nil, canvasAccessToken: String? = nil, canvasBaseURL: String? = nil, preferences: [String: String]? = nil, memoryUserKey: String? = nil) async throws {
         self.sessionId = sessionId
 
         let startupEvents = await conductor.handleSessionStart()

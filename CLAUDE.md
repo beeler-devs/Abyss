@@ -76,7 +76,9 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 
 **Dynamic system prompt:** Both providers (`bedrockNovaProvider.ts`, `anthropicProvider.ts`) accept `userPreferences` in `generateResponse()` and append them to the system prompt as `"User preferences (apply throughout): - key: value"`.
 
-**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `custom.*` for free-form.
+**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `bridge.claude.allowedTools` (comma-separated Claude Code tools: Bash, Read, Edit, Write, LS, Glob, Grep, MultiEdit), `custom.*` for free-form.
+
+**First-run gate for Claude Code:** When `bridge.claude.run` is called and no `bridge.claude.allowedTools` preference exists, the tool returns a prompt instructing the LLM to ask the user which tools to allow before proceeding. The user's choice is saved via `preferences.set` and persists across sessions.
 
 **Files:**
 - `ios/.../Models/UserPreferencesStore.swift` — `@MainActor ObservableObject`, UserDefaults-backed `[String: String]`
@@ -235,3 +237,7 @@ iOS reads from `Secrets.plist` (gitignored) → `Info.plist` → environment var
 Server runs on ECS Fargate in **us-east-1** (cluster `abyss`, service `abyss-server`). ALB: `abyss-alb-1705721363.us-east-1.elb.amazonaws.com`. Full deployment details (ECR, security groups, target group) are in **docs/runbook.md** under "AWS ECS Deployment".
 
 **WebSocket stickiness:** The ALB keeps existing WebSocket connections pinned to the old task even after a new deployment. The iOS app must be killed and reopened after a deploy to reconnect to the new container.
+
+## Claude Code Instructions
+
+- Never add Claude as a co-author on git commits. Do not include `Co-Authored-By: Claude` or any similar trailer in commit messages.

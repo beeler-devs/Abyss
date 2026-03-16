@@ -44,6 +44,7 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeExecOutput(BridgeExecOutput)
         case bridgeExecFinished(BridgeExecFinished)
         case preferencesSync(PreferencesSync)
+        case bridgeWorkspaceSet(BridgeWorkspaceSet)
     }
 
     // MARK: - Payloads
@@ -57,6 +58,7 @@ struct Event: Identifiable, Codable, Sendable {
         let canvasAccessToken: String?
         let canvasBaseURL: String?
         let preferences: [String: String]?
+        let memoryUserKey: String?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -86,10 +88,22 @@ struct Event: Identifiable, Codable, Sendable {
 
     struct SpeechPartial: Codable, Sendable {
         let text: String
+        let liveResponseId: String?
+
+        init(text: String, liveResponseId: String? = nil) {
+            self.text = text
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct SpeechFinal: Codable, Sendable {
         let text: String
+        let liveResponseId: String?
+
+        init(text: String, liveResponseId: String? = nil) {
+            self.text = text
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct AssistantAudioChunk: Codable, Sendable {
@@ -97,12 +111,39 @@ struct Event: Identifiable, Codable, Sendable {
         let encoding: String
         let sampleRateHertz: Int
         let channelCount: Int
+        let liveResponseId: String?
+
+        init(
+            audio: String,
+            encoding: String,
+            sampleRateHertz: Int,
+            channelCount: Int,
+            liveResponseId: String? = nil
+        ) {
+            self.audio = audio
+            self.encoding = encoding
+            self.sampleRateHertz = sampleRateHertz
+            self.channelCount = channelCount
+            self.liveResponseId = liveResponseId
+        }
     }
 
-    struct AssistantAudioEnd: Codable, Sendable {}
+    struct AssistantAudioEnd: Codable, Sendable {
+        let liveResponseId: String?
+
+        init(liveResponseId: String? = nil) {
+            self.liveResponseId = liveResponseId
+        }
+    }
 
     struct AssistantAudioInterrupted: Codable, Sendable {
         let reason: String
+        let liveResponseId: String?
+
+        init(reason: String, liveResponseId: String? = nil) {
+            self.reason = reason
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct UIPatch: Codable, Sendable {
@@ -190,6 +231,7 @@ struct Event: Identifiable, Codable, Sendable {
         let deviceId: String
         let deviceName: String
         let status: String
+        let workspaceRoot: String?
     }
 
     struct BridgeStatus: Codable, Sendable {
@@ -217,6 +259,11 @@ struct Event: Identifiable, Codable, Sendable {
     struct PreferencesSync: Codable, Sendable {
         let preferences: [String: String]
     }
+
+    struct BridgeWorkspaceSet: Codable, Sendable {
+        let deviceId: String
+        let workspacePath: String
+    }
 }
 
 // MARK: - Convenience Factories
@@ -230,7 +277,8 @@ extension Event {
         gmailTokenExpiresAt: Double? = nil,
         canvasAccessToken: String? = nil,
         canvasBaseURL: String? = nil,
-        preferences: [String: String]? = nil
+        preferences: [String: String]? = nil,
+        memoryUserKey: String? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
             sessionId: sessionId,
@@ -240,7 +288,8 @@ extension Event {
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
-            preferences: preferences
+            preferences: preferences,
+            memoryUserKey: memoryUserKey
         )))
     }
 
@@ -288,12 +337,12 @@ extension Event {
         Event(sessionId: sessionId, kind: .userAudioStreamEnd(UserAudioStreamEnd(reason: reason)))
     }
 
-    static func speechPartial(_ text: String, sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantSpeechPartial(SpeechPartial(text: text)))
+    static func speechPartial(_ text: String, liveResponseId: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantSpeechPartial(SpeechPartial(text: text, liveResponseId: liveResponseId)))
     }
 
-    static func speechFinal(_ text: String, sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantSpeechFinal(SpeechFinal(text: text)))
+    static func speechFinal(_ text: String, liveResponseId: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantSpeechFinal(SpeechFinal(text: text, liveResponseId: liveResponseId)))
     }
 
     static func assistantAudioChunk(
@@ -301,22 +350,31 @@ extension Event {
         encoding: String = "pcm_s16le",
         sampleRateHertz: Int = 16_000,
         channelCount: Int = 1,
+        liveResponseId: String? = nil,
         sessionId: String? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .assistantAudioChunk(AssistantAudioChunk(
             audio: audio,
             encoding: encoding,
             sampleRateHertz: sampleRateHertz,
-            channelCount: channelCount
+            channelCount: channelCount,
+            liveResponseId: liveResponseId
         )))
     }
 
-    static func assistantAudioEnd(sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantAudioEnd(AssistantAudioEnd()))
+    static func assistantAudioEnd(liveResponseId: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioEnd(AssistantAudioEnd(liveResponseId: liveResponseId)))
     }
 
-    static func assistantAudioInterrupted(_ reason: String = "unknown", sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantAudioInterrupted(AssistantAudioInterrupted(reason: reason)))
+    static func assistantAudioInterrupted(
+        _ reason: String = "unknown",
+        liveResponseId: String? = nil,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioInterrupted(AssistantAudioInterrupted(
+            reason: reason,
+            liveResponseId: liveResponseId
+        )))
     }
 
     static func uiPatch(_ patch: String, sessionId: String? = nil) -> Event {
@@ -393,6 +451,10 @@ extension Event {
         let payload = BridgePairRequest(pairingCode: code, deviceName: deviceName)
         return Event(sessionId: sessionId, kind: .bridgePairRequest(payload))
     }
+
+    static func bridgeWorkspaceSet(deviceId: String, workspacePath: String, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .bridgeWorkspaceSet(BridgeWorkspaceSet(deviceId: deviceId, workspacePath: workspacePath)))
+    }
 }
 
 // MARK: - Display Helpers
@@ -427,6 +489,7 @@ extension Event.Kind {
         case .bridgeExecOutput(let payload): return "bridge.exec.output: \(payload.commandId.prefix(8))"
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
         case .preferencesSync: return "preferences.sync"
+        case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
         }
     }
 }

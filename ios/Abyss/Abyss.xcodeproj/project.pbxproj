@@ -8,6 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		7A85AD292F402BF30013064D /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = 7A85AD282F402BF30013064D /* Secrets.plist */; };
+		AB10000000000000100000001 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000001 /* Helpers.swift */; };
+		AB10000000000000100000002 /* ConversationAudioPipelineNovaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000002 /* ConversationAudioPipelineNovaTests.swift */; };
+		AB10000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift */; };
+		AB10000000000000100000004 /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000004 /* XCTest.framework */; };
 		A10000000000000100000001 /* AbyssApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000001 /* AbyssApp.swift */; };
 		A10000000000000100000002 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000002 /* Config.swift */; };
 		A10000000000000100000003 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000003 /* ContentView.swift */; };
@@ -92,8 +96,23 @@
 		B10000000000000100000001 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B20000000000000100000001 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		ABE0000000000000100000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000000000000100000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A60000000000000100000001;
+			remoteInfo = Abyss;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		7A85AD282F402BF30013064D /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
+		AB20000000000000100000001 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
+		AB20000000000000100000002 /* ConversationAudioPipelineNovaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationAudioPipelineNovaTests.swift; sourceTree = "<group>"; };
+		AB20000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationEventCoordinatorInterruptTests.swift; sourceTree = "<group>"; };
+		AB20000000000000100000004 /* XCTest.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = XCTest.framework; path = System/Library/Frameworks/XCTest.framework; sourceTree = SDKROOT; };
+		AB20000000000000200000002 /* AbyssTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AbyssTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A20000000000000100000001 /* AbyssApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AbyssApp.swift; sourceTree = "<group>"; };
 		A20000000000000100000002 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		A20000000000000100000003 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -180,6 +199,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		AB40000000000000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB10000000000000100000004 /* XCTest.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A40000000000000100000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -196,8 +223,19 @@
 			children = (
 				7A85AD282F402BF30013064D /* Secrets.plist */,
 				A50000000000000100000002 /* Abyss */,
+				AB50000000000000100000001 /* AbyssTests */,
 				A50000000000000300000001 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		AB50000000000000100000001 /* AbyssTests */ = {
+			isa = PBXGroup;
+			children = (
+				AB20000000000000100000001 /* Helpers.swift */,
+				AB20000000000000100000002 /* ConversationAudioPipelineNovaTests.swift */,
+				AB20000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift */,
+			);
+			path = AbyssTests;
 			sourceTree = "<group>";
 		};
 		A50000000000000100000002 /* Abyss */ = {
@@ -373,6 +411,7 @@
 			isa = PBXGroup;
 			children = (
 				A20000000000000200000001 /* Abyss.app */,
+				AB20000000000000200000002 /* AbyssTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -380,6 +419,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		AB60000000000000100000001 /* AbyssTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AB80000000000000100000002 /* Build configuration list for PBXNativeTarget "AbyssTests" */;
+			buildPhases = (
+				AB70000000000000100000001 /* Sources */,
+				AB40000000000000100000001 /* Frameworks */,
+				AB70000000000000100000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ABF0000000000000100000001 /* PBXTargetDependency */,
+			);
+			name = AbyssTests;
+			packageProductDependencies = (
+			);
+			productName = AbyssTests;
+			productReference = AB20000000000000200000002 /* AbyssTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		A60000000000000100000001 /* Abyss */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A80000000000000100000002 /* Build configuration list for PBXNativeTarget "Abyss" */;
@@ -428,11 +487,19 @@
 			projectRoot = "";
 			targets = (
 				A60000000000000100000001 /* Abyss */,
+				AB60000000000000100000001 /* AbyssTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		AB70000000000000100000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A70000000000000100000002 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -470,6 +537,16 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		AB70000000000000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AB10000000000000100000001 /* Helpers.swift in Sources */,
+				AB10000000000000100000002 /* ConversationAudioPipelineNovaTests.swift in Sources */,
+				AB10000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A70000000000000100000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -558,7 +635,63 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		ABF0000000000000100000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A60000000000000100000001 /* Abyss */;
+			targetProxy = ABE0000000000000100000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		ABA0000000000000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyssTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Abyss.app/Abyss";
+			};
+			name = Debug;
+		};
+		ABA0000000000000100000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyssTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Abyss.app/Abyss";
+			};
+			name = Release;
+		};
 		AA0000000000000100000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -668,7 +801,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = 8H757N372W;
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -681,7 +814,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyss;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -696,7 +829,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_ASSET_PATHS = "";
-				DEVELOPMENT_TEAM = 8H757N372W;
+				DEVELOPMENT_TEAM = 6Y7R3U7A27;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Abyss/Info.plist;
@@ -709,7 +842,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.agarwalaarush.abyss;
+				PRODUCT_BUNDLE_IDENTIFIER = com.bentontameling.abyss;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -720,6 +853,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		AB80000000000000100000002 /* Build configuration list for PBXNativeTarget "AbyssTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ABA0000000000000100000001 /* Debug */,
+				ABA0000000000000100000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		A80000000000000100000001 /* Build configuration list for PBXProject "Abyss" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

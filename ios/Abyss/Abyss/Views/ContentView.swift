@@ -1,5 +1,16 @@
 import SwiftUI
 
+func shouldShowInterruptButton(
+    recordingMode: RecordingMode,
+    appState: AppState,
+    isTTSSpeaking: Bool
+) -> Bool {
+    if recordingMode == .vadAuto {
+        return appState == .speaking
+    }
+    return appState == .speaking || isTTSSpeaking
+}
+
 struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
     @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
@@ -88,13 +99,17 @@ struct ContentView: View {
                         bridgePairingMessage: vm.bridgePairingMessage,
                         onPairComputer: { code, deviceName in
                             vm.requestBridgePairing(pairingCode: code, deviceName: deviceName)
+                        },
+                        onSetWorkspaceOverride: { deviceId, path in
+                            vm.setWorkspaceOverride(deviceId: deviceId, path: path)
                         }
                     )
                 } else {
                     SettingsView(
                         pairedBridgeDevices: [],
                         bridgePairingMessage: nil,
-                        onPairComputer: nil
+                        onPairComputer: nil,
+                        onSetWorkspaceOverride: nil
                     )
                 }
             }
@@ -405,7 +420,11 @@ private struct ChatContentView: View {
             HStack(alignment: .center, spacing: UIConstants.actionBarSpacing) {
                 MicButton(
                     isMuted: viewModel.isMuted,
-                    isSpeaking: viewModel.appState == .speaking || viewModel.isTTSSpeaking,
+                    isSpeaking: shouldShowInterruptButton(
+                        recordingMode: recordingMode,
+                        appState: viewModel.appState,
+                        isTTSSpeaking: viewModel.isTTSSpeaking
+                    ),
                     isTypingMode: $isTypingMode,
                     typedText: $typedMessage,
                     recordingMode: recordingMode,
