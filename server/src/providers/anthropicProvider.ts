@@ -217,6 +217,7 @@ export class AnthropicProvider implements ModelProvider {
       "When the user asks about their classes or courses, call canvas_courses first to discover course IDs, then use those IDs for canvas_assignments, canvas_grades, or canvas_announcements.",
       "If canvas tools are NOT available but canvas_authenticate IS available, call canvas_authenticate when the user asks about coursework — this opens the settings screen on their device.",
       "Never use cursor_agent_spawn or agent_spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail_*, calendar_*, canvas_*).",
+      "Never call gmail_authenticate or canvas_authenticate more than once per conversation turn. If the tool returns that the user needs to authenticate, tell the user and stop — do not retry.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {

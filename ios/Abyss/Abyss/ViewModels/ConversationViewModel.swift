@@ -272,6 +272,21 @@ final class ConversationViewModel: ObservableObject {
                 await self.configureConductorClient(forceReconnect: true)
             }
         ))
+
+        // When the user connects Canvas in Settings, reconnect the WebSocket
+        // so the server receives the new token and exposes real Canvas tools.
+        manager.$isConnected
+            .dropFirst()
+            .removeDuplicates()
+            .filter { $0 == true }
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                Task {
+                    await self.configureConductorClient(forceReconnect: true)
+                }
+            }
+            .store(in: &cancellables)
     }
 
     func toggleEmailCardExpanded(cardID: UUID) {

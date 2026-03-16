@@ -141,6 +141,7 @@ export class BedrockNovaProvider implements ModelProvider {
       "When the user asks about their classes or courses, call canvas.courses first to discover course IDs, then use those IDs for canvas.assignments, canvas.grades, or canvas.announcements.",
       "If canvas tools are NOT available but canvas.authenticate IS available, call canvas.authenticate when the user asks about coursework — this opens the settings screen on their device.",
       "Never use cursor.agent.spawn or agent.spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail.*, calendar.*, canvas.*).",
+      "Never call gmail.authenticate or canvas.authenticate more than once per conversation turn. If the tool returns that the user needs to authenticate, tell the user and stop — do not retry.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {
