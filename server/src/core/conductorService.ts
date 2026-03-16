@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 
 import { CursorClient } from "../integrations/cursorClient.js";
 import { GmailClient } from "../integrations/gmailClient.js";
+import { GitHubClient } from "../integrations/githubClient.js";
 import {
   isTerminalAgentStatus,
   normalizeMode,
@@ -35,6 +36,7 @@ export interface ConductorServiceConfig {
 export interface ConductorServiceDependencies {
   cursorClient?: CursorClient;
   gmailClient?: GmailClient;
+  githubClient?: GitHubClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
@@ -510,6 +512,132 @@ const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
   },
 ];
 
+const SERVER_GITHUB_TOOLS: ToolDefinition[] = [
+  {
+    name: "github.repos.list",
+    description:
+      "List GitHub repositories accessible to the authenticated user. Use this before other GitHub tools when the exact owner/repo string is unknown. Never guess a repository name when this tool is available.",
+    input_schema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max results to return (default 20, max 100)." },
+      },
+    },
+  },
+  {
+    name: "github.pr.list",
+    description:
+      "List the user's pull requests. Pass repo in owner/repo format when the user names a repo; otherwise omit it to search across repos for PRs authored by the user.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        state: { type: "string", description: "'open' (default), 'closed', or 'all'." },
+        limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+      },
+    },
+  },
+  {
+    name: "github.pr.get",
+    description:
+      "Get details for a specific pull request, including branches, file change counts, mergeability, and review state.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        prNumber: { type: "number", description: "Pull request number." },
+      },
+      required: ["repo", "prNumber"],
+    },
+  },
+  {
+    name: "github.pr.reviews",
+    description:
+      "Summarize reviews and inline review comments on a pull request. Use when the user asks what feedback or approvals a PR has received.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        prNumber: { type: "number", description: "Pull request number." },
+      },
+      required: ["repo", "prNumber"],
+    },
+  },
+  {
+    name: "github.actions.status",
+    description:
+      "Get recent GitHub Actions status for a repository, branch, or pull request. Use this for CI questions.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        branch: { type: "string", description: "Branch name to inspect." },
+        prNumber: { type: "number", description: "Optional pull request number if branch is unknown." },
+      },
+      required: ["repo"],
+    },
+  },
+  {
+    name: "github.issues.list",
+    description:
+      "List GitHub issues. Pass repo when known; otherwise omit it to search globally. If the user asks for issues assigned to them, set assignee to 'me'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        state: { type: "string", description: "'open' (default) or 'closed'." },
+        assignee: { type: "string", description: "Use 'me' for the authenticated user or pass a GitHub login." },
+        limit: { type: "number", description: "Max results to return (default 10, max 50)." },
+      },
+    },
+  },
+  {
+    name: "github.pr.create",
+    description:
+      "Create a pull request. IMPORTANT: You MUST present the repo, title, head branch, base branch, and body to the user and get explicit confirmation before calling this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        title: { type: "string", description: "Pull request title." },
+        body: { type: "string", description: "Pull request body (optional)." },
+        head: { type: "string", description: "Source branch name." },
+        base: { type: "string", description: "Target branch name (optional)." },
+      },
+      required: ["repo", "title", "head"],
+    },
+  },
+  {
+    name: "github.pr.merge",
+    description:
+      "Merge a pull request. IMPORTANT: You MUST confirm the repo, PR number, and merge method with the user before calling this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        prNumber: { type: "number", description: "Pull request number." },
+        mergeMethod: { type: "string", description: "'merge', 'squash', or 'rebase'." },
+      },
+      required: ["repo", "prNumber"],
+    },
+  },
+  {
+    name: "github.issues.create",
+    description:
+      "Create a GitHub issue. IMPORTANT: You MUST present the repo, title, body, and labels to the user and get explicit confirmation before calling this tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        repo: { type: "string", description: "GitHub repository in owner/repo format." },
+        title: { type: "string", description: "Issue title." },
+        body: { type: "string", description: "Issue body (optional)." },
+        labels: { type: "array", description: "Optional list of labels." },
+      },
+      required: ["repo", "title"],
+    },
+  },
+];
+
 const WEBHOOK_PENDING_TTL_MS = 10 * 60_000;
 
 function waitForToolResult(
@@ -537,6 +665,7 @@ export class ConductorService {
   private readonly sessions: SessionStore;
   private readonly cursorClient: CursorClient;
   private readonly gmailClient?: GmailClient;
+  private readonly githubClient?: GitHubClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
@@ -554,6 +683,7 @@ export class ConductorService {
     );
     this.cursorClient = dependencies.cursorClient ?? new CursorClient({});
     this.gmailClient = dependencies.gmailClient;
+    this.githubClient = dependencies.githubClient;
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -818,6 +948,12 @@ export class ConductorService {
         : SERVER_BRIDGE_TOOLS;
       tools.push(...bridgeTools);
     }
+    if (this.githubClient) {
+      const session = this.sessions.getOrCreate(sessionId);
+      if (session.githubToken) {
+        tools.push(...SERVER_GITHUB_TOOLS);
+      }
+    }
     if (this.gmailClient?.isConfigured()) {
       const session = this.sessions.getOrCreate(sessionId);
       if (session.gmailAccessToken) {
@@ -845,6 +981,10 @@ export class ConductorService {
 
     if (toolName.startsWith("gmail.") && toolName !== "gmail.authenticate") {
       return true;
+    }
+
+    if (toolName.startsWith("github.")) {
+      return Boolean(this.githubClient);
     }
 
     if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
@@ -1510,6 +1650,155 @@ export class ConductorService {
           const cc = stringFromRecord(args, "cc");
           const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
           return { result: stableJSONStringify(replyResult), error: null };
+        }
+
+        case "github.repos.list": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const limit = typeof args.limit === "number" ? args.limit : undefined;
+          const repositories = await this.githubClient.listRepos(session, { limit });
+          return {
+            result: stableJSONStringify({
+              repositories,
+              count: repositories.length,
+            }),
+            error: null,
+          };
+        }
+
+        case "github.pr.list": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const stateRaw = stringFromRecord(args, "state");
+          const state = stateRaw === "closed" || stateRaw === "all" ? stateRaw : "open";
+          const limit = typeof args.limit === "number" ? args.limit : undefined;
+          const pullRequests = await this.githubClient.listPRs(session, { repo, state, limit });
+          return {
+            result: stableJSONStringify({
+              pullRequests,
+              count: pullRequests.length,
+            }),
+            error: null,
+          };
+        }
+
+        case "github.pr.get": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          if (!repo || !prNumber || prNumber <= 0) {
+            return { result: null, error: "github_pr_get_requires_repo_and_prNumber" };
+          }
+          const pullRequest = await this.githubClient.getPR(session, { repo, prNumber });
+          return { result: stableJSONStringify(pullRequest), error: null };
+        }
+
+        case "github.pr.reviews": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          if (!repo || !prNumber || prNumber <= 0) {
+            return { result: null, error: "github_pr_reviews_requires_repo_and_prNumber" };
+          }
+          const reviews = await this.githubClient.getReviews(session, { repo, prNumber });
+          return { result: stableJSONStringify(reviews), error: null };
+        }
+
+        case "github.actions.status": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          if (!repo) {
+            return { result: null, error: "github_actions_status_requires_repo" };
+          }
+          const branch = stringFromRecord(args, "branch");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          const status = await this.githubClient.getActionsStatus(session, {
+            repo,
+            branch,
+            ...(prNumber && prNumber > 0 ? { prNumber } : {}),
+          });
+          return { result: stableJSONStringify(status), error: null };
+        }
+
+        case "github.issues.list": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const stateRaw = stringFromRecord(args, "state");
+          const state = stateRaw === "closed" ? "closed" : "open";
+          const assignee = stringFromRecord(args, "assignee");
+          const limit = typeof args.limit === "number" ? args.limit : undefined;
+          const issues = await this.githubClient.listIssues(session, {
+            repo,
+            state,
+            ...(assignee ? { assignee } : {}),
+            limit,
+          });
+          return {
+            result: stableJSONStringify({
+              issues,
+              count: issues.length,
+            }),
+            error: null,
+          };
+        }
+
+        case "github.pr.create": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const title = stringFromRecord(args, "title");
+          const head = stringFromRecord(args, "head");
+          if (!repo || !title || !head) {
+            return { result: null, error: "github_pr_create_requires_repo_title_head" };
+          }
+          const body = stringFromRecord(args, "body");
+          const base = stringFromRecord(args, "base");
+          const pullRequest = await this.githubClient.createPR(session, { repo, title, head, body, base });
+          return { result: stableJSONStringify(pullRequest), error: null };
+        }
+
+        case "github.pr.merge": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const prNumber = typeof args.prNumber === "number" ? Math.trunc(args.prNumber) : undefined;
+          if (!repo || !prNumber || prNumber <= 0) {
+            return { result: null, error: "github_pr_merge_requires_repo_and_prNumber" };
+          }
+          const mergeMethodRaw = stringFromRecord(args, "mergeMethod");
+          const mergeMethod = mergeMethodRaw === "squash" || mergeMethodRaw === "rebase" ? mergeMethodRaw : "merge";
+          const mergeResult = await this.githubClient.mergePR(session, { repo, prNumber, mergeMethod });
+          return { result: stableJSONStringify(mergeResult), error: null };
+        }
+
+        case "github.issues.create": {
+          if (!this.githubClient) {
+            return { result: null, error: "github_not_configured" };
+          }
+          const repo = stringFromRecord(args, "repo");
+          const title = stringFromRecord(args, "title");
+          if (!repo || !title) {
+            return { result: null, error: "github_issue_create_requires_repo_and_title" };
+          }
+          const body = stringFromRecord(args, "body");
+          const labels = Array.isArray(args.labels)
+            ? args.labels.filter((label): label is string => typeof label === "string" && label.trim().length > 0)
+            : undefined;
+          const issue = await this.githubClient.createIssue(session, { repo, title, body, labels });
+          return { result: stableJSONStringify(issue), error: null };
         }
 
         default:

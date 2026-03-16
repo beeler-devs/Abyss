@@ -13,6 +13,7 @@ import { CursorClient } from "./integrations/cursorClient.js";
 import { verifyCursorWebhookSignature } from "./integrations/cursorWebhook.js";
 import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
+import { GitHubClient } from "./integrations/githubClient.js";
 import { buildProvider } from "./providers/index.js";
 import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
 import { VoiceProvider } from "./voice/types.js";
@@ -102,6 +103,7 @@ const conductor = new ConductorService(
       googleClientId: GOOGLE_CLIENT_ID,
       googleClientSecret: GOOGLE_CLIENT_SECRET,
     }),
+    githubClient: new GitHubClient(),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
       let devices = bridgeState
