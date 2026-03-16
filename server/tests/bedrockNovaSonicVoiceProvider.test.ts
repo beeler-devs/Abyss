@@ -267,10 +267,10 @@ test("nova-sonic emits partial convo.appendMessage per sentence, finalizes on au
   // Partial messages should accumulate (no final yet)
   await waitFor(() => findToolCalls(harness.emitted, "convo.appendMessage").length === 2);
   const partials = findToolCalls(harness.emitted, "convo.appendMessage");
-  assert.equal(JSON.parse(partials[0]!.payload.arguments).isPartial, true);
-  assert.equal(JSON.parse(partials[0]!.payload.arguments).text, "First sentence.");
-  assert.equal(JSON.parse(partials[1]!.payload.arguments).isPartial, true);
-  assert.equal(JSON.parse(partials[1]!.payload.arguments).text, "First sentence. Second sentence.");
+  assert.equal(JSON.parse(partials[0]!.payload.arguments as string).isPartial, true);
+  assert.equal(JSON.parse(partials[0]!.payload.arguments as string).text, "First sentence.");
+  assert.equal(JSON.parse(partials[1]!.payload.arguments as string).isPartial, true);
+  assert.equal(JSON.parse(partials[1]!.payload.arguments as string).text, "First sentence. Second sentence.");
   assert.equal(eventsOfType(harness.emitted, "assistant.speech.final").length, 0);
 
   // Audio content ends — triggers final message and speech.final
@@ -282,8 +282,8 @@ test("nova-sonic emits partial convo.appendMessage per sentence, finalizes on au
 
   await waitFor(() => eventsOfType(harness.emitted, "assistant.speech.final").length === 1);
   const finalAppend = findToolCalls(harness.emitted, "convo.appendMessage").at(-1)!;
-  assert.equal(JSON.parse(finalAppend.payload.arguments).isPartial, false);
-  assert.equal(JSON.parse(finalAppend.payload.arguments).text, "First sentence. Second sentence.");
+  assert.equal(JSON.parse(finalAppend.payload.arguments as string).isPartial, false);
+  assert.equal(JSON.parse(finalAppend.payload.arguments as string).text, "First sentence. Second sentence.");
   assert.equal(eventsOfType(harness.emitted, "assistant.speech.final")[0]?.payload.text, "First sentence. Second sentence.");
 });
 

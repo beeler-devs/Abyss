@@ -238,6 +238,7 @@ export class AnthropicProvider implements ModelProvider {
           "For gmail_search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
           "CRITICAL: Before calling gmail_send or gmail_reply, you MUST present the full draft (To, Subject, Body) to the user and wait for explicit confirmation. Never send or reply without the user saying yes.",
           "If gmail_authenticate is available, call it when the user asks about email but hasn't connected Gmail yet — this will pop up the sign-in screen on their device.",
+          "If bridge_claude_run is available and the user asks to run Claude Code, use Claude Code, or mentions 'cloud code' (likely a speech-to-text mishearing of 'Claude Code'), call bridge_claude_run.",
         ].join(" "),
         ...(withTools ? { tools: safeTools } : {}),
         messages,
