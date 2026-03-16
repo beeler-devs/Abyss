@@ -1277,7 +1277,12 @@ export class ConductorService {
       tools.push(...SERVER_CURSOR_TOOLS);
     }
     if (this.bridgeToolExecutor) {
-      const bridgeTools = this.bridgeToolAvailability
+      const session = this.sessions.get(sessionId);
+      // For live (Nova Sonic) sessions, always include all bridge tools — the bridge
+      // typically connects a few seconds after the iOS app, but tool config is baked
+      // into the stream at startup and can't be updated mid-session.
+      const skipAvailabilityCheck = session?.isLiveSession;
+      const bridgeTools = (this.bridgeToolAvailability && !skipAvailabilityCheck)
         ? SERVER_BRIDGE_TOOLS.filter((tool) => this.bridgeToolAvailability!(sessionId, tool.name))
         : SERVER_BRIDGE_TOOLS;
       tools.push(...bridgeTools);
