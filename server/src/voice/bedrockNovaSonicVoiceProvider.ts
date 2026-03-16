@@ -18,6 +18,7 @@ export interface BedrockNovaSonicVoiceProviderConfig {
   region: string;
   voiceId: string;
   enableTools?: boolean;
+  assistantTurnFinalizeDelayMs?: number;
 }
 
 interface BidirectionalClientLike {
@@ -55,6 +56,9 @@ interface SonicSession {
   /** Accumulates all FINAL assistant text sentences within a single response turn. */
   accumulatedAssistantText: string;
   liveResponseId: string | null;
+  pendingAssistantTurnFinalizeTimer: ReturnType<typeof setTimeout> | null;
+  pendingAssistantTurnFinalizeResponseId: string | null;
+  toolExecutionInFlight: boolean;
 }
 
 interface SonicEventEnvelope {
@@ -85,6 +89,7 @@ function parseAdditionalModelFields(value: unknown): Record<string, unknown> {
 }
 
 const VOICE_PIPELINE_TOOL_PREFIXES = ["stt.", "tts.", "convo."] as const;
+const DEFAULT_ASSISTANT_TURN_FINALIZE_DELAY_MS = 500;
 
 /** Sanitize tool name for Nova Sonic — only [a-zA-Z0-9_] allowed. */
 function sanitizeToolName(name: string): string {
@@ -134,6 +139,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
   private readonly sessions = new Map<string, SonicSession>();
   private readonly encoder = new TextEncoder();
   private readonly decoder = new TextDecoder();
+  private readonly assistantTurnFinalizeDelayMs: number;
 
   constructor(config: BedrockNovaSonicVoiceProviderConfig, client?: BidirectionalClientLike) {
     this.config = config;
@@ -146,6 +152,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         maxConcurrentStreams: 20,
       }),
     });
+    this.assistantTurnFinalizeDelayMs = Math.max(
+      0,
+      config.assistantTurnFinalizeDelayMs ?? DEFAULT_ASSISTANT_TURN_FINALIZE_DELAY_MS,
+    );
   }
 
   async startStream(sessionId: string, context: VoiceProviderContext): Promise<void> {
@@ -177,6 +187,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       toolNameMap: new Map(),
       accumulatedAssistantText: "",
       liveResponseId: null,
+      pendingAssistantTurnFinalizeTimer: null,
+      pendingAssistantTurnFinalizeResponseId: null,
+      toolExecutionInFlight: false,
     };
     this.sessions.set(sessionId, session);
 
@@ -386,15 +399,35 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
   }
 
-  private finalizeAccumulatedAssistantText(session: SonicSession): void {
-    if (!session.accumulatedAssistantText) {
-      return;
+  private cancelPendingAssistantTurnFinalize(session: SonicSession): void {
+    if (session.pendingAssistantTurnFinalizeTimer) {
+      clearTimeout(session.pendingAssistantTurnFinalizeTimer);
+      session.pendingAssistantTurnFinalizeTimer = null;
+    }
+    session.pendingAssistantTurnFinalizeResponseId = null;
+  }
+
+  private noteAssistantActivity(session: SonicSession): void {
+    this.cancelPendingAssistantTurnFinalize(session);
+  }
+
+  private hasOpenAssistantTurn(session: SonicSession): boolean {
+    return session.accumulatedAssistantText.trim().length > 0
+      || session.sawAssistantAudio
+      || session.liveResponseId !== null;
+  }
+
+  private finalizeAccumulatedAssistantText(session: SonicSession): boolean {
+    const text = session.accumulatedAssistantText.trim();
+    if (!text) {
+      session.accumulatedAssistantText = "";
+      return false;
     }
 
     const liveResponseId = this.ensureLiveResponseId(session);
 
     session.context.emit(makeEvent("assistant.speech.final", session.sessionId, {
-      text: session.accumulatedAssistantText,
+      text,
       liveResponseId,
     }));
     session.context.emit(makeEvent("tool.call", session.sessionId, {
@@ -402,13 +435,87 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       name: "convo.appendMessage",
       arguments: JSON.stringify({
         role: "assistant",
-        text: session.accumulatedAssistantText,
+        text,
         isPartial: false,
         liveResponseId,
       }),
     }));
     session.accumulatedAssistantText = "";
     session.liveResponseId = null;
+    return true;
+  }
+
+  private finishAssistantTurn(
+    session: SonicSession,
+    options: {
+      emitIdle: boolean;
+      reason: "completion_end" | "audio_end_fallback" | "user_turn_flush";
+    },
+  ): void {
+    this.cancelPendingAssistantTurnFinalize(session);
+
+    if (!this.hasOpenAssistantTurn(session)) {
+      return;
+    }
+
+    this.finalizeAccumulatedAssistantText(session);
+
+    if (options.emitIdle) {
+      session.context.emit(makeEvent("tool.call", session.sessionId, {
+        callId: crypto.randomUUID(),
+        name: "convo.setState",
+        arguments: JSON.stringify({ state: "idle" }),
+      }));
+    }
+
+    session.sawAssistantAudio = false;
+    session.liveResponseId = null;
+  }
+
+  private scheduleAssistantTurnFinalize(session: SonicSession): void {
+    this.cancelPendingAssistantTurnFinalize(session);
+
+    if (session.closed) {
+      return;
+    }
+    if (!session.accumulatedAssistantText.trim()) {
+      return;
+    }
+    if (session.pendingToolUse || session.toolExecutionInFlight) {
+      return;
+    }
+
+    const liveResponseId = session.liveResponseId;
+    if (!liveResponseId) {
+      return;
+    }
+
+    session.pendingAssistantTurnFinalizeResponseId = liveResponseId;
+    session.pendingAssistantTurnFinalizeTimer = setTimeout(() => {
+      session.pendingAssistantTurnFinalizeTimer = null;
+
+      if (session.closed) {
+        session.pendingAssistantTurnFinalizeResponseId = null;
+        return;
+      }
+      if (session.pendingAssistantTurnFinalizeResponseId !== liveResponseId) {
+        session.pendingAssistantTurnFinalizeResponseId = null;
+        return;
+      }
+      if (session.liveResponseId !== liveResponseId) {
+        session.pendingAssistantTurnFinalizeResponseId = null;
+        return;
+      }
+      if (session.pendingToolUse || session.toolExecutionInFlight) {
+        session.pendingAssistantTurnFinalizeResponseId = null;
+        return;
+      }
+
+      this.finishAssistantTurn(session, {
+        emitIdle: true,
+        reason: "audio_end_fallback",
+      });
+    }, this.assistantTurnFinalizeDelayMs);
   }
 
   private handleOutputEvent(session: SonicSession, raw: string): void {
@@ -442,6 +549,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         generationStage: asString(metadata.generationStage),
         text: "",
       });
+      if ((asString(payload.role) ?? "ASSISTANT") === "ASSISTANT") {
+        this.noteAssistantActivity(session);
+      }
       return;
     }
 
@@ -458,6 +568,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       }
       info.text += content;
       if (info.role === "ASSISTANT") {
+        this.noteAssistantActivity(session);
         this.ensureLiveResponseId(session);
       }
 
@@ -480,6 +591,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (!audio) {
         return;
       }
+      this.noteAssistantActivity(session);
       if (!session.sawAssistantAudio) {
         session.sawAssistantAudio = true;
         session.context.emit(makeEvent("tool.call", session.sessionId, {
@@ -515,6 +627,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       const toolName = session.toolNameMap.get(sanitizedName) ?? sanitizedName;
 
       // Store tool use data — execution happens on contentEnd with type "TOOL"
+      this.cancelPendingAssistantTurnFinalize(session);
       session.pendingToolUse = { toolName, toolUseId, content };
       return;
     }
@@ -526,6 +639,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
       // Handle tool use completion — execute the pending tool call
       if (contentType === "TOOL" && asString(payload?.stopReason) === "TOOL_USE" && session.pendingToolUse) {
+        this.cancelPendingAssistantTurnFinalize(session);
         const pending = session.pendingToolUse;
         session.pendingToolUse = null;
 
@@ -563,7 +677,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (info.role === "USER" && info.type === "TEXT" && info.text.trim().length > 0) {
         // Finalize any pending assistant text before emitting the user message,
         // so the iOS partial-replacement logic sees isPartial:false before the user message.
-        this.finalizeAccumulatedAssistantText(session);
+        this.finishAssistantTurn(session, {
+          emitIdle: false,
+          reason: "user_turn_flush",
+        });
 
         session.context.emit(makeEvent("user.audio.transcript.final", session.sessionId, {
           text: info.text.trim(),
@@ -620,6 +737,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           ...(session.liveResponseId ? { liveResponseId: session.liveResponseId } : {}),
         }));
         session.sawAssistantAudio = true;
+        this.scheduleAssistantTurnFinalize(session);
       }
       return;
     }
@@ -636,13 +754,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       }
 
       if (stopReason === "END_TURN") {
-        this.finalizeAccumulatedAssistantText(session);
-        session.context.emit(makeEvent("tool.call", session.sessionId, {
-          callId: crypto.randomUUID(),
-          name: "convo.setState",
-          arguments: JSON.stringify({ state: "idle" }),
-        }));
-        session.sawAssistantAudio = false;
+        this.finishAssistantTurn(session, {
+          emitIdle: true,
+          reason: "completion_end",
+        });
       }
     }
   }
@@ -674,8 +789,10 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
     const liveResponseId = session.liveResponseId;
     session.closed = true;
+    this.cancelPendingAssistantTurnFinalize(session);
     session.sawAssistantAudio = false;
     session.pendingToolUse = null;
+    session.toolExecutionInFlight = false;
     session.contents.clear();
     session.accumulatedAssistantText = "";
     session.liveResponseId = null;
@@ -735,40 +852,49 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
-    const result = await session.context.executeTool(session.sessionId, toolCall, session.context.emit);
-    const contentName = `tool-${crypto.randomUUID()}`;
+    session.toolExecutionInFlight = true;
+    try {
+      const result = await session.context.executeTool(session.sessionId, toolCall, session.context.emit);
+      if (session.closed) {
+        return;
+      }
 
-    this.sendEvent(session, {
-      contentStart: {
-        promptName: session.promptName,
-        contentName,
-        interactive: false,
-        type: "TOOL",
-        role: "TOOL",
-        toolResultInputConfiguration: {
-          toolUseId: toolCall.id,
-          type: "TEXT",
-          textInputConfiguration: {
-            mediaType: "text/plain",
+      const contentName = `tool-${crypto.randomUUID()}`;
+
+      this.sendEvent(session, {
+        contentStart: {
+          promptName: session.promptName,
+          contentName,
+          interactive: false,
+          type: "TOOL",
+          role: "TOOL",
+          toolResultInputConfiguration: {
+            toolUseId: toolCall.id,
+            type: "TEXT",
+            textInputConfiguration: {
+              mediaType: "text/plain",
+            },
           },
         },
-      },
-    });
-    this.sendEvent(session, {
-      toolResult: {
-        promptName: session.promptName,
-        contentName,
-        content: result.error
-          ? JSON.stringify({ error: result.error })
-          : (result.result ?? "{}"),
-      },
-    });
-    this.sendEvent(session, {
-      contentEnd: {
-        promptName: session.promptName,
-        contentName,
-      },
-    });
+      });
+      this.sendEvent(session, {
+        toolResult: {
+          promptName: session.promptName,
+          contentName,
+          content: result.error
+            ? JSON.stringify({ error: result.error })
+            : (result.result ?? "{}"),
+        },
+      });
+      this.sendEvent(session, {
+        contentEnd: {
+          promptName: session.promptName,
+          contentName,
+        },
+      });
+    } finally {
+      session.toolExecutionInFlight = false;
+    }
   }
 
   private sendEvent(session: SonicSession, event: Record<string, unknown>): void {

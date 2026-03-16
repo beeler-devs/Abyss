@@ -313,6 +313,97 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
         XCTAssertEqual(viewModel.appState, .listening)
     }
 
+    func testLiveFinalAppendFinalizesExistingDraftAndClearsLiveOverlay() async {
+        let mockConductor = MockConductorClient()
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: MockSpeechTranscriber(),
+            tts: MockTextToSpeech(),
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.setChatActive(true)
+        await waitForCondition { viewModel.appState == .listening }
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.setState",
+            arguments: #"{"state":"thinking"}"#,
+            callId: "state-thinking-live-final",
+            sessionId: "session-test"
+        ))
+        await waitForCondition { viewModel.appState == .thinking }
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.appendMessage",
+            arguments: encodeAppendArguments(
+                role: "assistant",
+                text: "Draft reply",
+                isPartial: true,
+                liveResponseId: "live-final"
+            ),
+            callId: "append-partial-live-final",
+            sessionId: "session-test"
+        ))
+        await waitForCondition {
+            viewModel.messages.count == 1 && viewModel.messages.last?.isPartial == true
+        }
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.appendMessage",
+            arguments: encodeAppendArguments(
+                role: "assistant",
+                text: "Draft reply",
+                isPartial: false,
+                liveResponseId: "live-final"
+            ),
+            callId: "append-final-live-final",
+            sessionId: "session-test"
+        ))
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.setState",
+            arguments: #"{"state":"idle"}"#,
+            callId: "state-idle-live-final",
+            sessionId: "session-test"
+        ))
+
+        await waitForCondition {
+            viewModel.messages.count == 1
+                && viewModel.messages.last?.isPartial == false
+                && viewModel.assistantPartialSpeech.isEmpty
+                && viewModel.appState == .listening
+        }
+
+        XCTAssertEqual(viewModel.messages.last?.text, "Draft reply")
+        XCTAssertEqual(viewModel.messages.last?.liveResponseId, "live-final")
+    }
+
+    func testLiveInterruptButtonIgnoresLocalTTSPublisherState() {
+        XCTAssertFalse(shouldShowInterruptButton(
+            recordingMode: .vadAuto,
+            appState: .idle,
+            isTTSSpeaking: true
+        ))
+        XCTAssertTrue(shouldShowInterruptButton(
+            recordingMode: .vadAuto,
+            appState: .speaking,
+            isTTSSpeaking: false
+        ))
+    }
+
+    func testPTTInterruptButtonStillHonorsLocalTTSPublisherState() {
+        XCTAssertTrue(shouldShowInterruptButton(
+            recordingMode: .pushToTalk,
+            appState: .idle,
+            isTTSSpeaking: true
+        ))
+        XCTAssertTrue(shouldShowInterruptButton(
+            recordingMode: .pushToTalk,
+            appState: .speaking,
+            isTTSSpeaking: false
+        ))
+    }
+
     private func waitForCondition(
         timeoutNanoseconds: UInt64 = 1_000_000_000,
         pollNanoseconds: UInt64 = 20_000_000,

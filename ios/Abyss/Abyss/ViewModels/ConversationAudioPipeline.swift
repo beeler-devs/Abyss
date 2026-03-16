@@ -212,7 +212,12 @@ final class ConversationAudioPipeline: ObservableObject {
         switch effectiveState {
         case .idle:
             await refreshLiveConversationState()
-        case .thinking, .speaking, .error:
+        case .thinking, .speaking:
+            voiceActivityDetector.stopMonitoring()
+            if recordingMode == .pushToTalk && transcriber.isListening && !isStoppingRecording {
+                await stopListeningSilently()
+            }
+        case .error:
             voiceActivityDetector.stopMonitoring()
             if recordingMode == .vadAuto {
                 await stopRemoteVoiceCapture()
@@ -240,10 +245,9 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     private var shouldStreamRemoteVoiceCapture: Bool {
+        // Keep hands-free mode duplex so the server can detect genuine barge-in.
         canRunLiveConversation
             && recordingMode == .vadAuto
-            && appState != .thinking
-            && appState != .speaking
             && appState != .error
     }
 
@@ -520,9 +524,6 @@ final class ConversationAudioPipeline: ObservableObject {
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
         guard recordingMode == .vadAuto else { return }
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
-        if remoteVoiceCapture.isStreaming {
-            await stopRemoteVoiceCapture()
-        }
         do {
             if !remotePlaybackPrepared {
                 try await MainActor.run {

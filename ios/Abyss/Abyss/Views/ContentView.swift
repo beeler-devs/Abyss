@@ -1,5 +1,16 @@
 import SwiftUI
 
+func shouldShowInterruptButton(
+    recordingMode: RecordingMode,
+    appState: AppState,
+    isTTSSpeaking: Bool
+) -> Bool {
+    if recordingMode == .vadAuto {
+        return appState == .speaking
+    }
+    return appState == .speaking || isTTSSpeaking
+}
+
 struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
     @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
@@ -414,7 +425,11 @@ private struct ChatContentView: View {
             HStack(alignment: .center, spacing: UIConstants.actionBarSpacing) {
                 MicButton(
                     isMuted: viewModel.isMuted,
-                    isSpeaking: viewModel.appState == .speaking || viewModel.isTTSSpeaking,
+                    isSpeaking: shouldShowInterruptButton(
+                        recordingMode: recordingMode,
+                        appState: viewModel.appState,
+                        isTTSSpeaking: viewModel.isTTSSpeaking
+                    ),
                     isTypingMode: $isTypingMode,
                     typedText: $typedMessage,
                     recordingMode: recordingMode,
