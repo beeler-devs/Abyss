@@ -469,6 +469,7 @@ private struct PipelineHarness {
 @MainActor
 private final class MockRemoteVoiceCapture: RemoteVoiceCapturing {
     private(set) var isStreaming = false
+    var isAssistantAudioPlaying: Bool = false
     private(set) var appendAssistantAudioCallCount = 0
     private(set) var finishAssistantAudioCallCount = 0
     private(set) var stopAssistantAudioCallCount = 0

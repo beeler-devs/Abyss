@@ -272,12 +272,18 @@ final class ConversationAudioPipeline: ObservableObject {
             guard let self else { return }
             guard self.canRunLiveConversation else { return }
 
-            if self.recordingMode == .vadAuto, self.appState == .speaking {
+            // Trigger bargeIn when assistant audio is active — either the state
+            // is .speaking (audio still being generated) OR the state went to
+            // .idle but buffered audio is still playing from the queue.
+            let shouldBargeIn = self.recordingMode == .vadAuto
+                && (self.appState == .speaking
+                    || (self.appState == .idle && self.remoteVoiceCapture.isAssistantAudioPlaying))
+            if shouldBargeIn {
                 guard !self.handsFreeBargeInInFlight else {
                     AppLogger.audio.debug("[BARGE-IN] VAD speech detected but bargeIn already in flight")
                     return
                 }
-                AppLogger.audio.debug("[BARGE-IN] VAD speech detected during .speaking — triggering bargeIn")
+                AppLogger.audio.debug("[BARGE-IN] VAD speech detected during \(self.appState.rawValue, privacy: .public) — triggering bargeIn")
                 self.handsFreeBargeInInFlight = true
                 Task { @MainActor in
                     defer { self.handsFreeBargeInInFlight = false }
@@ -726,6 +732,7 @@ final class ConversationAudioPipeline: ObservableObject {
 @MainActor
 protocol RemoteVoiceCapturing: AnyObject {
     var isStreaming: Bool { get }
+    var isAssistantAudioPlaying: Bool { get }
     func start(
         onChunk: @escaping (String) -> Void,
         onInputLevel: @escaping (Float) -> Void
@@ -1101,6 +1108,10 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         } catch {
             AppLogger.audio.error("Hands-free assistant playback finish failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    var isAssistantAudioPlaying: Bool {
+        playerNode?.isPlaying ?? false
     }
 
     func stopAssistantAudio() async {
