@@ -64,6 +64,14 @@ struct WorkspaceRecord: Identifiable, Codable, Equatable, Hashable {
     }
 }
 
+enum BridgePermissionPreset: String, CaseIterable, Identifiable {
+    case restricted = "Restricted"
+    case developer  = "Developer"
+    case full       = "Full"
+    case custom     = "Custom"
+    var id: String { rawValue }
+}
+
 @MainActor
 final class BridgeAppModel: ObservableObject {
     @Published var serverURLText: String
@@ -236,6 +244,32 @@ final class BridgeAppModel: ObservableObject {
         }
         persistWorkspaces()
         reconnect()
+    }
+
+    var currentPreset: BridgePermissionPreset {
+        switch (allowExecRun, allowWritesApplyPatch, allowGitPush, allowClaudeRun, allowNovaAct) {
+        case (false, false, false, false, false): return .restricted
+        case (true,  true,  true,  true,  false): return .developer
+        case (true,  true,  true,  true,  true):  return .full
+        default:                                  return .custom
+        }
+    }
+
+    func applyPreset(_ preset: BridgePermissionPreset) {
+        switch preset {
+        case .restricted:
+            allowExecRun = false; allowWritesApplyPatch = false
+            allowGitPush = false; allowClaudeRun = false; allowNovaAct = false
+        case .developer:
+            allowExecRun = true; allowWritesApplyPatch = true
+            allowGitPush = true; allowClaudeRun = true; allowNovaAct = false
+        case .full:
+            allowExecRun = true; allowWritesApplyPatch = true
+            allowGitPush = true; allowClaudeRun = true; allowNovaAct = true
+        case .custom:
+            return
+        }
+        applyPermissions()
     }
 
     func applyPermissions() {
@@ -416,6 +450,26 @@ struct BridgeStatusView: View {
         }
     }
 
+    private func permissionSummary(_ m: BridgeAppModel) -> String {
+        func mark(_ on: Bool) -> String { on ? "✓" : "✗" }
+        return "Shell \(mark(m.allowExecRun))  Writes \(mark(m.allowWritesApplyPatch))  Git \(mark(m.allowGitPush))  Claude \(mark(m.allowClaudeRun))  Nova \(mark(m.allowNovaAct))"
+    }
+
+    private var visiblePresets: [BridgePermissionPreset] {
+        var presets: [BridgePermissionPreset] = [.restricted, .developer, .full]
+        if model.currentPreset == .custom {
+            presets.append(.custom)
+        }
+        return presets
+    }
+
+    private var presetBinding: Binding<BridgePermissionPreset> {
+        Binding(
+            get: { model.currentPreset },
+            set: { model.applyPreset($0) }
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -510,18 +564,70 @@ struct BridgeStatusView: View {
                 }
 
                 Section("Permissions") {
-                    Toggle("Allow command execution", isOn: $model.allowExecRun)
-                        .onChange(of: model.allowExecRun) { model.applyPermissions() }
-                    Toggle("Allow writes / apply patch / git stage+commit", isOn: $model.allowWritesApplyPatch)
-                        .onChange(of: model.allowWritesApplyPatch) { model.applyPermissions() }
-                    Toggle("Allow git push", isOn: $model.allowGitPush)
-                        .onChange(of: model.allowGitPush) { model.applyPermissions() }
-                    Toggle("Require git push confirmation", isOn: $model.requireGitPushConfirmation)
-                        .onChange(of: model.requireGitPushConfirmation) { model.applyPermissions() }
-                    Toggle("Allow Claude Code (bridge.claude.run)", isOn: $model.allowClaudeRun)
-                        .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
-                    Toggle("Allow Nova Act (browser automation)", isOn: $model.allowNovaAct)
+                    Text(permissionSummary(model))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+
+                    Picker("Preset", selection: presetBinding) {
+                        ForEach(visiblePresets) { preset in
+                            Text(preset.rawValue).tag(preset)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+
+                    Section {
+                        Toggle("Allow command execution", isOn: $model.allowExecRun)
+                            .onChange(of: model.allowExecRun) { model.applyPermissions() }
+                    } header: {
+                        Label("Shell", systemImage: "terminal")
+                    }
+
+                    Section {
+                        Toggle("Allow writes / apply patch / git stage+commit",
+                               isOn: $model.allowWritesApplyPatch)
+                            .onChange(of: model.allowWritesApplyPatch) { model.applyPermissions() }
+                    } header: {
+                        Label("Filesystem & Git Writes", systemImage: "folder.badge.gearshape")
+                    }
+
+                    Section {
+                        Toggle("Allow git push", isOn: $model.allowGitPush)
+                            .onChange(of: model.allowGitPush) { model.applyPermissions() }
+
+                        Toggle("Require confirmation before push",
+                               isOn: $model.requireGitPushConfirmation)
+                            .onChange(of: model.requireGitPushConfirmation) { model.applyPermissions() }
+                            .disabled(!model.allowGitPush)
+                            .foregroundStyle(model.allowGitPush ? .primary : .tertiary)
+                            .help(model.allowGitPush ? "" : "Requires: Allow git push")
+                    } header: {
+                        Label("Git Push", systemImage: "arrow.triangle.branch")
+                    }
+
+                    Section {
+                        Toggle("Allow Claude Code (bridge.claude.run)",
+                               isOn: $model.allowClaudeRun)
+                            .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
+
+                        Toggle(isOn: $model.allowNovaAct) {
+                            Label {
+                                HStack(spacing: 6) {
+                                    Text("Allow Nova Act (browser automation)")
+                                    Image(systemName: "exclamationmark.triangle")
+                                        .foregroundStyle(.red.opacity(0.8))
+                                        .imageScale(.small)
+                                }
+                            } icon: {
+                                EmptyView()
+                            }
+                        }
                         .onChange(of: model.allowNovaAct) { model.applyPermissions() }
+                        .help("High-risk: grants full browser automation access")
+                    } header: {
+                        Label("AI & Automation", systemImage: "cpu.fill")
+                    }
                 }
 
                 Section("Active Command") {
