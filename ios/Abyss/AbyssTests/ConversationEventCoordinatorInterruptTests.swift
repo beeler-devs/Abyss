@@ -21,6 +21,24 @@ final class ConversationEventCoordinatorInterruptTests: XCTestCase {
         XCTAssertTrue(harness.conversationStore.messages.last?.isPartial == true)
     }
 
+    func testLocalInterruptSuppressesTrailingAssistantEventsForActiveResponse() async {
+        let harness = makeHarness()
+        await seedAssistantDraft(harness, liveResponseId: "live-1", text: "Draft reply")
+
+        harness.eventBus.emit(Event.audioOutputInterrupted(
+            "local_speech_start",
+            sessionId: "session-test"
+        ))
+
+        await harness.coordinator.handleInboundEvent(
+            Event.speechPartial("continued output", liveResponseId: "live-1", sessionId: "session-test")
+        )
+
+        XCTAssertEqual(harness.conversationStore.messages.count, 1)
+        XCTAssertEqual(harness.conversationStore.messages.last?.text, "Draft reply")
+        XCTAssertEqual(harness.coordinator.assistantPartialSpeech, "")
+    }
+
     func testHandsFreeEchoTranscriptIsDroppedAndKeepsAssistantDraft() async {
         let harness = makeHarness()
         await seedAssistantDraft(harness, liveResponseId: "live-1", text: "Draft reply")
@@ -68,6 +86,29 @@ final class ConversationEventCoordinatorInterruptTests: XCTestCase {
                 if case .userAudioTranscriptFinal = $0.kind { return true }
                 return false
             })
+        )
+    }
+
+    func testLocalInterruptEchoTranscriptKeepsAssistantDraft() async {
+        let harness = makeHarness()
+        await seedAssistantDraft(harness, liveResponseId: "live-1", text: "Draft reply")
+
+        harness.eventBus.emit(Event.audioOutputInterrupted(
+            "local_speech_start",
+            sessionId: "session-test"
+        ))
+        await harness.coordinator.handleInboundEvent(
+            Event.transcriptFinal("Draft reply", sessionId: "session-test")
+        )
+
+        XCTAssertEqual(harness.conversationStore.messages.count, 1)
+        XCTAssertEqual(harness.conversationStore.messages.last?.text, "Draft reply")
+        XCTAssertEqual(
+            harness.eventBus.events.contains(where: {
+                if case .userAudioTranscriptFinal = $0.kind { return true }
+                return false
+            }),
+            false
         )
     }
 
@@ -164,7 +205,10 @@ private struct CoordinatorHarness {
 private final class CoordinatorRemoteVoiceCapture: RemoteVoiceCapturing {
     var isStreaming: Bool = false
 
-    func start(onChunk: @escaping (String) -> Void) async throws {
+    func start(
+        onChunk: @escaping (String) -> Void,
+        onInputLevel: @escaping (Float) -> Void
+    ) async throws {
         isStreaming = true
     }
 
