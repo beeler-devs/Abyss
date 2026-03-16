@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Security
 import BridgeCore
 
 @main
@@ -93,6 +94,8 @@ final class BridgeAppModel: ObservableObject {
     @Published var requireGitPushConfirmation = true
     @Published var allowClaudeRun = false
     @Published var allowNovaAct = false
+    @Published var showNovaActSetup = false
+    @Published var novaActApiKey: String = ""
 
     private var bridgeCore: BridgeCore?
     private let defaults = UserDefaults.standard
@@ -111,6 +114,9 @@ final class BridgeAppModel: ObservableObject {
     private static let requireGitPushConfirmationKey = "bridge.permissions.requireGitPushConfirmation"
     private static let allowClaudeRunKey = "bridge.permissions.allowClaudeRun"
     private static let allowNovaActKey = "bridge.permissions.allowNovaAct"
+
+    private static let keychainService = "app.abyss.bridge"
+    private static let novaActApiKeyAccount = "nova_act_api_key"
 
     private let stableDeviceId: String
 
@@ -133,6 +139,7 @@ final class BridgeAppModel: ObservableObject {
         self.requireGitPushConfirmation = defaults.object(forKey: Self.requireGitPushConfirmationKey) as? Bool ?? true
         self.allowClaudeRun = defaults.object(forKey: Self.allowClaudeRunKey) as? Bool ?? false
         self.allowNovaAct = defaults.object(forKey: Self.allowNovaActKey) as? Bool ?? false
+        self.novaActApiKey = Self.loadKeychainString(account: Self.novaActApiKeyAccount) ?? ""
 
         restoreWorkspaces()
         bootstrapBridgeCore()
@@ -309,7 +316,8 @@ final class BridgeAppModel: ObservableObject {
             workspaceRoot: selectedURL,
             workspaceRoots: workspaceURLs,
             pairingCode: pairingCode.isEmpty ? nil : pairingCode,
-            permissions: currentPermissions()
+            permissions: currentPermissions(),
+            novaActApiKey: novaActApiKey.isEmpty ? nil : novaActApiKey
         )
 
         let core = BridgeCore(configuration: config)
@@ -433,6 +441,60 @@ final class BridgeAppModel: ObservableObject {
             let response = alert.runModal()
             continuation.resume(returning: response == .alertFirstButtonReturn)
         }
+    }
+
+    // MARK: - Nova Act API Key (Keychain)
+
+    func saveNovaActApiKey() {
+        guard !novaActApiKey.isEmpty else { return }
+        Self.saveKeychainString(novaActApiKey, account: Self.novaActApiKeyAccount)
+        Task {
+            await bridgeCore?.updateNovaActApiKey(novaActApiKey)
+        }
+    }
+
+    func clearNovaActApiKey() {
+        novaActApiKey = ""
+        Self.deleteKeychainString(account: Self.novaActApiKeyAccount)
+        Task {
+            await bridgeCore?.updateNovaActApiKey(nil)
+        }
+    }
+
+    private static func saveKeychainString(_ value: String, account: String) {
+        let data = value.data(using: .utf8)!
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+        var addQuery = query
+        addQuery[kSecValueData as String] = data
+        SecItemAdd(addQuery as CFDictionary, nil)
+    }
+
+    private static func loadKeychainString(account: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func deleteKeychainString(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }
 
@@ -611,7 +673,17 @@ struct BridgeStatusView: View {
                                isOn: $model.allowClaudeRun)
                             .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
 
-                        Toggle(isOn: $model.allowNovaAct) {
+                        Toggle(isOn: Binding(
+                            get: { model.allowNovaAct },
+                            set: { newValue in
+                                if newValue {
+                                    model.showNovaActSetup = true
+                                } else {
+                                    model.allowNovaAct = false
+                                    model.applyPermissions()
+                                }
+                            }
+                        )) {
                             Label {
                                 HStack(spacing: 6) {
                                     Text("Allow Nova Act (browser automation)")
@@ -623,7 +695,6 @@ struct BridgeStatusView: View {
                                 EmptyView()
                             }
                         }
-                        .onChange(of: model.allowNovaAct) { model.applyPermissions() }
                         .help("High-risk: grants full browser automation access")
                     } header: {
                         Label("AI & Automation", systemImage: "cpu.fill")
@@ -690,6 +761,9 @@ struct BridgeStatusView: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .sheet(isPresented: $model.showNovaActSetup) {
+                NovaActSetupSheet(model: model)
+            }
             .onChange(of: model.statusMessage) {
                 guard !model.statusMessage.isEmpty else { return }
                 transientTask?.cancel()
@@ -741,6 +815,101 @@ struct BridgeStatusView: View {
                         }
                         .buttonStyle(.bordered)
                     }
+                }
+            }
+        }
+    }
+}
+
+struct NovaActSetupSheet: View {
+    @ObservedObject var model: BridgeAppModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var apiKeyInput: String = ""
+
+    private var hasApiKey: Bool {
+        !apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasEnvVarKey: Bool {
+        if let key = ProcessInfo.processInfo.environment["NOVA_ACT_API_KEY"], !key.isEmpty {
+            return true
+        }
+        return false
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Nova Act requires an API key to function. Enter your key below — it will be stored securely in Keychain.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("API Key")
+                        .font(.headline)
+
+                    SecureField("Paste your Nova Act API key", text: $apiKeyInput)
+                        .textFieldStyle(.roundedBorder)
+
+                    if !model.novaActApiKey.isEmpty && apiKeyInput.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .imageScale(.small)
+                            Text("Previously saved key found (\(model.novaActApiKey.prefix(8))…)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if hasEnvVarKey && apiKeyInput.isEmpty && model.novaActApiKey.isEmpty {
+                        HStack(spacing: 4) {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(.blue)
+                                .imageScale(.small)
+                            Text("NOVA_ACT_API_KEY environment variable detected")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Text("Stored securely in Keychain")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
+                if !model.novaActApiKey.isEmpty {
+                    Button("Clear Saved Key") {
+                        model.clearNovaActApiKey()
+                    }
+                    .foregroundStyle(.red)
+                    .font(.caption)
+                }
+
+                Spacer()
+            }
+            .padding()
+            .frame(minWidth: 440, minHeight: 260)
+            .navigationTitle("Nova Act Setup")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Enable") {
+                        let trimmed = apiKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !trimmed.isEmpty {
+                            model.novaActApiKey = trimmed
+                            model.saveNovaActApiKey()
+                        }
+                        model.allowNovaAct = true
+                        model.applyPermissions()
+                        dismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!hasApiKey && model.novaActApiKey.isEmpty && !hasEnvVarKey)
                 }
             }
         }

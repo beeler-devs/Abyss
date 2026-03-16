@@ -21,7 +21,8 @@ public actor NovaActSessionManager {
         headless: Bool,
         userDataDir: String?,
         pythonPath: String? = nil,
-        scriptPath: String
+        scriptPath: String,
+        apiKey: String? = nil
     ) async throws {
         guard !isActive else {
             throw NovaActError.sessionAlreadyActive
@@ -33,9 +34,12 @@ public actor NovaActSessionManager {
         proc.executableURL = URL(fileURLWithPath: resolvedPython)
         proc.arguments = [scriptPath]
 
-        // Forward NOVA_ACT_API_KEY and PATH
+        // Forward PATH and inject API key (app-provided key takes precedence over env var)
         var env = ProcessInfo.processInfo.environment
         env["PYTHONUNBUFFERED"] = "1"
+        if let apiKey, !apiKey.isEmpty {
+            env["NOVA_ACT_API_KEY"] = apiKey
+        }
         proc.environment = env
 
         let stdin = Pipe()
