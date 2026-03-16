@@ -135,7 +135,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 **Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`. Canvas tool results render as `CanvasCardView` cards in the transcript via `ConversationCanvasManager` (same pattern as Calendar). Cards use a unified `CanvasCard` model with variant enum (`.course`, `.assignment`, `.todo`, `.grade`, `.announcement`). At session start, the server pre-fetches courses via `canvasClient.courses()` and stores a summary in `session.canvasCourseContext`, which is injected into the system prompt for ambient awareness.
 
-**Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use iOS confirmation card pattern via `EmailDraftManager`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in.
+**Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use iOS confirmation card pattern via `EmailDraftManager`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in. **Settings auth reconnect:** `ConversationViewModel.setGmailAuthManager()` subscribes to `gmailAuthManager.$isAuthenticated` — when the user authenticates Gmail in Settings (outside the tool flow), the WebSocket automatically reconnects with fresh tokens.
 
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
@@ -158,6 +158,9 @@ When adding new `.swift` files to the iOS project, they MUST be manually added t
 4. **PBXSourcesBuildPhase section** — add the `A1...` build file ref
 
 IDs follow the pattern `A1000000000000010000XXXX` (build) / `A2000000000000010000XXXX` (file ref), incrementing the last hex digits. Without this, Xcode won't compile the file and you'll get "Cannot find type in scope" errors.
+
+#### Transcript Item Ordering
+`TranscriptView` renders items via a `TranscriptItem` enum in a `LazyVStack`. For each assistant message: `.message` (bubble text) → anchored cards (agent, email, calendar, canvas) → `.messageActions` (copy/thumbs buttons). The `MessageActionsView` is a separate struct from `MessageBubble`, ensuring cards appear between message text and action buttons.
 
 #### Markdown Rendering
 Assistant messages rendered via `MarkdownTextView` → parses into `.text` (inline formatting) and `.codeBlock(language, code)` (terminal-style with copy button). User messages use plain `Text`.
