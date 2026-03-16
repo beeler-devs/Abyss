@@ -209,6 +209,12 @@ struct EventEnvelope: Codable, Sendable {
                 "stdoutTail": .string(value.stdoutTail),
                 "stderrTail": .string(value.stderrTail),
             ]
+        case .bridgeWorkspaceSet(let value):
+            type = "bridge.workspace.set"
+            payload = [
+                "deviceId": .string(value.deviceId),
+                "workspacePath": .string(value.workspacePath),
+            ]
         }
     }
 
@@ -336,7 +342,8 @@ struct EventEnvelope: Codable, Sendable {
             kind = .bridgePaired(Event.BridgePaired(
                 deviceId: try requireString("deviceId"),
                 deviceName: try requireString("deviceName"),
-                status: payload["status"]?.stringValue ?? "online"
+                status: payload["status"]?.stringValue ?? "online",
+                workspaceRoot: payload["workspaceRoot"]?.stringValue
             ))
         case "bridge.status":
             kind = .bridgeStatus(Event.BridgeStatus(

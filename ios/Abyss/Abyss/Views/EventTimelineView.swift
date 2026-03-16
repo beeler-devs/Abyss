@@ -141,6 +141,8 @@ struct EventRow: View {
                 Image(systemName: "text.line.first.and.arrowtriangle.forward").foregroundStyle(.blue)
             case .bridgeExecFinished:
                 Image(systemName: "terminal").foregroundStyle(.green)
+            case .bridgeWorkspaceSet:
+                Image(systemName: "folder").foregroundStyle(.brown)
             }
         }
     }
@@ -204,6 +206,8 @@ struct EventRow: View {
             return "bridge.exec.output[\(payload.stream)]: \(chunk.prefix(40))"
         case .bridgeExecFinished(let payload):
             return "bridge.exec.finished: \(payload.commandId.prefix(8)) exit=\(payload.exitCode)"
+        case .bridgeWorkspaceSet(let payload):
+            return "bridge.workspace.set: \(payload.workspacePath)"
         }
     }
 

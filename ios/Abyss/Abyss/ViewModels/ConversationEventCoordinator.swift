@@ -149,7 +149,7 @@ final class ConversationEventCoordinator: ObservableObject {
             }
             eventBus.emit(event)
 
-        case .bridgeExecOutput, .bridgeExecFinished:
+        case .bridgeExecOutput, .bridgeExecFinished, .bridgeWorkspaceSet:
             eventBus.emit(event)
 
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult, .error,
