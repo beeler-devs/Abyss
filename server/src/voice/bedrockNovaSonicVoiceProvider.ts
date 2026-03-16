@@ -52,6 +52,8 @@ interface SonicSession {
   pendingToolUse: PendingToolUse | null;
   /** Maps sanitized tool names (underscores) back to original names (dots). */
   toolNameMap: Map<string, string>;
+  /** Accumulates all FINAL assistant text sentences within a single response turn. */
+  accumulatedAssistantText: string;
 }
 
 interface SonicEventEnvelope {
@@ -172,6 +174,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       contents: new Map(),
       pendingToolUse: null,
       toolNameMap: new Map(),
+      accumulatedAssistantText: "",
     };
     this.sessions.set(sessionId, session);
 
@@ -444,8 +447,11 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       info.text += content;
 
       if (info.role === "ASSISTANT" && info.generationStage === "SPECULATIVE") {
+        const preview = session.accumulatedAssistantText
+          ? session.accumulatedAssistantText + " " + info.text
+          : info.text;
         session.context.emit(makeEvent("assistant.speech.partial", session.sessionId, {
-          text: info.text,
+          text: preview,
         }));
       }
       return;
@@ -568,20 +574,43 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           }
         }
 
-        session.context.emit(makeEvent("assistant.speech.final", session.sessionId, { text }));
+        // Accumulate sentences — the full message is only finalized when audio ends.
+        session.accumulatedAssistantText = session.accumulatedAssistantText
+          ? session.accumulatedAssistantText + " " + text
+          : text;
+
+        // Emit a growing partial message so the UI shows one expanding bubble.
         session.context.emit(makeEvent("tool.call", session.sessionId, {
           callId: crypto.randomUUID(),
           name: "convo.appendMessage",
           arguments: JSON.stringify({
             role: "assistant",
-            text,
-            isPartial: false,
+            text: session.accumulatedAssistantText,
+            isPartial: true,
           }),
         }));
       }
 
       if (info.role === "ASSISTANT" && info.type === "AUDIO") {
         session.context.emit(makeEvent("assistant.audio.end", session.sessionId, {}));
+
+        // Finalize the accumulated message as a single non-partial bubble.
+        if (session.accumulatedAssistantText) {
+          session.context.emit(makeEvent("assistant.speech.final", session.sessionId, {
+            text: session.accumulatedAssistantText,
+          }));
+          session.context.emit(makeEvent("tool.call", session.sessionId, {
+            callId: crypto.randomUUID(),
+            name: "convo.appendMessage",
+            arguments: JSON.stringify({
+              role: "assistant",
+              text: session.accumulatedAssistantText,
+              isPartial: false,
+            }),
+          }));
+          session.accumulatedAssistantText = "";
+        }
+
         session.context.emit(makeEvent("tool.call", session.sessionId, {
           callId: crypto.randomUUID(),
           name: "convo.setState",
@@ -596,6 +625,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       const payload = asRecord(event.completionEnd);
       const stopReason = payload ? asString(payload.stopReason) : undefined;
       if (stopReason === "INTERRUPTED" || stopReason === "BARGE_IN") {
+        session.accumulatedAssistantText = "";
         session.context.emit(makeEvent("assistant.audio.interrupted", session.sessionId, {
           reason: stopReason.toLowerCase(),
         }));

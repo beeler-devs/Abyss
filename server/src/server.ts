@@ -113,9 +113,15 @@ const conductor = new ConductorService(
     canvasClient: new CanvasClient(),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
-      const devices = bridgeState
+      let devices = bridgeState
         .getSessionDevices(sessionId)
         .filter((device) => device.status === "online");
+      // Session churn resilience: if no session-matched devices, fall back to global online
+      // devices (mirrors resolveDeviceForTool behaviour so the LLM sees bridge tools after
+      // the iOS app restarts with a new sessionId).
+      if (devices.length === 0) {
+        devices = bridgeState.getOnlineDevices();
+      }
       return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
     },
     verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
@@ -188,9 +194,14 @@ wss.on("connection", (socket, request) => {
 
     const event = parsed.event;
 
-    // Audio stream chunks are high-frequency by design (~10/sec); exempt them from rate limiting.
+    // High-frequency event types exempt from rate limiting:
+    // - audio stream chunks (~10/sec from mic)
+    // - assistant speech partials (streamed TTS events)
+    // - tool results (responses to server-initiated tool calls, can burst during speech streaming)
     const isAudioStream = event.type.startsWith("user.audio.stream.");
-    if (!isAudioStream && !limiter.allow()) {
+    const isSpeechStream = event.type.startsWith("assistant.speech.");
+    const isToolResult = event.type === "tool.result";
+    if (!isAudioStream && !isSpeechStream && !isToolResult && !limiter.allow()) {
       const context = socketContexts.get(socket);
       const fallbackSessionId = context?.sessionId ?? "unknown";
       safeSend(socket, makeEvent("error", fallbackSessionId, {

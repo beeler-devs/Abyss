@@ -121,6 +121,23 @@ Fix:
 
 - verify inbound dedupe by `event.id` is active in `WebSocketConductorClient`
 
+## AWS ECS Deployment
+
+Production server runs on ECS Fargate behind an ALB.
+
+| Resource        | Value |
+|----------------|-------|
+| **Cluster**    | abyss |
+| **Service**    | abyss-server |
+| **Region**     | us-east-1 |
+| **ALB DNS**    | abyss-alb-1705721363.us-east-1.elb.amazonaws.com |
+| **ECR Repo**   | 192440504332.dkr.ecr.us-east-1.amazonaws.com/abyss-server |
+| **Security Group** | sg-04ce02d7ffde1a343 |
+| **Target Group ARN** | arn:aws:elasticloadbalancing:us-east-1:192440504332:targetgroup/abyss-tg/f75b69fc8c1c8f84 |
+
+- Health check: `GET http://<ALB_DNS>/healthz`
+- WebSocket: `ws://<ALB_DNS>/ws`
+
 ## Security Notes
 
 - Never commit secrets (`ANTHROPIC_API_KEY`, `ELEVENLABS_API_KEY`, `CURSOR_API_KEY`)

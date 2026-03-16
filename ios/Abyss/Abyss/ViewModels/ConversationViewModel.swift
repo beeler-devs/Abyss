@@ -24,6 +24,8 @@ final class ConversationViewModel: ObservableObject {
     @Published var isTTSMuted: Bool = UserDefaults.standard.bool(forKey: "isTTSMuted") {
         didSet { UserDefaults.standard.set(isTTSMuted, forKey: "isTTSMuted") }
     }
+    @Published var isPTTHeld: Bool = false
+    @Published var isTTSSpeaking: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     private weak var gmailAuthManager: GmailAuthManager?
@@ -402,6 +404,10 @@ final class ConversationViewModel: ObservableObject {
         audioPipeline.$appState
             .receive(on: RunLoop.main)
             .assign(to: &$appState)
+
+        tts.isSpeakingPublisher
+            .receive(on: RunLoop.main)
+            .assign(to: &$isTTSSpeaking)
 
         audioPipeline.$partialTranscript
             .receive(on: RunLoop.main)

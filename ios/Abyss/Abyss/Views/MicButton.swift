@@ -32,6 +32,21 @@ struct MicButton: View {
 
     private var liveControls: some View {
         HStack(spacing: UIConstants.actionBarSpacing) {
+            if isSpeaking {
+                Button(action: onInterruptSpeaking) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
+                        .background(
+                            Circle()
+                                .fill(Color.red)
+                        )
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Interrupt assistant speech")
+            }
+
             if recordingMode == .pushToTalk {
                 pushToTalkButton
             } else {
@@ -51,21 +66,6 @@ struct MicButton: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Switch to typing mode")
-
-            if isSpeaking {
-                Button(action: onInterruptSpeaking) {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white)
-                        .frame(width: UIConstants.actionBarControlHeight, height: UIConstants.actionBarControlHeight)
-                        .background(
-                            Circle()
-                                .fill(Color.red)
-                        )
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Interrupt assistant speech")
-            }
         }
     }
 

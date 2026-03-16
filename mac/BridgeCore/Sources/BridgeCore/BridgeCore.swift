@@ -213,8 +213,25 @@ public actor BridgeCore {
                     }
                 }
 
+                let keepAlivePinger = Task {
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 30_000_000_000)
+                        guard !Task.isCancelled else { break }
+                        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                            wsTask.sendPing { error in
+                                if let error {
+                                    cont.resume(throwing: error)
+                                } else {
+                                    cont.resume()
+                                }
+                            }
+                        }
+                    }
+                }
+
                 defer {
                     registerTicker.cancel()
+                    keepAlivePinger.cancel()
                 }
 
                 while !Task.isCancelled {

@@ -1,12 +1,15 @@
 import AVFoundation
+import Combine
 import Foundation
 
 /// ElevenLabs streaming TTS implementation.
 /// Audio starts once a small PCM buffer is available, and additional chunks are scheduled as they arrive.
-final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
+final class ElevenLabsTTS: NSObject, TextToSpeech, AVSpeechSynthesizerDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var _isSpeaking = false
+    private let speakingSubject = CurrentValueSubject<Bool, Never>(false)
     private let fallbackSynth = AVSpeechSynthesizer()
+    private var _systemVoiceContinuation: CheckedContinuation<Void, Never>?
     private var elevenLabsDisabledForSession = false
     private var didLogElevenLabsDisableReason = false
 
@@ -21,10 +24,15 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         lock.withLock { _isSpeaking }
     }
 
+    var isSpeakingPublisher: AnyPublisher<Bool, Never> {
+        speakingSubject.eraseToAnyPublisher()
+    }
+
     init(voiceId: String = "21m00Tcm4TlvDq8ikWAM", modelId: String = "eleven_turbo_v2_5") {
         self.voiceId = voiceId
         self.modelId = modelId
         super.init()
+        fallbackSynth.delegate = self
     }
 
     func speak(_ text: String) async throws {
@@ -33,9 +41,11 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
 
         await stop()
         lock.withLock { _isSpeaking = true }
+        speakingSubject.send(true)
 
         defer {
             lock.withLock { _isSpeaking = false }
+            speakingSubject.send(false)
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
 
@@ -54,6 +64,7 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
 
     func stop() async {
         lock.withLock { _isSpeaking = false }
+        speakingSubject.send(false)
 
         await MainActor.run {
             if StreamingPCMPlayer.shared.hasActivePlaybackSession {
@@ -182,18 +193,41 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, @unchecked Sendable {
         try session.setCategory(.playback, mode: .spokenAudio, options: .duckOthers)
         try session.setActive(true)
 
-        await MainActor.run {
-            fallbackSynth.stopSpeaking(at: .immediate)
-            let utterance = AVSpeechUtterance(string: text)
-            utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-            fallbackSynth.speak(utterance)
+        // Use the delegate to suspend until the utterance finishes or is cancelled.
+        // We arm the continuation BEFORE calling speak() (inside the same main-thread
+        // block) so there is no window where didFinish can fire before we're waiting.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { continuation.resume(); return }
+                // Stop any previous utterance first; its didCancel fires here (on main),
+                // before we arm _systemVoiceContinuation, so it is harmlessly a no-op.
+                self.fallbackSynth.stopSpeaking(at: .immediate)
+                // Now arm the continuation and start the new utterance.
+                self.lock.withLock { self._systemVoiceContinuation = continuation }
+                let utterance = AVSpeechUtterance(string: text)
+                utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+                self.fallbackSynth.speak(utterance)
+            }
         }
+    }
 
-        while isSpeaking {
-            let stillSpeaking = await MainActor.run { fallbackSynth.isSpeaking }
-            if !stillSpeaking { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
+    // MARK: - AVSpeechSynthesizerDelegate
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        resumeSystemVoiceContinuation()
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        resumeSystemVoiceContinuation()
+    }
+
+    private func resumeSystemVoiceContinuation() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            let c = _systemVoiceContinuation
+            _systemVoiceContinuation = nil
+            return c
         }
+        continuation?.resume()
     }
 }
 

@@ -119,7 +119,7 @@ final class ConversationAudioPipeline: ObservableObject {
     }
 
     func interruptAssistantSpeech() {
-        guard appState == .speaking else { return }
+        guard appState == .speaking || tts.isSpeaking else { return }
         Task { await bargeIn(reason: "button_interrupt") }
     }
 
@@ -540,6 +540,14 @@ final class ConversationAudioPipeline: ObservableObject {
             StreamingPCMPlayer.shared.finishReceivingAudio()
         }
         remotePlaybackPrepared = false
+        // Wait for all PCM buffers to finish playing before returning.
+        // The inboundEventsTask is serial, so this blocks the subsequent
+        // convo.setState:idle from being processed until playback is truly
+        // done — preventing the mic from opening while the assistant is still
+        // speaking. Without this, long responses (e.g. listing many repos)
+        // caused the mic to open mid-playback, picking up TTS audio as user
+        // speech and echoing it back as a duplicate message bubble.
+        try? await StreamingPCMPlayer.shared.waitForPlaybackToFinish()
     }
 
     func handleAssistantAudioInterrupted() async {
