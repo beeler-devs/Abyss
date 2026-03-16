@@ -225,19 +225,12 @@ final class BridgeAppModel: ObservableObject {
         }
     }
 
-    func removeSelectedWorkspace() {
-        guard let selected = selectedWorkspace else { return }
-        workspaces.removeAll { $0.id == selected.id }
-
-        if workspaces.isEmpty {
-            let fallback = WorkspaceRecord(path: FileManager.default.homeDirectoryForCurrentUser.path, bookmarkData: nil)
-            workspaces = [fallback]
-            selectedWorkspaceId = fallback.id
-        } else if !workspaces.contains(where: { $0.id == selectedWorkspaceId }) {
-            selectedWorkspaceId = workspaces[0].id
+    func removeWorkspace(id: String) {
+        guard workspaces.count > 1 else { return }
+        workspaces.removeAll { $0.id == id }
+        if selectedWorkspaceId == id {
+            selectedWorkspaceId = workspaces.first?.id ?? ""
         }
-
-        statusMessage = "Workspace removed."
         persistWorkspaces()
         reconnect()
     }
@@ -455,31 +448,43 @@ struct BridgeStatusView: View {
                 }
 
                 Section(header: Text("Workspaces")) {
-                    Picker("Active Workspace", selection: $model.selectedWorkspaceId) {
-                        ForEach(model.workspaces) { workspace in
-                            Text(workspace.path).tag(workspace.id)
+                    ForEach(model.workspaces) { workspace in
+                        HStack(spacing: 10) {
+                            Button {
+                                model.selectedWorkspaceId = workspace.id
+                                model.reconnect()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: model.selectedWorkspaceId == workspace.id
+                                          ? "checkmark.circle.fill" : "circle")
+                                        .foregroundStyle(model.selectedWorkspaceId == workspace.id
+                                                         ? .blue : .secondary)
+                                        .imageScale(.medium)
+                                    Text(workspace.path)
+                                        .font(.body)
+                                        .foregroundStyle(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            .buttonStyle(.plain)
+
+                            Button(role: .destructive) {
+                                model.removeWorkspace(id: workspace.id)
+                            } label: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(model.workspaces.count <= 1)
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .onChange(of: model.selectedWorkspaceId) {
-                        model.reconnect()
+                        .padding(.vertical, 2)
                     }
 
-                    HStack(spacing: 8) {
+                    HStack {
                         Button("Add Workspace…") { model.addWorkspace() }
                             .buttonStyle(.bordered)
-                        Button("Remove Selected") { model.removeSelectedWorkspace() }
-                            .buttonStyle(.bordered)
-                            .tint(.red)
-                            .disabled(model.workspaces.count <= 1)
                         Spacer()
-                    }
-
-                    ForEach(model.workspaces) { workspace in
-                        Text(workspace.path)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.tertiary)
-                            .textSelection(.enabled)
                     }
                 }
 
