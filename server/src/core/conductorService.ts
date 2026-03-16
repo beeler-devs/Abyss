@@ -16,7 +16,7 @@ import {
 } from "../integrations/cursorPayload.js";
 import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
-import { MemoryService } from "./memory/memoryService.js";
+import { ContextGraphService } from "../contextGraph/contextGraphService.js";
 import { SessionStore } from "./sessionStore.js";
 import { summarizeIfNeeded, SummarizationConfig, DEFAULT_SUMMARIZATION_CONFIG } from "./contextSummarizer.js";
 import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
@@ -51,7 +51,7 @@ export interface ConductorServiceDependencies {
   bridgeToolExecutor?: BridgeToolExecutor;
   bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   verboseToolRoutingLogs?: boolean;
-  memoryService?: MemoryService;
+  contextGraphService?: ContextGraphService;
   summarizationConfig?: SummarizationConfig;
 }
 
@@ -847,7 +847,7 @@ export class ConductorService {
   private static readonly CONVERSATION_POLL_INTERVAL_MS = 3_000;
   private readonly bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   private readonly verboseToolRoutingLogs: boolean;
-  private readonly memoryService?: MemoryService;
+  private readonly contextGraphService?: ContextGraphService;
   private readonly summarizationConfig: SummarizationConfig;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
@@ -868,7 +868,7 @@ export class ConductorService {
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
     this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
     this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
-    this.memoryService = dependencies.memoryService;
+    this.contextGraphService = dependencies.contextGraphService;
     this.summarizationConfig = dependencies.summarizationConfig ?? DEFAULT_SUMMARIZATION_CONFIG;
   }
 
@@ -992,6 +992,14 @@ export class ConductorService {
         if (typeof event.payload.memoryUserKey === "string" && event.payload.memoryUserKey) {
           session.memoryUserKey = event.payload.memoryUserKey;
         }
+        if (session.memoryUserKey && this.contextGraphService) {
+          void this.contextGraphService.apply({
+            type: "session.start",
+            sessionId: event.sessionId,
+            payload: { memoryUserKey: session.memoryUserKey },
+            timestamp: new Date().toISOString(),
+          });
+        }
         if (typeof event.payload.canvasAccessToken === "string" && event.payload.canvasAccessToken) {
           session.canvasAccessToken = event.payload.canvasAccessToken;
         }
@@ -1033,10 +1041,10 @@ export class ConductorService {
         }
 
         // Hydrate memory on first turn of session
-        if (!session.memoryHydrated && session.memoryUserKey && this.memoryService) {
+        if (!session.memoryHydrated && session.memoryUserKey && this.contextGraphService) {
           session.memoryHydrated = true;
           try {
-            const context = await this.memoryService.retrieveContext({
+            const context = await this.contextGraphService.retrieveResumeContext({
               memoryUserKey: session.memoryUserKey,
               transcript: text,
             });
@@ -1176,19 +1184,34 @@ export class ConductorService {
   }
 
   async finalizeSession(sessionId: string): Promise<void> {
-    if (!this.memoryService) return;
+    if (!this.contextGraphService) return;
     const session = this.sessions.get(sessionId);
     if (!session || !session.memoryUserKey) return;
     try {
       const historyToSummarize = session.history.filter(
         (t) => !(t.role === "user" && typeof t.content === "string" && t.content.startsWith("[Prior context from previous sessions]")),
       );
-      await this.memoryService.summarizeAndStore(
+      const doc = await this.contextGraphService.summarizeAndStore(
         session.memoryUserKey,
         sessionId,
         historyToSummarize,
         session.workingContext,
       );
+      if (doc && this.contextGraphService) {
+        void this.contextGraphService.apply({
+          type: "session.finalized",
+          sessionId,
+          payload: {
+            memoryUserKey: session.memoryUserKey,
+            workingContext: session.workingContext,
+            summary: doc.summary,
+            decisions: doc.decisions,
+            blockers: doc.blockers,
+            nextSteps: doc.nextSteps,
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
     } catch {
       // Finalization failures are non-fatal
     }
@@ -1388,6 +1411,15 @@ export class ConductorService {
       session.workingContext.lastGoal = transcript;
     } else {
       session.workingContext = { lastGoal: transcript };
+    }
+
+    if (session.memoryUserKey && this.contextGraphService) {
+      void this.contextGraphService.apply({
+        type: "goal.started",
+        sessionId: session.sessionId,
+        payload: { goalText: transcript, memoryUserKey: session.memoryUserKey },
+        timestamp: new Date().toISOString(),
+      });
     }
 
     emitToolCall("convo.setState", { state: "thinking" });

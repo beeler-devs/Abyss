@@ -75,7 +75,10 @@ test("summarizeAndStore writes JSON to S3 for meaningful session", async () => {
   };
 
   const service = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
-  await service.summarizeAndStore("user1", "sess1", threeUserTurns());
+  const result = await service.summarizeAndStore("user1", "sess1", threeUserTurns());
+  assert.ok(result !== null, "should return MemoryDocument");
+  assert.equal(result!.memoryUserKey, "user1");
+  assert.ok(result!.summary.length > 0, "returned doc should have summary");
 
   assert.ok(putBody.length > 0, "should write to S3");
   const doc = JSON.parse(putBody) as { summary: string; memoryUserKey: string };
@@ -207,4 +210,13 @@ test("retrieveContext returns null when S3 list exceeds timeout", async () => {
 
   assert.equal(result, null, "should return null on timeout");
   assert.ok(elapsed < 500, `should resolve within 500ms, took ${elapsed}ms`);
+});
+
+test("summarizeAndStore returns null for non-meaningful session", async () => {
+  const service = new MemoryService(makeConfig(), { s3: { send: async () => ({}) } as never });
+  const result = await service.summarizeAndStore("user1", "sess1", [
+    { role: "user", content: "Hi" },
+    { role: "assistant", content: "Hello" },
+  ]);
+  assert.equal(result, null, "should return null for short session");
 });

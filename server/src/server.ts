@@ -19,6 +19,9 @@ import { GitHubClient } from "./integrations/githubClient.js";
 import { SearchClient } from "./integrations/searchClient.js";
 import { buildProvider } from "./providers/index.js";
 import { MemoryService } from "./core/memory/memoryService.js";
+import { ContextGraphService } from "./contextGraph/contextGraphService.js";
+import { EmbeddingService } from "./contextGraph/embedding/embeddingService.js";
+import { NeptuneAnalyticsStore } from "./contextGraph/store/neptuneAnalyticsStore.js";
 import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
 import { VoiceProvider } from "./voice/types.js";
 
@@ -51,6 +54,11 @@ const MEMORY_RETRIEVE_TIMEOUT_MS = parseInteger(process.env.MEMORY_RETRIEVE_TIME
 const MEMORY_MAX_INJECTED_CHARS = parseInteger(process.env.MEMORY_MAX_INJECTED_CHARS, 900);
 const MEMORY_RECENT_COUNT = parseInteger(process.env.MEMORY_RECENT_COUNT, 3);
 const MEMORY_SUMMARY_MODEL_ID = process.env.MEMORY_SUMMARY_MODEL_ID ?? "us.amazon.nova-2-lite-v1:0";
+const NEPTUNE_GRAPH_ID = process.env.NEPTUNE_GRAPH_ID ?? "";
+const NEPTUNE_GRAPH_ENDPOINT = process.env.NEPTUNE_GRAPH_ENDPOINT ?? "";
+const NEPTUNE_GRAPH_REGION = process.env.NEPTUNE_GRAPH_REGION ?? process.env.AWS_REGION ?? "us-east-1";
+const EMBEDDING_MODEL_ID = process.env.EMBEDDING_MODEL_ID ?? "amazon.titan-embed-text-v2:0";
+const EMBEDDING_DIMENSIONS = parseInteger(process.env.EMBEDDING_DIMENSIONS, 256);
 
 const provider = buildProvider({
   modelProvider: MODEL_PROVIDER,
@@ -117,6 +125,27 @@ const memoryService = MEMORY_ENABLED && MEMORY_S3_BUCKET
     })
   : undefined;
 
+const embeddingService = new EmbeddingService({
+  modelId: EMBEDDING_MODEL_ID,
+  dimensions: EMBEDDING_DIMENSIONS,
+  awsRegion: NEPTUNE_GRAPH_REGION,
+});
+
+const neptuneStore = NEPTUNE_GRAPH_ID
+  ? new NeptuneAnalyticsStore({
+      graphId: NEPTUNE_GRAPH_ID,
+      endpoint: NEPTUNE_GRAPH_ENDPOINT || undefined,
+      region: NEPTUNE_GRAPH_REGION,
+    })
+  : undefined;
+
+const contextGraphService = (memoryService || neptuneStore)
+  ? new ContextGraphService(
+      { retrieveTimeoutMs: MEMORY_RETRIEVE_TIMEOUT_MS, maxInjectedChars: MEMORY_MAX_INJECTED_CHARS },
+      { graphStore: neptuneStore, embeddingService, memoryService },
+    )
+  : undefined;
+
 const conductor = new ConductorService(
   provider,
   {
@@ -155,7 +184,7 @@ const conductor = new ConductorService(
       return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
     },
     verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
-    memoryService,
+    contextGraphService,
     summarizationConfig: {
       summarizeAfter: SUMMARIZE_AFTER_TURNS,
       recentToKeep: SUMMARIZE_RECENT_KEEP,
