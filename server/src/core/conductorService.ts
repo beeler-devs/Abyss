@@ -1497,12 +1497,12 @@ export class ConductorService {
     const titlePrompt: ConversationTurn[] = [
       {
         role: "user",
-        content: `Generate a short chat title (3-5 words, no quotes, no punctuation at end) for a conversation starting with: "${firstMessage.slice(0, 300)}"`,
+        content: `Generate a short chat title (2-5 words, plain text only, no markdown, no quotes, no punctuation, no formatting) for a conversation starting with: "${firstMessage.slice(0, 300)}"`,
       },
     ];
 
     this.provider.generateResponse(titlePrompt, []).then((response) => {
-      const title = response.fullText.trim().replace(/^["']|["']$/g, "");
+      const title = response.fullText.trim().replace(/^["']|["']$/g, "").replace(/[*_#`~>\[\]]/g, "");
       if (title) {
         emit(makeEvent("session.title", session.sessionId, { title }));
       }
