@@ -1486,6 +1486,70 @@ test("speculative contentEnd emits convo.appendMessage ahead of audio", async (t
   assert.equal(finalLiveId, specLiveId, "FINAL and SPECULATIVE should share the same liveResponseId");
 });
 
+test("multiple speculative blocks accumulate before FINAL arrives", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  // Emit two SPECULATIVE blocks before any FINAL
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "spec-a",
+      completionId: "comp-multi-spec",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "SPECULATIVE" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "spec-a", content: "Hello world." } });
+  harness.client.emitEvent({ contentEnd: { contentId: "spec-a", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  const appendsAfterFirst = findToolCalls(harness.emitted, "convo.appendMessage");
+  assertAssistantAppend(appendsAfterFirst[appendsAfterFirst.length - 1], { text: "Hello world.", isPartial: true });
+
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "spec-b",
+      completionId: "comp-multi-spec",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "SPECULATIVE" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "spec-b", content: "How are you?" } });
+  harness.client.emitEvent({ contentEnd: { contentId: "spec-b", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  // Second speculative should ACCUMULATE, not replace
+  const appendsAfterSecond = findToolCalls(harness.emitted, "convo.appendMessage");
+  assertAssistantAppend(appendsAfterSecond[appendsAfterSecond.length - 1], { text: "Hello world. How are you?", isPartial: true });
+
+  // Now FINAL arrives — should reset speculative and use FINAL accumulation
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "final-a",
+      completionId: "comp-multi-spec",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "final-a", content: "Hello world." } });
+  harness.client.emitEvent({ contentEnd: { contentId: "final-a", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  const appendsAfterFinal = findToolCalls(harness.emitted, "convo.appendMessage");
+  assertAssistantAppend(appendsAfterFinal[appendsAfterFinal.length - 1], { text: "Hello world.", isPartial: true });
+});
+
 test("speculative preview includes accumulated text from prior FINAL sentences", async (t) => {
   const harness = createHarness();
   t.after(async () => {

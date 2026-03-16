@@ -55,6 +55,8 @@ interface SonicSession {
   toolNameMap: Map<string, string>;
   /** Accumulates all FINAL assistant text sentences within a single response turn. */
   accumulatedAssistantText: string;
+  /** Accumulates SPECULATIVE text ahead of FINAL confirmation; reset when FINAL arrives. */
+  accumulatedSpeculativeText: string;
   liveResponseId: string | null;
   pendingAssistantTurnFinalizeTimer: ReturnType<typeof setTimeout> | null;
   pendingAssistantTurnFinalizeResponseId: string | null;
@@ -188,6 +190,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       pendingToolUse: null,
       toolNameMap: new Map(),
       accumulatedAssistantText: "",
+      accumulatedSpeculativeText: "",
       liveResponseId: null,
       pendingAssistantTurnFinalizeTimer: null,
       pendingAssistantTurnFinalizeResponseId: null,
@@ -460,6 +463,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     const text = session.accumulatedAssistantText.trim();
     if (!text) {
       session.accumulatedAssistantText = "";
+    session.accumulatedSpeculativeText = "";
       return false;
     }
 
@@ -480,6 +484,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       }),
     }));
     session.accumulatedAssistantText = "";
+    session.accumulatedSpeculativeText = "";
     session.liveResponseId = null;
     return true;
   }
@@ -754,10 +759,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           try { JSON.parse(text); return; } catch { /* treat as speech */ }
         }
 
-        // Preview = confirmed text so far + speculative upcoming text
-        const previewText = session.accumulatedAssistantText
-          ? session.accumulatedAssistantText + " " + text
+        // Accumulate speculative text across blocks (reset when FINAL arrives)
+        session.accumulatedSpeculativeText = session.accumulatedSpeculativeText
+          ? session.accumulatedSpeculativeText + " " + text
           : text;
+
+        // Preview = confirmed FINAL text + accumulated speculative text
+        const previewText = session.accumulatedAssistantText
+          ? session.accumulatedAssistantText + " " + session.accumulatedSpeculativeText
+          : session.accumulatedSpeculativeText;
 
         // Create/update the grey transcript bubble BEFORE audio plays
         session.context.emit(makeEvent("tool.call", session.sessionId, {
@@ -784,6 +794,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
             // Not valid JSON — treat as speech
           }
         }
+
+        // FINAL confirms text — reset speculative accumulation since it's now canonical.
+        session.accumulatedSpeculativeText = "";
 
         // Accumulate sentences — the full message is only finalized when audio ends.
         session.accumulatedAssistantText = session.accumulatedAssistantText
@@ -853,6 +866,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     session.toolExecutionInFlight = false;
     session.contents.clear();
     session.accumulatedAssistantText = "";
+    session.accumulatedSpeculativeText = "";
     session.liveResponseId = null;
     return liveResponseId;
   }
