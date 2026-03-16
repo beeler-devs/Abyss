@@ -58,6 +58,7 @@ struct Event: Identifiable, Codable, Sendable {
         let canvasAccessToken: String?
         let canvasBaseURL: String?
         let preferences: [String: String]?
+        let memoryUserKey: String?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -276,7 +277,8 @@ extension Event {
         gmailTokenExpiresAt: Double? = nil,
         canvasAccessToken: String? = nil,
         canvasBaseURL: String? = nil,
-        preferences: [String: String]? = nil
+        preferences: [String: String]? = nil,
+        memoryUserKey: String? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
             sessionId: sessionId,
@@ -286,7 +288,8 @@ extension Event {
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
-            preferences: preferences
+            preferences: preferences,
+            memoryUserKey: memoryUserKey
         )))
     }
 

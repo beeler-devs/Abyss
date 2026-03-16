@@ -53,6 +53,9 @@ struct EventEnvelope: Codable, Sendable {
             if let gmailExpires = value.gmailTokenExpiresAt {
                 sessionPayload["gmailTokenExpiresAt"] = .number(gmailExpires)
             }
+            if let memoryUserKey = value.memoryUserKey {
+                sessionPayload["memoryUserKey"] = .string(memoryUserKey)
+            }
             if let prefs = value.preferences, !prefs.isEmpty {
                 sessionPayload["preferences"] = .object(prefs.mapValues { .string($0) })
             }
@@ -244,10 +247,10 @@ struct EventEnvelope: Codable, Sendable {
         switch type {
         case "session.start":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil, memoryUserKey: nil))
         case "session.started":
             let session = payload["sessionId"]?.stringValue ?? sessionId ?? UUID().uuidString
-            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil))
+            kind = .sessionStart(Event.SessionStart(sessionId: session, githubToken: nil, gmailAccessToken: nil, gmailRefreshToken: nil, gmailTokenExpiresAt: nil, canvasAccessToken: nil, canvasBaseURL: nil, preferences: nil, memoryUserKey: nil))
         case "user.audio.transcript.partial":
             kind = .userAudioTranscriptPartial(Event.TranscriptPartial(text: try requireString("text")))
         case "user.audio.transcript.final":

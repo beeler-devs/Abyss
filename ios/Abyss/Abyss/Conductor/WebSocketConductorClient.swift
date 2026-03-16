@@ -228,6 +228,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var currentCanvasAccessToken: String?
     private var currentCanvasBaseURL: String?
     private var currentPreferences: [String: String]?
+    private var currentMemoryUserKey: String?
 
     private var seenInboundEventIDs: BoundedEventIDCache
 
@@ -301,7 +302,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         gmailTokenExpiresAt: Double? = nil,
         canvasAccessToken: String? = nil,
         canvasBaseURL: String? = nil,
-        preferences: [String: String]? = nil
+        preferences: [String: String]? = nil,
+        memoryUserKey: String? = nil
     ) async throws {
         currentSessionId = sessionId
         currentGithubToken = githubToken
@@ -311,6 +313,7 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         currentCanvasAccessToken = canvasAccessToken
         currentCanvasBaseURL = canvasBaseURL
         currentPreferences = preferences
+        currentMemoryUserKey = memoryUserKey
         shouldReconnect = true
 
         try await openSocketAndStartListening()
@@ -322,7 +325,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
-            preferences: preferences
+            preferences: preferences,
+            memoryUserKey: memoryUserKey
         ))
     }
 
@@ -442,7 +446,8 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
                     gmailTokenExpiresAt: self.currentGmailTokenExpiresAt,
                     canvasAccessToken: self.currentCanvasAccessToken,
                     canvasBaseURL: self.currentCanvasBaseURL,
-                    preferences: self.currentPreferences
+                    preferences: self.currentPreferences,
+                    memoryUserKey: self.currentMemoryUserKey
                 ))
             } catch {
                 await self.scheduleReconnect()
