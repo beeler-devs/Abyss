@@ -20,6 +20,7 @@ let package = Package(
             ],
             resources: [
                 .process("Assets.xcassets"),
+                .copy("AppIcon.png"),
             ]
         ),
     ],
