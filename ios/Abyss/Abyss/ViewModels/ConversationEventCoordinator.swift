@@ -30,8 +30,16 @@ final class ConversationEventCoordinator: ObservableObject {
     private var activeLiveResponseId: String?
     private var assistantPartialSpeechResponseId: String?
     private var invalidatedLiveResponseIds: Set<String> = []
+    private var pendingInterruptCandidate: PendingInterruptCandidate?
 
     private static let pairedBridgeDevicesKey = "pairedBridgeDevices"
+    private static let pendingInterruptTimeoutNanoseconds: UInt64 = 900_000_000
+
+    private struct PendingInterruptCandidate {
+        let liveResponseId: String
+        let assistantTextSnapshot: String
+        let timeoutTask: Task<Void, Never>
+    }
 
     init(
         conversationStore: ConversationStore,
@@ -52,6 +60,10 @@ final class ConversationEventCoordinator: ObservableObject {
 
         loadPairedBridgeDevices()
         refreshBridgeStatusesOnStartup()
+    }
+
+    deinit {
+        pendingInterruptCandidate?.timeoutTask.cancel()
     }
 
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
@@ -144,7 +156,7 @@ final class ConversationEventCoordinator: ObservableObject {
             eventBus.emit(event)
             await audioPipeline.handleAssistantAudioInterrupted()
             if audioPipeline.isHandsFreeLiveConversationMode {
-                invalidateActiveLiveResponse(interrupted.liveResponseId)
+                registerPendingInterruptCandidate(for: interrupted)
             }
 
         case .toolCall(let toolCall):
@@ -231,12 +243,20 @@ final class ConversationEventCoordinator: ObservableObject {
             eventBus.emit(event)
             if audioPipeline.isHandsFreeLiveConversationMode,
                error.code == "voice_provider_failed" {
+                clearPendingInterruptCandidate()
                 invalidateActiveLiveResponse(activeLiveResponseId)
                 await audioPipeline.applyRemoteState(.listening)
             }
 
+        case .userAudioTranscriptFinal(let transcript):
+            if audioPipeline.isHandsFreeLiveConversationMode,
+               handlePendingInterruptTranscript(transcript) {
+                return
+            }
+            eventBus.emit(event)
+
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult,
-                .userAudioTranscriptPartial, .userAudioTranscriptFinal, .userAudioStreamStart,
+                .userAudioTranscriptPartial, .userAudioStreamStart,
                 .userAudioStreamChunk, .userAudioStreamEnd, .audioOutputInterrupted,
                 .agentCompleted, .bridgePairRequest, .preferencesSync:
             eventBus.emit(event)
@@ -344,6 +364,9 @@ final class ConversationEventCoordinator: ObservableObject {
 
     private func activateLiveResponse(_ liveResponseId: String) {
         invalidatedLiveResponseIds.remove(liveResponseId)
+        if pendingInterruptCandidate?.liveResponseId != liveResponseId {
+            clearPendingInterruptCandidate()
+        }
         guard activeLiveResponseId != liveResponseId else { return }
         if let activeLiveResponseId {
             invalidateActiveLiveResponse(activeLiveResponseId)
@@ -360,6 +383,9 @@ final class ConversationEventCoordinator: ObservableObject {
     }
 
     private func invalidateActiveLiveResponse(_ liveResponseId: String?) {
+        if pendingInterruptCandidate?.liveResponseId == liveResponseId {
+            clearPendingInterruptCandidate()
+        }
         guard let liveResponseId else {
             assistantPartialSpeech = ""
             assistantPartialSpeechResponseId = nil
@@ -432,5 +458,117 @@ final class ConversationEventCoordinator: ObservableObject {
         let payload = (try? JSONEncoder().encode(result))
             .flatMap { String(data: $0, encoding: .utf8) } ?? #"{"messageId":""}"#
         return Event.toolResult(callId: callId, result: payload, sessionId: sessionId)
+    }
+
+    private func registerPendingInterruptCandidate(for interrupted: Event.AssistantAudioInterrupted) {
+        guard let liveResponseId = interrupted.liveResponseId ?? activeLiveResponseId else {
+            return
+        }
+
+        clearPendingInterruptCandidate()
+
+        let assistantTextSnapshot = assistantTextSnapshot(for: liveResponseId)
+        let timeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.pendingInterruptTimeoutNanoseconds)
+            await MainActor.run {
+                self?.handlePendingInterruptTimeout(for: liveResponseId)
+            }
+        }
+
+        pendingInterruptCandidate = PendingInterruptCandidate(
+            liveResponseId: liveResponseId,
+            assistantTextSnapshot: assistantTextSnapshot,
+            timeoutTask: timeoutTask
+        )
+    }
+
+    private func handlePendingInterruptTranscript(_ transcript: Event.TranscriptFinal) -> Bool {
+        guard let candidate = pendingInterruptCandidate else {
+            return false
+        }
+
+        clearPendingInterruptCandidate()
+
+        if isLikelyEchoTranscript(
+            transcript.text,
+            assistantSnapshot: candidate.assistantTextSnapshot
+        ) {
+            Task { await audioPipeline.applyRemoteState(.listening) }
+            return true
+        }
+
+        invalidateActiveLiveResponse(candidate.liveResponseId)
+        return false
+    }
+
+    private func handlePendingInterruptTimeout(for liveResponseId: String) {
+        guard pendingInterruptCandidate?.liveResponseId == liveResponseId else {
+            return
+        }
+        clearPendingInterruptCandidate()
+    }
+
+    private func clearPendingInterruptCandidate() {
+        pendingInterruptCandidate?.timeoutTask.cancel()
+        pendingInterruptCandidate = nil
+    }
+
+    private func assistantTextSnapshot(for liveResponseId: String) -> String {
+        if let partial = conversationStore.messages.last(where: {
+            $0.role == .assistant && $0.liveResponseId == liveResponseId && $0.isPartial
+        }) {
+            return partial.text
+        }
+
+        if assistantPartialSpeechResponseId == liveResponseId {
+            return assistantPartialSpeech
+        }
+
+        return assistantPartialSpeech
+    }
+
+    private func isLikelyEchoTranscript(_ transcript: String, assistantSnapshot: String) -> Bool {
+        let normalizedTranscript = normalizeInterruptText(transcript)
+        let normalizedAssistant = normalizeInterruptText(assistantSnapshot)
+        guard !normalizedTranscript.isEmpty, !normalizedAssistant.isEmpty else {
+            return false
+        }
+
+        if normalizedAssistant == normalizedTranscript {
+            return true
+        }
+
+        let suffixWindowSize = max(normalizedTranscript.count * 2, normalizedTranscript.count + 16)
+        let assistantSuffix = String(normalizedAssistant.suffix(suffixWindowSize))
+        if assistantSuffix.contains(normalizedTranscript) {
+            return true
+        }
+
+        let transcriptTokens = normalizedTranscript.split(separator: " ").map(String.init)
+        guard !transcriptTokens.isEmpty else {
+            return false
+        }
+
+        let assistantTokenSet = Set(normalizedAssistant.split(separator: " ").map(String.init))
+        let overlapCount = transcriptTokens.filter { assistantTokenSet.contains($0) }.count
+        let overlapRatio = Double(overlapCount) / Double(transcriptTokens.count)
+        let novelTokenCount = Set(
+            transcriptTokens.filter { !assistantTokenSet.contains($0) && $0.count >= 3 }
+        ).count
+
+        return overlapRatio >= 0.8 && novelTokenCount <= 1
+    }
+
+    private func normalizeInterruptText(_ text: String) -> String {
+        let loweredScalars = text.lowercased().unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) || CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                return Character(scalar)
+            }
+            return " "
+        }
+
+        return String(loweredScalars)
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
     }
 }

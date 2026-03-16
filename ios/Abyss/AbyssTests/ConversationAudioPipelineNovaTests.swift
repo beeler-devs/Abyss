@@ -45,6 +45,16 @@ final class ConversationAudioPipelineNovaTests: XCTestCase {
         try? await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertTrue(harness.remoteVoiceCapture.isStreaming)
 
+        let chunk = Event.AssistantAudioChunk(
+            audio: Data(repeating: 1, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "live-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(chunk)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1)
+
         await harness.pipeline.handleAssistantAudioEnd()
         await harness.pipeline.applyRemoteState(.idle)
         try? await Task.sleep(nanoseconds: 50_000_000)
@@ -52,6 +62,7 @@ final class ConversationAudioPipelineNovaTests: XCTestCase {
         XCTAssertEqual(harness.pipeline.appState, .listening)
         XCTAssertEqual(streamStartCount(in: harness.sentEvents.events), 1)
         XCTAssertEqual(streamEndCount(in: harness.sentEvents.events), 0)
+        XCTAssertEqual(harness.remoteVoiceCapture.finishAssistantAudioCallCount, 1)
     }
 
     func testListeningDoesNotRestartAlreadyStreamingRemoteCapture() async {
@@ -143,6 +154,9 @@ private struct PipelineHarness {
 @MainActor
 private final class MockRemoteVoiceCapture: RemoteVoiceCapturing {
     private(set) var isStreaming = false
+    private(set) var appendAssistantAudioCallCount = 0
+    private(set) var finishAssistantAudioCallCount = 0
+    private(set) var stopAssistantAudioCallCount = 0
 
     func start(onChunk: @escaping (String) -> Void) async throws {
         isStreaming = true
@@ -150,6 +164,18 @@ private final class MockRemoteVoiceCapture: RemoteVoiceCapturing {
 
     func stop() async {
         isStreaming = false
+    }
+
+    func appendAssistantAudio(_ data: Data, sampleRate: Double) async throws {
+        appendAssistantAudioCallCount += 1
+    }
+
+    func finishAssistantAudio() async {
+        finishAssistantAudioCallCount += 1
+    }
+
+    func stopAssistantAudio() async {
+        stopAssistantAudioCallCount += 1
     }
 }
 

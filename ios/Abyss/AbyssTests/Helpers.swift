@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 @testable import Abyss
 
@@ -58,8 +59,12 @@ final class MockSpeechTranscriber: SpeechTranscriber, @unchecked Sendable {
 final class MockTextToSpeech: TextToSpeech, @unchecked Sendable {
     private let lock = NSLock()
     private var _isSpeaking = false
+    private let speakingSubject = CurrentValueSubject<Bool, Never>(false)
     var isSpeaking: Bool {
         lock.withLock { _isSpeaking }
+    }
+    var isSpeakingPublisher: AnyPublisher<Bool, Never> {
+        speakingSubject.eraseToAnyPublisher()
     }
 
     var speakCallCount = 0
@@ -72,9 +77,11 @@ final class MockTextToSpeech: TextToSpeech, @unchecked Sendable {
             speakCallCount += 1
             lastSpokenText = text
         }
+        speakingSubject.send(true)
         // Simulate short speaking duration
         try? await Task.sleep(nanoseconds: 10_000_000) // 10ms
         lock.withLock { _isSpeaking = false }
+        speakingSubject.send(false)
     }
 
     func stop() async {
@@ -82,6 +89,7 @@ final class MockTextToSpeech: TextToSpeech, @unchecked Sendable {
             _isSpeaking = false
             stopCallCount += 1
         }
+        speakingSubject.send(false)
     }
 }
 
@@ -174,7 +182,16 @@ final class MockConductorClient: ConductorClient, @unchecked Sendable {
         self.continuation = continuation
     }
 
-    func connect(sessionId: String, githubToken: String?, gmailAccessToken: String? = nil, gmailRefreshToken: String? = nil, gmailTokenExpiresAt: Double? = nil) async throws {
+    func connect(
+        sessionId: String,
+        githubToken: String?,
+        gmailAccessToken: String? = nil,
+        gmailRefreshToken: String? = nil,
+        gmailTokenExpiresAt: Double? = nil,
+        canvasAccessToken: String? = nil,
+        canvasBaseURL: String? = nil,
+        preferences: [String: String]? = nil
+    ) async throws {
         lock.withLock {
             connectCallCount += 1
         }

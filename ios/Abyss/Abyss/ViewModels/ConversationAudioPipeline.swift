@@ -672,17 +672,81 @@ protocol RemoteVoiceCapturing: AnyObject {
 
 @MainActor
 private final class RemoteAudioCapture: RemoteVoiceCapturing {
-    private let targetSampleRate: Double = 16_000
+    private static let targetSampleRate: Double = 16_000
+
+    private final class CaptureRunState {
+        struct Snapshot {
+            let callbackCount: Int
+            let totalFrames: Int64
+            let firstCallbackAfterMilliseconds: Double?
+        }
+
+        private let lock = NSLock()
+        private var token = 0
+        private var startUptime = ProcessInfo.processInfo.systemUptime
+        private var firstCallbackUptime: TimeInterval?
+        private var callbackCount = 0
+        private var totalFrames: Int64 = 0
+
+        func begin(token: Int) {
+            lock.lock()
+            self.token = token
+            startUptime = ProcessInfo.processInfo.systemUptime
+            firstCallbackUptime = nil
+            callbackCount = 0
+            totalFrames = 0
+            lock.unlock()
+        }
+
+        func recordCallback(token: Int, frameCount: Int) -> (isFirst: Bool, snapshot: Snapshot)? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard self.token == token else { return nil }
+
+            callbackCount += 1
+            totalFrames += Int64(frameCount)
+
+            let now = ProcessInfo.processInfo.systemUptime
+            let isFirst = firstCallbackUptime == nil
+            if isFirst {
+                firstCallbackUptime = now
+            }
+
+            return (isFirst, Snapshot(
+                callbackCount: callbackCount,
+                totalFrames: totalFrames,
+                firstCallbackAfterMilliseconds: firstCallbackUptime.map { ($0 - startUptime) * 1_000 }
+            ))
+        }
+
+        func snapshot(token: Int) -> Snapshot? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard self.token == token else { return nil }
+
+            return Snapshot(
+                callbackCount: callbackCount,
+                totalFrames: totalFrames,
+                firstCallbackAfterMilliseconds: firstCallbackUptime.map { ($0 - startUptime) * 1_000 }
+            )
+        }
+    }
+
     private let emissionChunkBytes = 3_200
     private let captureLogLimit = 5
 
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
+    private var captureSinkNode: AVAudioSinkNode?
     private var playbackFormat: AVAudioFormat?
+    private var captureFormat: AVAudioFormat?
     private var onChunk: ((String) -> Void)?
     private var pendingPCM = Data()
     private(set) var isStreaming = false
     private var captureDiagnosticsRemaining = 5
+    private var captureWatchdogTask: Task<Void, Never>?
+    private var captureStartToken = 0
+    private let captureRunState = CaptureRunState()
 
     func start(onChunk: @escaping (String) -> Void) async throws {
         guard !isStreaming else { return }
@@ -690,18 +754,21 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
 
         let session = AVAudioSession.sharedInstance()
         try configureAudioSession(session)
+        logSessionState(session, stage: "configured")
+        logRuntimeEnvironment()
 
         let engine = AVAudioEngine()
         let playerNode = AVAudioPlayerNode()
         engine.attach(playerNode)
         let inputNode = engine.inputNode
+        let outputNode = engine.outputNode
 
         enableVoiceProcessing(on: inputNode, label: "input")
-        // Voice processing on the output node is not needed — the input node's
-        // voice processing already uses the output as an echo-cancellation reference.
-        // Enabling it on both can cause the engine to silently drop audio.
 
-        let format = inputNode.outputFormat(forBus: 0)
+        let captureFormat = inputNode.outputFormat(forBus: 0)
+        let sinkNode = makeCaptureSinkNode(format: captureFormat, startToken: captureStartToken + 1)
+        engine.attach(sinkNode)
+        engine.connect(inputNode, to: sinkNode, format: captureFormat)
 
         // Connect playerNode using Float32 at the mixer's native rate (typically 48kHz).
         // Voice processing requires Float32 at hardware rate; Int16/24kHz causes engine.start() to silently fail.
@@ -714,50 +781,65 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         )!
         self.playbackFormat = playbackFmt
         engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFmt)
+        captureDiagnosticsRemaining = captureLogLimit
+        captureStartToken += 1
+        captureRunState.begin(token: captureStartToken)
 
-        // Install tap BEFORE engine.start() — installing after start() with voice
-        // processing can cause the tap to silently not fire.
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
-            guard let self else { return }
-            guard let samples = self.extractSamples(from: buffer) else {
-                self.logCaptureIssue(
-                    "No supported channel data — fmt=\(buffer.format.commonFormat.rawValue) interleaved=\(buffer.format.isInterleaved) ch=\(buffer.format.channelCount)"
-                )
-                return
-            }
-            let resampled = self.resample(samples: samples, from: buffer.format.sampleRate, to: self.targetSampleRate)
-            guard !resampled.isEmpty else { return }
-
-            var chunk = Data(capacity: resampled.count * 2)
-            for sample in resampled {
-                let clamped = max(-1.0, min(1.0, sample))
-                var intSample = Int16(clamped * Float(Int16.max))
-                withUnsafeBytes(of: &intSample) { chunk.append(contentsOf: $0) }
-            }
-
-            Task { @MainActor in
-                self.pendingPCM.append(chunk)
-                self.flushIfNeeded()
-            }
-        }
-
+        logEngineGraph(
+            engine,
+            inputNode: inputNode,
+            outputNode: outputNode,
+            playerNode: playerNode,
+            sinkNode: sinkNode,
+            stage: "pre-start"
+        )
         engine.prepare()
         try engine.start()
+        if !engine.isRunning {
+            logSessionState(session, stage: "start-failed")
+            logEngineGraph(
+                engine,
+                inputNode: inputNode,
+                outputNode: outputNode,
+                playerNode: playerNode,
+                sinkNode: sinkNode,
+                stage: "start-failed"
+            )
+            throw NSError(
+                domain: "RemoteAudioCapture",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Hands-free audio engine did not enter a running state"]
+            )
+        }
         playerNode.play()
         self.engine = engine
         self.playerNode = playerNode
+        self.captureSinkNode = sinkNode
+        self.captureFormat = captureFormat
         self.isStreaming = true
-        self.captureDiagnosticsRemaining = captureLogLimit
-        logRoute(session)
+        logSessionState(session, stage: "started")
+        logEngineGraph(
+            engine,
+            inputNode: inputNode,
+            outputNode: outputNode,
+            playerNode: playerNode,
+            sinkNode: sinkNode,
+            stage: "post-start"
+        )
+        scheduleCaptureWatchdog(startToken: captureStartToken)
     }
 
     func stop() async {
         guard isStreaming else { return }
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = nil
         await stopAssistantAudio()
-        engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         engine = nil
         playerNode = nil
+        captureSinkNode = nil
+        captureFormat = nil
+        playbackFormat = nil
         flushRemaining()
         pendingPCM.removeAll(keepingCapacity: false)
         isStreaming = false
@@ -787,7 +869,7 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         }
 
         // Resample from source rate to playback format rate (e.g. 24kHz → 48kHz)
-        let resampled = resample(samples: floatSamples, from: sampleRate, to: playbackFormat.sampleRate)
+        let resampled = Self.resample(samples: floatSamples, from: sampleRate, to: playbackFormat.sampleRate)
         guard !resampled.isEmpty else { return }
 
         let frameCount = AVAudioFrameCount(resampled.count)
@@ -839,32 +921,6 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         onChunk?(pendingPCM.base64EncodedString())
     }
 
-    private func extractSamples(from buffer: AVAudioPCMBuffer) -> [Float]? {
-        let frameLength = Int(buffer.frameLength)
-        guard frameLength > 0 else { return [] }
-
-        switch buffer.format.commonFormat {
-        case .pcmFormatFloat32:
-            guard let channelData = buffer.floatChannelData?[0] else { return nil }
-            return Array(UnsafeBufferPointer(start: channelData, count: frameLength))
-
-        case .pcmFormatInt16:
-            guard let channelData = buffer.int16ChannelData?[0] else { return nil }
-            return UnsafeBufferPointer(start: channelData, count: frameLength).map {
-                Float($0) / Float(Int16.max)
-            }
-
-        case .pcmFormatInt32:
-            guard let channelData = buffer.int32ChannelData?[0] else { return nil }
-            return UnsafeBufferPointer(start: channelData, count: frameLength).map {
-                Float($0) / Float(Int32.max)
-            }
-
-        default:
-            return nil
-        }
-    }
-
     private func configureAudioSession(_ session: AVAudioSession) throws {
         try session.setCategory(
             .playAndRecord,
@@ -885,10 +941,55 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         }
     }
 
-    private func logRoute(_ session: AVAudioSession) {
+    private func logRuntimeEnvironment() {
+        #if targetEnvironment(simulator)
+        AppLogger.audio.warning("Hands-free capture running in iOS Simulator; microphone routing and voice processing can differ from device behavior")
+        #else
+        AppLogger.audio.debug("Hands-free capture running on physical device")
+        #endif
+    }
+
+    private func logSessionState(_ session: AVAudioSession, stage: String) {
+        let inputs = session.currentRoute.inputs.map { "\($0.portType.rawValue):\($0.portName)" }
         let outputs = session.currentRoute.outputs.map { "\($0.portType.rawValue):\($0.portName)" }
+        let availableInputs = session.availableInputs?.map { "\($0.portType.rawValue):\($0.portName)" } ?? []
         AppLogger.audio.debug(
-            "Hands-free route=\(outputs.joined(separator: ","), privacy: .public) mode=\(session.mode.rawValue, privacy: .public)"
+            """
+            Hands-free session[\(stage, privacy: .public)] category=\(session.category.rawValue, privacy: .public) \
+            mode=\(session.mode.rawValue, privacy: .public) sampleRate=\(session.sampleRate, privacy: .public) \
+            ioBuffer=\(session.ioBufferDuration, privacy: .public) preferredSampleRate=\(session.preferredSampleRate, privacy: .public) \
+            preferredIOBuffer=\(session.preferredIOBufferDuration, privacy: .public) inputAvailable=\(session.isInputAvailable) \
+            otherAudioPlaying=\(session.isOtherAudioPlaying) routeIn=\(inputs.joined(separator: ","), privacy: .public) \
+            routeOut=\(outputs.joined(separator: ","), privacy: .public) availableInputs=\(availableInputs.joined(separator: ","), privacy: .public)
+            """
+        )
+    }
+
+    private func logEngineGraph(
+        _ engine: AVAudioEngine,
+        inputNode: AVAudioInputNode,
+        outputNode: AVAudioOutputNode,
+        playerNode: AVAudioPlayerNode?,
+        sinkNode: AVAudioSinkNode?,
+        stage: String
+    ) {
+        let playerConnections = playerNode.map { describeConnections(from: $0, in: engine, playerNode: playerNode, sinkNode: sinkNode) } ?? "none"
+        let inputConnections = describeConnections(from: inputNode, in: engine, playerNode: playerNode, sinkNode: sinkNode)
+        let mixerConnections = describeConnections(from: engine.mainMixerNode, in: engine, playerNode: playerNode, sinkNode: sinkNode)
+
+        AppLogger.audio.debug(
+            """
+            Hands-free graph[\(stage, privacy: .public)] running=\(engine.isRunning) attachedNodes=\(engine.attachedNodes.count) \
+            input.voiceProcessing=\(inputNode.isVoiceProcessingEnabled) output.voiceProcessing=\(outputNode.isVoiceProcessingEnabled) \
+            input.input=\(self.describe(format: inputNode.inputFormat(forBus: 0)), privacy: .public) \
+            input.output=\(self.describe(format: inputNode.outputFormat(forBus: 0)), privacy: .public) \
+            output.input=\(self.describe(format: outputNode.inputFormat(forBus: 0)), privacy: .public) \
+            mixer.output=\(self.describe(format: engine.mainMixerNode.outputFormat(forBus: 0)), privacy: .public) \
+            player.output=\(playerNode.map { self.describe(format: $0.outputFormat(forBus: 0)) } ?? "none", privacy: .public) \
+            sink.input=\(sinkNode.map { self.describe(format: $0.inputFormat(forBus: 0)) } ?? "none", privacy: .public) \
+            input.connections=\(inputConnections, privacy: .public) player.connections=\(playerConnections, privacy: .public) \
+            mixer.connections=\(mixerConnections, privacy: .public)
+            """
         )
     }
 
@@ -898,7 +999,173 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         AppLogger.audio.warning("\(message, privacy: .public)")
     }
 
-    private func resample(samples: [Float], from sourceRate: Double, to targetRate: Double) -> [Float] {
+    private func scheduleCaptureWatchdog(startToken: Int) {
+        captureWatchdogTask?.cancel()
+        captureWatchdogTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            self?.runCaptureWatchdog(startToken: startToken)
+        }
+    }
+
+    private func runCaptureWatchdog(startToken: Int) {
+        guard isStreaming, captureStartToken == startToken else { return }
+        guard let snapshot = captureRunState.snapshot(token: startToken) else { return }
+        let firstCallbackMS = snapshot.firstCallbackAfterMilliseconds.map { String(format: "%.1f", $0) } ?? "none"
+        AppLogger.audio.debug(
+            "Hands-free capture watchdog callbacks=\(snapshot.callbackCount) frames=\(snapshot.totalFrames) firstCallbackMs=\(firstCallbackMS, privacy: .public) engineRunning=\(self.engine?.isRunning ?? false)"
+        )
+        let session = AVAudioSession.sharedInstance()
+        logSessionState(session, stage: "watchdog")
+        if let engine, let playerNode, let captureSinkNode {
+            logEngineGraph(
+                engine,
+                inputNode: engine.inputNode,
+                outputNode: engine.outputNode,
+                playerNode: playerNode,
+                sinkNode: captureSinkNode,
+                stage: "watchdog"
+            )
+        }
+        if snapshot.callbackCount == 0 {
+            AppLogger.audio.error("Hands-free capture produced zero callbacks in the first second; the duplex graph is alive enough to start but not delivering mic frames")
+        }
+    }
+
+    private func handleCapturedChunk(_ chunk: Data) {
+        pendingPCM.append(chunk)
+        flushIfNeeded()
+    }
+
+    private func handleCaptureStarted(snapshot: CaptureRunState.Snapshot, format: AVAudioFormat) {
+        let latencyMs = snapshot.firstCallbackAfterMilliseconds.map { String(format: "%.1f", $0) } ?? "unknown"
+        AppLogger.audio.debug(
+            "Hands-free capture received first callback after \(latencyMs, privacy: .public) ms format=\(self.describe(format: format), privacy: .public)"
+        )
+    }
+
+    private func makeCaptureSinkNode(format: AVAudioFormat, startToken: Int) -> AVAudioSinkNode {
+        AVAudioSinkNode { [weak self] _, frameCount, audioBufferList in
+            guard let self else { return noErr }
+            guard let samples = Self.extractSamples(from: audioBufferList, frameCount: Int(frameCount), format: format) else {
+                Task { @MainActor [weak self] in
+                    self?.logCaptureIssue(
+                        "Unsupported sink buffer format fmt=\(format.commonFormat.rawValue) interleaved=\(format.isInterleaved) ch=\(format.channelCount)"
+                    )
+                }
+                return noErr
+            }
+
+            let resampled = Self.resample(samples: samples, from: format.sampleRate, to: Self.targetSampleRate)
+            guard !resampled.isEmpty else { return noErr }
+
+            let chunk = Self.encodePCM16(samples: resampled)
+            guard let callback = self.captureRunState.recordCallback(token: startToken, frameCount: Int(frameCount)) else {
+                return noErr
+            }
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if callback.isFirst {
+                    self.handleCaptureStarted(snapshot: callback.snapshot, format: format)
+                }
+                self.handleCapturedChunk(chunk)
+            }
+            return noErr
+        }
+    }
+
+    private func describeConnections(
+        from node: AVAudioNode,
+        in engine: AVAudioEngine,
+        playerNode: AVAudioPlayerNode?,
+        sinkNode: AVAudioSinkNode?
+    ) -> String {
+        let points = engine.outputConnectionPoints(for: node, outputBus: 0)
+        guard !points.isEmpty else { return "none" }
+        return points.map { point in
+            let label = point.node.map { self.nodeLabel($0, in: engine, playerNode: playerNode, sinkNode: sinkNode) } ?? "nil"
+            return "\(label)@bus\(point.bus)"
+        }.joined(separator: ",")
+    }
+
+    private func nodeLabel(
+        _ node: AVAudioNode,
+        in engine: AVAudioEngine,
+        playerNode: AVAudioPlayerNode?,
+        sinkNode: AVAudioSinkNode?
+    ) -> String {
+        if node === engine.inputNode { return "input" }
+        if node === engine.outputNode { return "output" }
+        if node === engine.mainMixerNode { return "mainMixer" }
+        if let playerNode, node === playerNode { return "player" }
+        if let sinkNode, node === sinkNode { return "sink" }
+        return String(describing: type(of: node))
+    }
+
+    private func describe(format: AVAudioFormat) -> String {
+        "\(format.commonFormat.rawValue)@\(Int(format.sampleRate))Hz ch\(format.channelCount) interleaved=\(format.isInterleaved)"
+    }
+
+    private nonisolated static func extractSamples(
+        from audioBufferList: UnsafePointer<AudioBufferList>,
+        frameCount: Int,
+        format: AVAudioFormat
+    ) -> [Float]? {
+        guard frameCount > 0 else { return [] }
+        let firstBuffer = audioBufferList.pointee.mBuffers
+        let channelCount = max(1, Int(format.channelCount))
+
+        switch format.commonFormat {
+        case .pcmFormatFloat32:
+            guard let baseAddress = firstBuffer.mData?.assumingMemoryBound(to: Float.self) else { return nil }
+            if format.isInterleaved {
+                let source = UnsafeBufferPointer<Float>(start: baseAddress, count: frameCount * channelCount)
+                return stride(from: 0, to: source.count, by: channelCount).map { source[$0] }
+            }
+            return Array(UnsafeBufferPointer<Float>(start: baseAddress, count: frameCount))
+
+        case .pcmFormatInt16:
+            guard let baseAddress = firstBuffer.mData?.assumingMemoryBound(to: Int16.self) else { return nil }
+            if format.isInterleaved {
+                let source = UnsafeBufferPointer<Int16>(start: baseAddress, count: frameCount * channelCount)
+                return stride(from: 0, to: source.count, by: channelCount).map {
+                    Float(source[$0]) / Float(Int16.max)
+                }
+            }
+            return UnsafeBufferPointer<Int16>(start: baseAddress, count: frameCount).map {
+                Float($0) / Float(Int16.max)
+            }
+
+        case .pcmFormatInt32:
+            guard let baseAddress = firstBuffer.mData?.assumingMemoryBound(to: Int32.self) else { return nil }
+            if format.isInterleaved {
+                let source = UnsafeBufferPointer<Int32>(start: baseAddress, count: frameCount * channelCount)
+                return stride(from: 0, to: source.count, by: channelCount).map {
+                    Float($0) / Float(Int32.max)
+                }
+            }
+            return UnsafeBufferPointer<Int32>(start: baseAddress, count: frameCount).map {
+                Float($0) / Float(Int32.max)
+            }
+
+        default:
+            return nil
+        }
+    }
+
+    private nonisolated static func encodePCM16(samples: [Float]) -> Data {
+        var data = Data(count: samples.count * MemoryLayout<Int16>.size)
+        data.withUnsafeMutableBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.bindMemory(to: Int16.self).baseAddress else { return }
+            for (index, sample) in samples.enumerated() {
+                let clamped = max(-1.0, min(1.0, sample))
+                baseAddress[index] = Int16(clamped * Float(Int16.max))
+            }
+        }
+        return data
+    }
+
+    private nonisolated static func resample(samples: [Float], from sourceRate: Double, to targetRate: Double) -> [Float] {
         guard sourceRate > 0, sourceRate != targetRate else { return samples }
         let ratio = sourceRate / targetRate
         let targetCount = Int(Double(samples.count) / ratio)
