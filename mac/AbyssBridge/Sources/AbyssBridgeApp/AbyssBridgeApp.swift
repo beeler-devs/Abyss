@@ -154,8 +154,8 @@ final class BridgeAppModel: ObservableObject {
 
     var connectionStateLabel: String {
         switch connectionState {
-        case .connected: return "connected"
-        case .connecting: return "connecting"
+        case .connected:    return paired ? "connected" : "not paired"
+        case .connecting:   return "connecting"
         case .disconnected: return "disconnected"
         }
     }
@@ -444,7 +444,7 @@ struct BridgeStatusView: View {
 
     private var connectionDotColor: Color {
         switch model.connectionState {
-        case .connected:    return .green
+        case .connected:    return model.paired ? .green : .orange
         case .connecting:   return .yellow
         case .disconnected: return Color(nsColor: .systemGray)
         }

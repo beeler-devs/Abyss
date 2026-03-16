@@ -26,6 +26,7 @@ public actor BridgeCore {
     private var hasRipgrep: Bool?
     private var claudeStreamStates: [String: ClaudeCLIStreamState] = [:]
     private var novaActManager: NovaActSessionManager?
+    private var lastPairingErrorLogged: Date?
 
     private let envelopeEncoder: JSONEncoder
     private let envelopeDecoder: JSONDecoder
@@ -316,6 +317,7 @@ public actor BridgeCore {
         case "bridge.registered":
             await emitLog("[pairing] registered successfully — paired=true")
             paired = true
+            lastPairingErrorLogged = nil
             await emitStatus()
         case "error":
             if let payload: [String: String] = try? decodePayloadObject(from: envelope.payload) {
@@ -323,8 +325,15 @@ public actor BridgeCore {
                 let message = payload["message"] ?? ""
                 await emitLog("[error] code=\(code) message=\(message)")
                 if code == "pairing_code_invalid_or_expired" {
-                    paired = false
-                    await emitStatus()
+                    if paired {
+                        paired = false
+                        await emitStatus()
+                    }
+                    let now = Date()
+                    if lastPairingErrorLogged == nil || now.timeIntervalSince(lastPairingErrorLogged!) > 30 {
+                        await emitLog("[pairing] code not found on server, waiting for iOS to re-register...")
+                        lastPairingErrorLogged = now
+                    }
                 }
             }
         case "tool.call":
