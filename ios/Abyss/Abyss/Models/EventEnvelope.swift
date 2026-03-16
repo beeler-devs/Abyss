@@ -176,11 +176,15 @@ struct EventEnvelope: Codable, Sendable {
             payload = p
         case .bridgePaired(let value):
             type = "bridge.paired"
-            payload = [
+            var p: [String: JSONValue] = [
                 "deviceId": .string(value.deviceId),
                 "deviceName": .string(value.deviceName),
                 "status": .string(value.status),
             ]
+            if let workspaceRoot = value.workspaceRoot {
+                p["workspaceRoot"] = .string(workspaceRoot)
+            }
+            payload = p
         case .bridgeStatus(let value):
             var p: [String: JSONValue] = [
                 "deviceId": .string(value.deviceId),

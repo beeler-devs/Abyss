@@ -322,7 +322,7 @@ public actor BridgeCore {
                 try? await self?.handleToolCall(envelope)
             }
         case "bridge.workspace.set":
-            Task { await handleWorkspaceSet(envelope) }
+            Task { [weak self] in await self?.handleWorkspaceSet(envelope) }
         default:
             break
         }

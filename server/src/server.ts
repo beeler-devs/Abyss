@@ -223,30 +223,6 @@ wss.on("connection", (socket, request) => {
       return;
     }
 
-    if (event.type === "bridge.workspace.set") {
-      const ctx = socketContexts.get(socket);
-      const sessionId = ctx?.sessionId;
-      if (!sessionId) return;
-
-      const deviceId = typeof event.payload.deviceId === "string" ? event.payload.deviceId : undefined;
-      const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
-      if (!deviceId || !workspacePath) return;
-
-      if (workspacePath.length > 4096) return;
-
-      const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
-      if (!resolved.device) return;
-
-      const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
-      if (bridgeSocket) {
-        safeSend(bridgeSocket, makeEvent("bridge.workspace.set", resolved.device.sessionId, {
-          deviceId,
-          workspacePath,
-        }));
-      }
-      return;
-    }
-
     // Everything else on non-bridge connections is treated as iOS/client traffic.
     if (context.sessionId && context.sessionId !== event.sessionId) {
       safeSend(socket, makeEvent("error", context.sessionId, {
@@ -270,6 +246,25 @@ wss.on("connection", (socket, request) => {
 
     if (event.type === "session.start") {
       emitBridgeStatusSnapshot(event.sessionId, socket);
+    }
+
+    if (event.type === "bridge.workspace.set") {
+      const sessionId = context.sessionId;
+      const deviceId = typeof event.payload.deviceId === "string" ? event.payload.deviceId : undefined;
+      const workspacePath = typeof event.payload.workspacePath === "string" ? event.payload.workspacePath : undefined;
+      if (!deviceId || !workspacePath || workspacePath.length > 4096) return;
+
+      const resolved = bridgeState.resolveDeviceForTool(sessionId, deviceId);
+      if (!resolved.device) return;
+
+      const bridgeSocket = bridgeSocketsByDeviceId.get(deviceId);
+      if (bridgeSocket) {
+        safeSend(bridgeSocket, makeEvent("bridge.workspace.set", resolved.device.sessionId, {
+          deviceId,
+          workspacePath,
+        }));
+      }
+      return;
     }
 
     if (event.type === "audio.output.interrupted") {
