@@ -155,7 +155,7 @@ final class ConversationEventCoordinator: ObservableObject {
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult, .error,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .userAudioStreamStart,
                 .userAudioStreamChunk, .userAudioStreamEnd, .audioOutputInterrupted,
-                .agentCompleted, .bridgePairRequest:
+                .agentCompleted, .bridgePairRequest, .preferencesSync:
             eventBus.emit(event)
         }
     }

@@ -304,16 +304,16 @@ final class GmailAuthManager: NSObject, ObservableObject {
 
 extension GmailAuthManager: ASWebAuthenticationPresentationContextProviding {
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        let findWindow = {
+        let findWindow = { @MainActor in
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .compactMap { $0.keyWindow }
                 .first ?? UIWindow()
         }
         if Thread.isMainThread {
-            return findWindow()
+            return MainActor.assumeIsolated { findWindow() }
         }
-        return DispatchQueue.main.sync { findWindow() }
+        return DispatchQueue.main.sync { MainActor.assumeIsolated { findWindow() } }
     }
 }
 
