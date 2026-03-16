@@ -129,15 +129,20 @@ struct TranscriptView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, 60)
                     }
+
+                    // Stable scroll anchor — always at the very bottom of all content.
+                    // Scrolling to a growing view (like partial_assistant) causes overshoot
+                    // when updates are rapid; this fixed-size anchor avoids that.
+                    Color.clear
+                        .frame(height: 1)
+                        .id("bottom_anchor")
                 }
                 .padding(.vertical, 12)
             }
             .scrollDismissesKeyboard(.interactively)
             .onChange(of: messages.count) { _, _ in
-                if let last = messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(TranscriptItem.message(last).id, anchor: .bottom)
-                    }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo("bottom_anchor", anchor: .bottom)
                 }
             }
             .onChange(of: agentProgressCards.map(\.id)) { oldValue, newValue in
@@ -150,16 +155,15 @@ struct TranscriptView: View {
                     proxy.scrollTo(TranscriptItem.agentCardID(insertedID), anchor: .center)
                 }
             }
-            .onChange(of: assistantPartialSpeech) { _, _ in
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo("partial_assistant", anchor: .bottom)
-                }
+            .onChange(of: assistantPartialSpeech) { _, newValue in
+                guard !newValue.isEmpty else { return }
+                // No animation — rapid streaming causes overlapping animated scrollTo
+                // calls to overshoot past content when the target view keeps growing.
+                proxy.scrollTo("bottom_anchor", anchor: .bottom)
             }
             .onChange(of: appState) { _, newValue in
                 guard newValue == .thinking else { return }
-                withAnimation(.easeOut(duration: 0.1)) {
-                    proxy.scrollTo("typing_assistant", anchor: .bottom)
-                }
+                proxy.scrollTo("bottom_anchor", anchor: .bottom)
             }
         }
     }
