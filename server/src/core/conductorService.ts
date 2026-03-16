@@ -260,7 +260,7 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
       type: "object",
       properties: {
         deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
-        command: { type: "string", description: "Shell command to execute (example: npm test)." },
+        command: { type: "string", description: "The exact shell command to execute. Extract ONLY the raw command from the user's request — strip phrases like 'on mac', 'on the bridge', 'on my computer'. Example: user says 'run ls -la on mac' → command is 'ls -la'." },
         cwd: { type: "string", description: "Optional relative directory under workspace root." },
         timeoutSec: { type: "number", description: "Optional command timeout in seconds (max 900)." },
       },
@@ -274,7 +274,7 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
       type: "object",
       properties: {
         deviceId: { type: "string" },
-        command: { type: "string" },
+        command: { type: "string", description: "The exact shell command to execute. Extract ONLY the raw command from the user's request — strip phrases like 'on mac', 'on the bridge', 'on my computer'. Example: user says 'run ls -la on mac' → command is 'ls -la'." },
         cwd: { type: "string" },
         env: { type: "object" },
         timeoutSec: { type: "number" },
@@ -1433,7 +1433,7 @@ export class ConductorService {
 
       const enrichedResult = JSON.stringify(parsed);
       const cardSummary =
-        "\n\n[Cards rendered to user. Reference each inline:\n" +
+        "\n\n[MANDATORY: These cards are ALREADY displayed to the user with full details. Reference each one inline using the exact fenced block syntax below. Do NOT describe, list, or summarize the card data in prose — the card UI already shows everything:\n" +
         cardRefs.join("\n") +
         "\n]";
 
@@ -1458,7 +1458,7 @@ export class ConductorService {
     while ((m = re.exec(responseText)) !== null) existingIds.add(m[1]);
     const missing = pendingCardRefs.filter(r => !existingIds.has(r.id));
     if (missing.length === 0) return responseText;
-    return responseText + "\n" + missing.map(r => "```card:" + r.type + ":" + r.id + "\n```").join("\n");
+    return missing.map(r => "```card:" + r.type + ":" + r.id + "\n```").join("\n") + "\n" + responseText;
   }
 
   /**

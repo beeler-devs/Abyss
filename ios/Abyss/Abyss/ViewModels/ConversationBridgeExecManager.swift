@@ -27,7 +27,7 @@ final class ConversationBridgeExecManager: ObservableObject {
             let command = parseCommand(from: toolCall)
             var card = BridgeExecCard(
                 callId: toolCall.callId,
-                anchorMessageID: lastAssistantMessageID,
+                anchorMessageID: nil,
                 command: command,
                 status: .running
             )
@@ -83,6 +83,12 @@ final class ConversationBridgeExecManager: ObservableObject {
 
         default:
             break
+        }
+    }
+
+    func anchorUnanchoredCards(to messageID: UUID) {
+        for index in cards.indices where cards[index].anchorMessageID == nil {
+            cards[index].anchorMessageID = messageID
         }
     }
 
