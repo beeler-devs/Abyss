@@ -266,7 +266,11 @@ final class ConversationAudioPipeline: ObservableObject {
             guard self.canRunLiveConversation else { return }
 
             if self.recordingMode == .vadAuto, self.appState == .speaking {
-                guard !self.handsFreeBargeInInFlight else { return }
+                guard !self.handsFreeBargeInInFlight else {
+                    AppLogger.audio.debug("[BARGE-IN] VAD speech detected but bargeIn already in flight")
+                    return
+                }
+                AppLogger.audio.debug("[BARGE-IN] VAD speech detected during .speaking — triggering bargeIn")
                 self.handsFreeBargeInInFlight = true
                 Task { @MainActor in
                     defer { self.handsFreeBargeInInFlight = false }
@@ -275,6 +279,7 @@ final class ConversationAudioPipeline: ObservableObject {
                 return
             }
 
+            AppLogger.audio.debug("[BARGE-IN] VAD speech detected but appState=\(self.appState.rawValue, privacy: .public) — NOT triggering bargeIn")
             if self.appState == .idle || self.appState == .transcribing {
                 self.setState(.listening)
             }
@@ -527,9 +532,11 @@ final class ConversationAudioPipeline: ObservableObject {
         } else {
             // Capture the current response ID as rejected BEFORE stopping audio.
             // Late-arriving chunks with this ID will be dropped by handleAssistantAudioChunk.
+            AppLogger.audio.debug("[BARGE-IN] bargeIn vadAuto: rejecting liveResponseId=\(self.currentPlayingLiveResponseId ?? "nil", privacy: .public) reason=\(reason, privacy: .public)")
             rejectedLiveResponseId = currentPlayingLiveResponseId
             currentPlayingLiveResponseId = nil
             await stopRemoteAssistantAudio()
+            AppLogger.audio.debug("[BARGE-IN] bargeIn vadAuto: stopRemoteAssistantAudio completed")
         }
 
         let interruptedEvent = Event.audioOutputInterrupted(reason, sessionId: sessionId)
@@ -540,9 +547,11 @@ final class ConversationAudioPipeline: ObservableObject {
 
         if recordingMode == .vadAuto {
             setState(.listening)
+            // vadAuto: mic is already streaming to Nova Sonic, no refresh needed.
+            // Nova Sonic handles barge-in natively on the same stream.
+        } else {
+            await refreshLiveConversationState()
         }
-
-        await refreshLiveConversationState()
     }
 
     private func setState(_ state: AppState) {
@@ -556,9 +565,11 @@ final class ConversationAudioPipeline: ObservableObject {
         // Gate: drop chunks from a rejected (interrupted) response
         if let rejected = rejectedLiveResponseId {
             if chunk.liveResponseId == rejected {
+                AppLogger.audio.debug("[BARGE-IN] Dropped audio chunk with rejected liveResponseId=\(rejected, privacy: .public)")
                 return
             }
             // New response arrived — clear the gate
+            AppLogger.audio.debug("[BARGE-IN] Clearing gate: new liveResponseId=\(chunk.liveResponseId ?? "nil", privacy: .public) rejected=\(rejected, privacy: .public)")
             rejectedLiveResponseId = nil
         }
 
@@ -583,6 +594,7 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func handleAssistantAudioInterrupted() async {
         guard recordingMode == .vadAuto else { return }
+        AppLogger.audio.debug("[BARGE-IN] handleAssistantAudioInterrupted — stopping remote assistant audio")
         await stopRemoteAssistantAudio()
     }
 

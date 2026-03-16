@@ -886,14 +886,15 @@ test("nova-sonic emits interruption and returns to listening on interrupted comp
 
   await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
   assert.equal(findStateTransitions(harness.emitted, "listening").length, 2);
-  await waitFor(() => harness.client.sendCallCount === 2);
+  // Native barge-in: no stream restart — still only one send() call
+  assert.equal(harness.client.sendCallCount, 1);
   assert.equal(
     harness.client.outboundEvents.filter((event) => "sessionStart" in event).length,
-    2,
+    1,
   );
 });
 
-test("nova-sonic interrupt restarts the active stream, drops stale events, and starts a fresh response", async (t) => {
+test("nova-sonic interrupt drops stale events on same stream and accepts fresh response", async (t) => {
   const harness = createHarness();
   t.after(async () => {
     harness.client.closeAllResponses();
@@ -903,6 +904,7 @@ test("nova-sonic interrupt restarts the active stream, drops stale events, and s
   await harness.provider.startStream("session-1", harness.context);
   await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
 
+  // Emit first assistant text on stream 0
   harness.client.emitEvent({
     contentStart: {
       contentId: "assistant-live-1",
@@ -931,13 +933,15 @@ test("nova-sonic interrupt restarts the active stream, drops stale events, and s
   assert.equal(firstPartial.isPartial, true);
   assert.equal(typeof firstPartial.liveResponseId, "string");
 
+  // Interrupt — native barge-in, no stream restart
   await harness.provider.interrupt("session-1");
   await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
-  await waitFor(() => harness.client.sendCallCount === 2);
+  assert.equal(harness.client.sendCallCount, 1); // Same stream, no restart
 
   const interruptedEvent = eventsOfType(harness.emitted, "assistant.audio.interrupted")[0];
   assert.equal(interruptedEvent?.payload.liveResponseId, firstPartial.liveResponseId);
 
+  // Stale completionEnd from old response — should NOT finalize text
   harness.client.emitEvent({
     completionEnd: {
       completionId: "completion-live-1",
@@ -948,6 +952,7 @@ test("nova-sonic interrupt restarts the active stream, drops stale events, and s
   await waitForTicks();
   assert.equal(eventsOfType(harness.emitted, "assistant.speech.final").length, 0);
 
+  // New response on SAME stream (stream 0) after barge-in cleared
   harness.client.emitEvent({
     contentStart: {
       contentId: "assistant-live-2",
@@ -956,26 +961,26 @@ test("nova-sonic interrupt restarts the active stream, drops stale events, and s
       type: "TEXT",
       additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
     },
-  }, 1);
+  }, 0);
   harness.client.emitEvent({
     textOutput: {
       contentId: "assistant-live-2",
       content: "Fresh reply.",
     },
-  }, 1);
+  }, 0);
   harness.client.emitEvent({
     contentEnd: {
       contentId: "assistant-live-2",
       type: "TEXT",
       stopReason: "END_TURN",
     },
-  }, 1);
+  }, 0);
   harness.client.emitEvent({
     completionEnd: {
       completionId: "completion-live-2",
       stopReason: "END_TURN",
     },
-  }, 1);
+  }, 0);
 
   await waitFor(() => eventsOfType(harness.emitted, "assistant.speech.final").length === 1);
   const finalAppend = findToolCalls(harness.emitted, "convo.appendMessage").at(-1);
@@ -984,6 +989,167 @@ test("nova-sonic interrupt restarts the active stream, drops stale events, and s
     isPartial: false,
   });
   assert.notEqual(parseToolArguments(finalAppend).liveResponseId, firstPartial.liveResponseId);
+});
+
+test("nova-sonic native barge-in drops audio without restarting stream", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeAllResponses();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
+
+  // Start assistant audio response
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "audio-1",
+      completionId: "completion-1",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-1", content: "AAAA" },
+  });
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.chunk").length === 1);
+
+  // Nova Sonic sends INTERRUPTED
+  harness.client.emitEvent({
+    completionEnd: { completionId: "completion-1", stopReason: "INTERRUPTED" },
+  });
+
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
+  // No stream restart
+  assert.equal(harness.client.sendCallCount, 1);
+  assert.equal(
+    harness.client.outboundEvents.filter((event) => "sessionStart" in event).length,
+    1,
+  );
+
+  // Subsequent audio chunks on same stream are dropped (bargedIn was set then cleared)
+  // Simulate Nova Sonic starting new user input processing
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "user-1",
+      role: "USER",
+      type: "TEXT",
+    },
+  });
+  // New assistant response should flow normally
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "audio-2",
+      completionId: "completion-2",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-2", content: "BBBB" },
+  });
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.chunk").length === 2);
+});
+
+test("nova-sonic iOS-only barge-in gates stale audio via bargedIn flag", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeAllResponses();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
+
+  // Start assistant audio
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "audio-1",
+      completionId: "completion-1",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-1", content: "AAAA" },
+  });
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.chunk").length === 1);
+
+  // iOS barge-in (interrupt) — Nova Sonic doesn't detect it
+  await harness.provider.interrupt("session-1");
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
+
+  // Stale audio continues from Nova Sonic — should be dropped
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-1", content: "CCCC" },
+  });
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-1", content: "DDDD" },
+  });
+  await waitForTicks();
+  // Still only 1 audio chunk — stale ones were dropped
+  assert.equal(eventsOfType(harness.emitted, "assistant.audio.chunk").length, 1);
+
+  // Old response ends naturally — bargedIn clears
+  harness.client.emitEvent({
+    completionEnd: { completionId: "completion-1", stopReason: "END_TURN" },
+  });
+  await waitForTicks();
+
+  // New response audio flows normally
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "audio-2",
+      completionId: "completion-2",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-2", content: "EEEE" },
+  });
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.chunk").length === 2);
+});
+
+test("nova-sonic iOS interrupt + Nova Sonic INTERRUPTED are idempotent", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeAllResponses();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
+
+  // Start assistant audio
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "audio-1",
+      completionId: "completion-1",
+      role: "ASSISTANT",
+      type: "AUDIO",
+    },
+  });
+  harness.client.emitEvent({
+    audioOutput: { contentId: "audio-1", content: "AAAA" },
+  });
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.chunk").length === 1);
+
+  // iOS fires interrupt first
+  await harness.provider.interrupt("session-1");
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
+
+  // Then Nova Sonic also fires INTERRUPTED — should be idempotent
+  harness.client.emitEvent({
+    completionEnd: { completionId: "completion-1", stopReason: "INTERRUPTED" },
+  });
+  await waitForTicks();
+
+  // Only one interrupted event emitted
+  assert.equal(eventsOfType(harness.emitted, "assistant.audio.interrupted").length, 1);
+  // No stream restart
+  assert.equal(harness.client.sendCallCount, 1);
 });
 
 test("nova-sonic timeout emits recoverable failure and does not finalize the assistant draft", async (t) => {

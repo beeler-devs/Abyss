@@ -62,6 +62,7 @@ interface SonicSession {
   bufferedAudioChunks: string[];
   restarting: boolean;
   streamGeneration: number;
+  bargedIn: boolean;
 }
 
 interface SonicEventEnvelope {
@@ -192,6 +193,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       bufferedAudioChunks: [],
       restarting: false,
       streamGeneration: 0,
+      bargedIn: false,
     };
     this.sessions.set(sessionId, session);
     await this.openModelStream(session);
@@ -226,7 +228,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if (!session) {
       return;
     }
-    void this.restartSessionAfterInterruption(session, "user_interrupt");
+    this.handleBargeIn(session, "user_interrupt");
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -583,8 +585,12 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         generationStage: asString(metadata.generationStage),
         text: "",
       });
-      if ((asString(payload.role) ?? "ASSISTANT") === "ASSISTANT") {
+      const role = asString(payload.role) ?? "ASSISTANT";
+      if (role === "ASSISTANT") {
         this.noteAssistantActivity(session);
+      }
+      if (role === "USER") {
+        session.bargedIn = false;
       }
       return;
     }
@@ -600,6 +606,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (!info) {
         return;
       }
+      if (info.role === "ASSISTANT" && session.bargedIn) return;
       info.text += content;
       if (info.role === "ASSISTANT") {
         this.noteAssistantActivity(session);
@@ -620,6 +627,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
 
     if ("audioOutput" in event) {
+      if (session.bargedIn) return;
       const payload = asRecord(event.audioOutput);
       const audio = payload ? (asString(payload.content) ?? asString(payload.bytes)) : undefined;
       if (!audio) {
@@ -735,7 +743,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }));
       }
 
-      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0) {
+      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0 && !session.bargedIn) {
         const text = info.text.trim();
 
         // Skip Nova Sonic metadata responses (e.g., { "interrupted" : true })
@@ -766,7 +774,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }));
       }
 
-      if (info.role === "ASSISTANT" && info.type === "AUDIO") {
+      if (info.role === "ASSISTANT" && info.type === "AUDIO" && !session.bargedIn) {
         session.context.emit(makeEvent("assistant.audio.end", session.sessionId, {
           ...(session.liveResponseId ? { liveResponseId: session.liveResponseId } : {}),
         }));
@@ -780,11 +788,13 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       const payload = asRecord(event.completionEnd);
       const stopReason = payload ? asString(payload.stopReason) : undefined;
       if (stopReason === "INTERRUPTED" || stopReason === "BARGE_IN") {
-        void this.restartSessionAfterInterruption(session, stopReason.toLowerCase());
+        this.handleBargeIn(session, stopReason.toLowerCase());
+        session.bargedIn = false;
         return;
       }
 
       if (stopReason === "END_TURN") {
+        session.bargedIn = false;
         this.finishAssistantTurn(session, {
           emitIdle: true,
           reason: "completion_end",
@@ -849,7 +859,22 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     outgoing.close();
   }
 
-  private async restartSessionAfterInterruption(
+  private handleBargeIn(session: SonicSession, reason: string): void {
+    if (session.closed || session.bargedIn) return;
+
+    const liveResponseId = this.resetAssistantTurnState(session);
+    session.bargedIn = true;
+
+    if (liveResponseId) {
+      session.context.emit(makeEvent("assistant.audio.interrupted", session.sessionId, {
+        reason,
+        liveResponseId,
+      }));
+    }
+    this.emitListeningState(session);
+  }
+
+  private async restartSessionAfterError(
     session: SonicSession,
     interruptionReason: string,
   ): Promise<void> {
