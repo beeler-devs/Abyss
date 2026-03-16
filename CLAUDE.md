@@ -82,6 +82,22 @@ When server-side tools (gmail.*, calendar.*, canvas.*) return results, `Conducto
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
 
+### Context Graph (Neptune Analytics + Titan Embeddings)
+Graph-based knowledge persistence layer that augments the existing MemoryService with semantic retrieval. When `NEPTUNE_GRAPH_ID` is set, goals, sessions, decisions, blockers, and next-steps are stored as graph nodes with vector embeddings for hybrid search.
+
+**Flow:** On `session.start`, creates User + Session nodes. On each substantive user turn (filtered by `isSubstantiveGoal()`), creates a Goal node with embedding. On session finalization, `summarizeAndStore()` delegates to MemoryService, then `session.finalized` creates MemoryEpisode, Decision, Blocker, NextStep, Repo, and Branch nodes. If summarization returns null, a fallback summary is built from the last 3 user turns. On first user turn, `retrieveResumeContext()` performs hybrid vector+graph search (user-scoped) with MemoryService fallback.
+
+**Config env vars:** `NEPTUNE_GRAPH_ID`, `NEPTUNE_GRAPH_REGION`, `EMBEDDING_MODEL_ID` (default `amazon.titan-embed-text-v2:0`), `EMBEDDING_DIMENSIONS` (default 256), `GRAPH_VECTOR_K` (default 5), `GRAPH_NEIGHBORHOOD_LIMIT` (default 3).
+
+**Files:**
+- `server/src/contextGraph/contextGraphService.ts` — Orchestrator: `apply()`, `retrieveResumeContext()`, `summarizeAndStore()`
+- `server/src/contextGraph/store/neptuneAnalyticsStore.ts` — Neptune Analytics impl with `hybridResumeQuery()`, `healthCheck()`
+- `server/src/contextGraph/store/graphStore.ts` — `GraphStore` interface
+- `server/src/contextGraph/embedding/embeddingService.ts` — Titan Text Embeddings V2 wrapper
+- `server/src/contextGraph/types.ts` — 9 node types (User, Session, Goal, Repo, Branch, Decision, Blocker, NextStep, MemoryEpisode), `ContextGraphUpdate` union
+- `server/src/contextGraph/index.ts` — Re-exports
+- `server/src/core/conductorService.ts` — `isSubstantiveGoal()` filter, integration points (session.start, goal.started, finalization)
+
 ### User Preferences
 LLM-writable preference store that persists across sessions. iOS is source of truth.
 
