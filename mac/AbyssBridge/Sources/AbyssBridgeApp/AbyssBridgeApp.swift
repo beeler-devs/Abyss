@@ -64,6 +64,24 @@ struct WorkspaceRecord: Identifiable, Codable, Equatable, Hashable {
     }
 }
 
+struct NovaActPrerequisite: Identifiable {
+    let id: String
+    let label: String
+    let fixCommand: String
+    var status: Status
+
+    enum Status {
+        case unchecked, checking
+        case passed(String)
+        case failed(String)
+    }
+
+    var isPassed: Bool {
+        if case .passed = status { return true }
+        return false
+    }
+}
+
 enum BridgePermissionPreset: String, CaseIterable, Identifiable {
     case restricted = "Restricted"
     case developer  = "Developer"
@@ -93,6 +111,10 @@ final class BridgeAppModel: ObservableObject {
     @Published var requireGitPushConfirmation = true
     @Published var allowClaudeRun = false
     @Published var allowNovaAct = false
+
+    @Published var showNovaActSetup = false
+    @Published var novaActPrerequisites: [NovaActPrerequisite] = []
+    @Published var novaActChecksRunning = false
 
     private var bridgeCore: BridgeCore?
     private let defaults = UserDefaults.standard
@@ -423,6 +445,124 @@ final class BridgeAppModel: ObservableObject {
         }
     }
 
+    // MARK: - Nova Act Prerequisite Checks
+
+    func runAllNovaActChecks() async {
+        novaActChecksRunning = true
+        novaActPrerequisites = [
+            NovaActPrerequisite(id: "python3", label: "Python 3", fixCommand: "brew install python3", status: .checking),
+            NovaActPrerequisite(id: "nova_act", label: "nova-act package", fixCommand: "python3 -m pip install nova-act", status: .checking),
+            NovaActPrerequisite(id: "api_key", label: "NOVA_ACT_API_KEY", fixCommand: "export NOVA_ACT_API_KEY=\"your-key-here\"", status: .checking),
+            NovaActPrerequisite(id: "chrome", label: "Google Chrome", fixCommand: "brew install --cask google-chrome", status: .checking),
+        ]
+
+        // Python check
+        let pythonResult = await checkPython3()
+        if let idx = novaActPrerequisites.firstIndex(where: { $0.id == "python3" }) {
+            novaActPrerequisites[idx].status = pythonResult.status
+        }
+
+        // nova-act depends on Python
+        if case .passed(let pythonPath) = pythonResult.status {
+            let novaResult = await checkNovaActPackage(pythonPath: pythonPath)
+            if let idx = novaActPrerequisites.firstIndex(where: { $0.id == "nova_act" }) {
+                novaActPrerequisites[idx].status = novaResult
+            }
+        } else {
+            if let idx = novaActPrerequisites.firstIndex(where: { $0.id == "nova_act" }) {
+                novaActPrerequisites[idx].status = .failed("Requires Python 3")
+            }
+        }
+
+        // API key check
+        let apiKeyResult = checkApiKey()
+        if let idx = novaActPrerequisites.firstIndex(where: { $0.id == "api_key" }) {
+            novaActPrerequisites[idx].status = apiKeyResult
+        }
+
+        // Chrome check
+        let chromeResult = checkChrome()
+        if let idx = novaActPrerequisites.firstIndex(where: { $0.id == "chrome" }) {
+            novaActPrerequisites[idx].status = chromeResult
+        }
+
+        novaActChecksRunning = false
+    }
+
+    private func checkPython3() async -> (status: NovaActPrerequisite.Status, path: String?) {
+        let candidates = [
+            "/opt/homebrew/bin/python3",
+            "/usr/local/bin/python3",
+            "/usr/bin/python3",
+        ]
+
+        // Check well-known paths first
+        for path in candidates {
+            if FileManager.default.isExecutableFile(atPath: path) {
+                return (.passed(path), path)
+            }
+        }
+
+        // Check PATH entries
+        if let pathEnv = ProcessInfo.processInfo.environment["PATH"] {
+            for dir in pathEnv.split(separator: ":") {
+                let candidate = "\(dir)/python3"
+                if FileManager.default.isExecutableFile(atPath: candidate) {
+                    return (.passed(candidate), candidate)
+                }
+            }
+        }
+
+        return (.failed("Not found"), nil)
+    }
+
+    private func checkNovaActPackage(pythonPath: String) async -> NovaActPrerequisite.Status {
+        return await withCheckedContinuation { continuation in
+            Task.detached {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: pythonPath)
+                proc.arguments = ["-c", "import nova_act; print(nova_act.__version__)"]
+
+                var env = ProcessInfo.processInfo.environment
+                env["PYTHONUNBUFFERED"] = "1"
+                proc.environment = env
+
+                let pipe = Pipe()
+                proc.standardOutput = pipe
+                proc.standardError = Pipe()
+
+                do {
+                    try proc.run()
+                    proc.waitUntilExit()
+
+                    if proc.terminationStatus == 0 {
+                        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                        let version = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "installed"
+                        continuation.resume(returning: .passed("v\(version)"))
+                    } else {
+                        continuation.resume(returning: .failed("Not installed"))
+                    }
+                } catch {
+                    continuation.resume(returning: .failed("Check failed: \(error.localizedDescription)"))
+                }
+            }
+        }
+    }
+
+    private func checkApiKey() -> NovaActPrerequisite.Status {
+        if let key = ProcessInfo.processInfo.environment["NOVA_ACT_API_KEY"], !key.isEmpty {
+            return .passed("Set (\(key.prefix(8))…)")
+        }
+        return .failed("Not set — must be set before launching app")
+    }
+
+    private func checkChrome() -> NovaActPrerequisite.Status {
+        if FileManager.default.fileExists(atPath: "/Applications/Google Chrome.app") {
+            return .passed("/Applications/Google Chrome.app")
+        }
+        return .failed("Not found")
+    }
+
     private func confirmGitPush(remote: String, branch: String) async -> Bool {
         await withCheckedContinuation { continuation in
             let alert = NSAlert()
@@ -441,6 +581,7 @@ struct BridgeStatusView: View {
 
     @State private var transientMessage: String? = nil
     @State private var transientTask: Task<Void, Never>? = nil
+    @State private var novaActSetupConfirmed = false
 
     private var connectionDotColor: Color {
         switch model.connectionState {
@@ -623,7 +764,14 @@ struct BridgeStatusView: View {
                                 EmptyView()
                             }
                         }
-                        .onChange(of: model.allowNovaAct) { model.applyPermissions() }
+                        .onChange(of: model.allowNovaAct) { oldValue, newValue in
+                            if newValue && !oldValue {
+                                model.showNovaActSetup = true
+                                Task { await model.runAllNovaActChecks() }
+                            } else {
+                                model.applyPermissions()
+                            }
+                        }
                         .help("High-risk: grants full browser automation access")
                     } header: {
                         Label("AI & Automation", systemImage: "cpu.fill")
@@ -690,6 +838,14 @@ struct BridgeStatusView: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .sheet(isPresented: $model.showNovaActSetup, onDismiss: {
+                if !novaActSetupConfirmed {
+                    model.allowNovaAct = false
+                }
+                novaActSetupConfirmed = false
+            }) {
+                NovaActSetupSheet(model: model, confirmed: $novaActSetupConfirmed)
+            }
             .onChange(of: model.statusMessage) {
                 guard !model.statusMessage.isEmpty else { return }
                 transientTask?.cancel()
@@ -743,6 +899,140 @@ struct BridgeStatusView: View {
                     }
                 }
             }
+        }
+    }
+}
+
+struct NovaActSetupSheet: View {
+    @ObservedObject var model: BridgeAppModel
+    @Binding var confirmed: Bool
+
+    private var allPassed: Bool {
+        model.novaActPrerequisites.allSatisfy(\.isPassed)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Nova Act requires Python 3, the nova-act package, an API key, and Google Chrome. Check that all prerequisites are met before enabling.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+
+                    VStack(spacing: 12) {
+                        ForEach(model.novaActPrerequisites) { prereq in
+                            PrerequisiteRow(prerequisite: prereq)
+                        }
+                    }
+                    .padding(.horizontal)
+
+                    HStack {
+                        Button("Check Again") {
+                            Task { await model.runAllNovaActChecks() }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.novaActChecksRunning)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                }
+                .padding(.vertical)
+            }
+            .scrollContentBackground(.hidden)
+            .navigationTitle("Nova Act Setup")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        confirmed = false
+                        model.showNovaActSetup = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(allPassed ? "Done" : "Enable Anyway") {
+                        confirmed = true
+                        model.applyPermissions()
+                        model.showNovaActSetup = false
+                    }
+                    .tint(allPassed ? nil : .orange)
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .frame(minWidth: 480, minHeight: 360)
+    }
+}
+
+struct PrerequisiteRow: View {
+    let prerequisite: NovaActPrerequisite
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                statusIcon
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(prerequisite.label)
+                        .font(.body)
+                    statusDetail
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if case .failed = prerequisite.status {
+                    Button {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(prerequisite.fixCommand, forType: .string)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .imageScale(.small)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .help("Copy fix command")
+                }
+            }
+
+            if case .failed = prerequisite.status {
+                Text(prerequisite.fixCommand)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 30)
+            }
+        }
+        .padding(10)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch prerequisite.status {
+        case .unchecked:
+            Image(systemName: "circle")
+                .foregroundStyle(.secondary)
+        case .checking:
+            ProgressView()
+                .controlSize(.small)
+        case .passed:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+        }
+    }
+
+    @ViewBuilder
+    private var statusDetail: some View {
+        switch prerequisite.status {
+        case .unchecked:
+            Text("Not checked")
+        case .checking:
+            Text("Checking…")
+        case .passed(let detail):
+            Text(detail)
+        case .failed(let detail):
+            Text(detail)
         }
     }
 }
