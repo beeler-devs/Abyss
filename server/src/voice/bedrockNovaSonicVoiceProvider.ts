@@ -318,7 +318,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     const toolsLine = toolCount > 0
       ? ` You have access to ${toolCount} tools including code execution, file operations, git, and agent spawning. Call them one at a time.`
       : "";
-    const systemPrompt = `You are the Abyss voice-first coding assistant. Keep responses concise, practical, and voice-friendly.${toolsLine}`;
+    const systemPrompt = `You are the Abyss voice-first coding assistant.${toolsLine} VOICE OUTPUT RULES: Lead with the answer. Be concise and direct. Never say URLs, code, file paths, JSON, UUIDs, or commit hashes aloud — summarize them instead. Convert timestamps to natural language. Say names instead of email addresses. For long lists, state the top items and summarize the rest. Summarize errors to the root cause. Do not narrate what the UI already shows. Do not use markdown formatting.`;
 
     const systemContentName = `system-${crypto.randomUUID()}`;
     this.sendEvent(session, {
