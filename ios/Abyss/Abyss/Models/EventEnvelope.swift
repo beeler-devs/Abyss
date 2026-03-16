@@ -53,6 +53,12 @@ struct EventEnvelope: Codable, Sendable {
             if let gmailExpires = value.gmailTokenExpiresAt {
                 sessionPayload["gmailTokenExpiresAt"] = .number(gmailExpires)
             }
+            if let canvasToken = value.canvasAccessToken {
+                sessionPayload["canvasAccessToken"] = .string(canvasToken)
+            }
+            if let canvasURL = value.canvasBaseURL {
+                sessionPayload["canvasBaseURL"] = .string(canvasURL)
+            }
             if let prefs = value.preferences, !prefs.isEmpty {
                 sessionPayload["preferences"] = .object(prefs.mapValues { .string($0) })
             }
