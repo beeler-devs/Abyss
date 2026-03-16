@@ -53,12 +53,23 @@ export interface ConductorServiceDependencies {
   verboseToolRoutingLogs?: boolean;
   contextGraphService?: ContextGraphService;
   summarizationConfig?: SummarizationConfig;
+  proModelId?: string;
 }
 
 export interface CursorWebhookHandleResult {
   statusCode: number;
   payload: Record<string, unknown>;
 }
+
+const HEAVY_TOOL_NAMES = new Set([
+  "bridge.claude.run",
+  "bridge.exec.run",
+  "bridge.exec.start",
+  "bridge.nova.start",
+  "bridge.nova.act",
+  "cursor.agent.spawn",
+  "webqa.cursor.run",
+]);
 
 const LEGACY_CLIENT_TOOLS: ToolDefinition[] = [
   {
@@ -657,11 +668,21 @@ const SERVER_CANVAS_TOOLS: ToolDefinition[] = [
   {
     name: "canvas.assignments",
     description:
-      "List assignments for a Canvas course, ordered by due date. Returns assignment names, due dates, points, and submission status.",
+      "List assignments for a Canvas course, ordered by due date. Supports optional date filtering to scope results. Returns assignment names, due dates, points, and submission status.",
     input_schema: {
       type: "object",
       properties: {
         courseId: { type: "string", description: "The Canvas course ID." },
+        afterDate: {
+          type: "string",
+          description:
+            "ISO 8601 date. Only show assignments due after this date. Default to current timestamp to exclude past assignments.",
+        },
+        beforeDate: {
+          type: "string",
+          description:
+            "ISO 8601 date. Only show assignments due before this date.",
+        },
       },
       required: ["courseId"],
     },
@@ -699,11 +720,16 @@ const SERVER_CANVAS_TOOLS: ToolDefinition[] = [
   {
     name: "canvas.announcements",
     description:
-      "Get announcements for a Canvas course. Returns announcement titles, messages, and post dates.",
+      "Get announcements for a Canvas course. Supports optional date filtering. Returns announcement titles, messages, and post dates.",
     input_schema: {
       type: "object",
       properties: {
         courseId: { type: "string", description: "The Canvas course ID." },
+        afterDate: {
+          type: "string",
+          description:
+            "ISO 8601 date. Only show announcements posted after this date.",
+        },
       },
       required: ["courseId"],
     },
@@ -892,6 +918,7 @@ export class ConductorService {
   private readonly verboseToolRoutingLogs: boolean;
   private readonly contextGraphService?: ContextGraphService;
   private readonly summarizationConfig: SummarizationConfig;
+  private readonly proModelId?: string;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
     this.provider = provider;
@@ -913,10 +940,19 @@ export class ConductorService {
     this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
     this.contextGraphService = dependencies.contextGraphService;
     this.summarizationConfig = dependencies.summarizationConfig ?? DEFAULT_SUMMARIZATION_CONFIG;
+    this.proModelId = dependencies.proModelId;
   }
 
   createRateLimiter() {
     return this.sessions.createRateLimiter();
+  }
+
+  private classifyModelTier(tools: ToolDefinition[]): string | undefined {
+    if (!this.proModelId) return undefined;
+    const heavyMatches = tools.filter(t => HEAVY_TOOL_NAMES.has(t.name)).map(t => t.name);
+    if (heavyMatches.length === 0) return undefined;
+    logger.info(`model.routing tier=pro reason=heavy_tools`, { tools: heavyMatches });
+    return this.proModelId;
   }
 
   isCursorServerConfigured(): boolean {
@@ -1577,7 +1613,7 @@ export class ConductorService {
       session.workingContext = { lastGoal: transcript };
     }
 
-    if (session.memoryUserKey && this.contextGraphService) {
+    if (session.memoryUserKey && this.contextGraphService && isSubstantiveGoal(transcript)) {
       void this.contextGraphService.apply({
         type: "goal.started",
         sessionId: session.sessionId,
@@ -1620,7 +1656,7 @@ export class ConductorService {
             eventId: sourceEventId,
           });
           const llmStartMs = Date.now();
-          modelResponse = await this.provider.generateResponse(conversation, tools, session.userPreferences, session.canvasCourseContext);
+          modelResponse = await this.provider.generateResponse(conversation, tools, session.userPreferences, session.canvasCourseContext, this.classifyModelTier(tools));
           const hasToolCalls = modelResponse.toolCalls && modelResponse.toolCalls.length > 0;
           const hasText = modelResponse.fullText.trim().length > 0;
           logger.info(
@@ -2434,7 +2470,13 @@ export class ConductorService {
           if (!courseId) {
             return { result: null, error: "canvas_missing_course_id" };
           }
-          const assignments = await this.canvasClient.assignments(session, courseId);
+          const afterDate = stringFromRecord(args, "afterDate");
+          const beforeDate = stringFromRecord(args, "beforeDate");
+          const assignments = await this.canvasClient.assignments(
+            session,
+            courseId,
+            (afterDate || beforeDate) ? { afterDate: afterDate ?? undefined, beforeDate: beforeDate ?? undefined } : undefined,
+          );
           return { result: stableJSONStringify(assignments), error: null };
         }
 
@@ -2474,7 +2516,12 @@ export class ConductorService {
           if (!courseId) {
             return { result: null, error: "canvas_missing_course_id" };
           }
-          const announcements = await this.canvasClient.announcements(session, courseId);
+          const afterDate = stringFromRecord(args, "afterDate");
+          const announcements = await this.canvasClient.announcements(
+            session,
+            courseId,
+            afterDate ? { afterDate } : undefined,
+          );
           return { result: stableJSONStringify(announcements), error: null };
         }
 

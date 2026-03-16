@@ -98,8 +98,9 @@ export class BedrockNovaProvider implements ModelProvider {
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
     canvasCourseContext?: string,
+    modelOverride?: string,
   ): Promise<ModelResponse> {
-    const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences, canvasCourseContext);
+    const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences, canvasCourseContext, modelOverride);
     const chunks = chunkText(fullText, 30, 80);
 
     const response: ModelResponse = {
@@ -153,6 +154,7 @@ export class BedrockNovaProvider implements ModelProvider {
       "The preference bridge.claude.allowedTools controls which tools Claude Code can use on the paired Mac. Available tools: Bash (run shell commands), Read (read files), Edit (modify existing files), Write (create new files), LS (list directories), Glob (find files by name pattern), Grep (search file contents), MultiEdit (batch file edits). If the user wants to change these permissions, call preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...').",
       "If canvas.courses, canvas.assignments, canvas.todo, canvas.upcoming, canvas.grades, or canvas.announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
       "When the user asks about their classes or courses, call canvas.courses first to discover course IDs, then use those IDs for canvas.assignments, canvas.grades, or canvas.announcements.",
+      "For canvas.assignments, always provide afterDate (default to current ISO timestamp) to exclude past assignments. When the user asks generally about assignments, set beforeDate to ~2 weeks from now. Only omit date filters when the user explicitly asks for all or past assignments. For canvas.announcements, set afterDate to ~2 weeks ago by default to show only recent announcements.",
       "If canvas tools are NOT available but canvas.authenticate IS available, call canvas.authenticate when the user asks about coursework — this opens the settings screen on their device.",
       "Never use cursor.agent.spawn or agent.spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail.*, calendar.*, canvas.*).",
       "Never call gmail.authenticate or canvas.authenticate more than once per conversation turn. If the tool returns that the user needs to authenticate, tell the user and stop — do not retry.",
@@ -314,16 +316,18 @@ export class BedrockNovaProvider implements ModelProvider {
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
     canvasCourseContext?: string,
+    modelOverride?: string,
   ): Promise<FetchResult> {
     const messages = this.buildMessages(conversation);
     const { toolConfig, toolNameToOriginal } = this.buildTools(tools);
 
     const maxTokens = toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens;
 
+    const resolvedModelId = modelOverride ?? this.config.modelId;
     const systemPrompt = this.buildSystemPrompt(userPreferences, canvasCourseContext);
     const contentBlocks: ResponseContentBlock[] = this.bearerToken
-      ? await this.fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt)
-      : await this.fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt);
+      ? await this.fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt, resolvedModelId)
+      : await this.fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt, resolvedModelId);
 
     const textParts: string[] = [];
     const toolCalls: ToolCallRequest[] = [];
@@ -356,9 +360,10 @@ export class BedrockNovaProvider implements ModelProvider {
     toolConfig: ToolConfiguration | undefined,
     maxTokens: number,
     systemPrompt: SystemContentBlock[],
+    modelId?: string,
   ): Promise<ResponseContentBlock[]> {
     const response = await this.client.send(new ConverseCommand({
-      modelId: this.config.modelId,
+      modelId: modelId ?? this.config.modelId,
       system: systemPrompt,
       messages,
       inferenceConfig: { maxTokens, temperature: 0.3 },
@@ -372,8 +377,10 @@ export class BedrockNovaProvider implements ModelProvider {
     toolConfig: ToolConfiguration | undefined,
     maxTokens: number,
     systemPrompt: SystemContentBlock[],
+    modelId?: string,
   ): Promise<ResponseContentBlock[]> {
-    const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(this.config.modelId)}/converse`;
+    const resolvedModelId = modelId ?? this.config.modelId;
+    const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(resolvedModelId)}/converse`;
 
     const body: Record<string, unknown> = {
       system: systemPrompt.map((b) => ({ text: b.text })),
