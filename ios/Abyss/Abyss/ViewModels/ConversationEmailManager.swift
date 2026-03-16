@@ -56,7 +56,8 @@ final class ConversationEmailManager: ObservableObject {
                 to: msg.to,
                 subject: msg.subject,
                 date: msg.date,
-                snippet: msg.snippet
+                snippet: msg.snippet,
+                serverCardId: msg.cardId
             ))
         }
     }
@@ -66,6 +67,7 @@ final class ConversationEmailManager: ObservableObject {
         if let index = emailCards.firstIndex(where: { $0.messageId == msg.messageId }) {
             emailCards[index].body = msg.body
             emailCards[index].isExpanded = true
+            if let cardId = msg.cardId { emailCards[index].serverCardId = cardId }
         } else {
             emailCards.append(EmailCard(
                 messageId: msg.messageId,
@@ -75,7 +77,8 @@ final class ConversationEmailManager: ObservableObject {
                 date: msg.date,
                 snippet: msg.snippet,
                 body: msg.body,
-                isExpanded: true
+                isExpanded: true,
+                serverCardId: msg.cardId
             ))
         }
     }
@@ -94,6 +97,7 @@ private struct GmailMessageSummary: Decodable {
     let subject: String
     let date: String
     let snippet: String
+    let cardId: String?
 }
 
 private struct GmailFullMessage: Decodable {
@@ -104,4 +108,5 @@ private struct GmailFullMessage: Decodable {
     let date: String
     let snippet: String
     let body: String
+    let cardId: String?
 }

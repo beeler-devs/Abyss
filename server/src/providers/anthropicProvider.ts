@@ -223,6 +223,7 @@ export class AnthropicProvider implements ModelProvider {
       "Never use cursor_agent_spawn or agent_spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail_*, calendar_*, canvas_*).",
       "Never call gmail_authenticate or canvas_authenticate more than once per conversation turn. If the tool returns that the user needs to authenticate, tell the user and stop — do not retry.",
       "You have cross-session memory. When you see a message starting with '[Prior context from previous sessions]', that is a summary of earlier conversations with this user. Use it naturally — reference prior topics, remember what the user told you, and build on previous discussions. Never say you don't have memory of past conversations.",
+      "INLINE CARD RENDERING: When tool results contain cardId fields, you MUST reference each card inline in your response using fenced code block syntax: ```card:TYPE:CARD_ID\\n``` on its own line, where TYPE is email/calendar/canvas and CARD_ID is the exact UUID from the tool result. Place cards at the natural point in your narrative where they are contextually relevant. NEVER describe card data in prose when a card reference exists — the card already shows it. Every cardId from a tool result MUST appear exactly once as a card reference. Multiple cards can appear in sequence or separated by prose.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {

@@ -60,7 +60,7 @@ final class ConversationCanvasManager: ObservableObject {
                 name: item.name,
                 courseCode: item.course_code,
                 enrollmentTerm: item.enrollment_term_id.map { String($0) }
-            ))))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -75,7 +75,7 @@ final class ConversationCanvasManager: ObservableObject {
                 pointsPossible: item.points_possible,
                 submissionStatus: item.submission?.workflow_state,
                 htmlUrl: item.html_url
-            ))))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -87,7 +87,7 @@ final class ConversationCanvasManager: ObservableObject {
                 courseName: item.context_name,
                 dueAt: item.assignment?.due_at,
                 type: item.type
-            ))))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -100,7 +100,7 @@ final class ConversationCanvasManager: ObservableObject {
                 currentGrade: item.grades?.current_grade,
                 finalScore: item.grades?.final_score,
                 finalGrade: item.grades?.final_grade
-            ))))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -113,7 +113,7 @@ final class ConversationCanvasManager: ObservableObject {
                 message: item.message,
                 postedAt: item.posted_at,
                 authorName: item.author?.display_name
-            ))))
+            )), serverCardId: item.cardId))
         }
     }
 }
@@ -125,9 +125,10 @@ private struct CanvasCoursePayload: Decodable {
     let name: String
     let course_code: String?
     let enrollment_term_id: Int?
+    let cardId: String?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, course_code, enrollment_term_id
+        case id, name, course_code, enrollment_term_id, cardId
     }
 
     init(from decoder: Decoder) throws {
@@ -136,6 +137,7 @@ private struct CanvasCoursePayload: Decodable {
         name = try container.decode(String.self, forKey: .name)
         course_code = try container.decodeIfPresent(String.self, forKey: .course_code)
         enrollment_term_id = try container.decodeIfPresent(Int.self, forKey: .enrollment_term_id)
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId)
     }
 }
 
@@ -147,13 +149,14 @@ private struct CanvasAssignmentPayload: Decodable {
     let points_possible: Double?
     let submission: SubmissionPayload?
     let html_url: String?
+    let cardId: String?
 
     struct SubmissionPayload: Decodable {
         let workflow_state: String?
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, course_name, due_at, points_possible, submission, html_url
+        case id, name, course_name, due_at, points_possible, submission, html_url, cardId
     }
 
     init(from decoder: Decoder) throws {
@@ -165,6 +168,7 @@ private struct CanvasAssignmentPayload: Decodable {
         points_possible = try container.decodeIfPresent(Double.self, forKey: .points_possible)
         submission = try container.decodeIfPresent(SubmissionPayload.self, forKey: .submission)
         html_url = try container.decodeIfPresent(String.self, forKey: .html_url)
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId)
     }
 }
 
@@ -172,6 +176,7 @@ private struct CanvasTodoPayload: Decodable {
     let type: String?
     let assignment: AssignmentPayload?
     let context_name: String?
+    let cardId: String?
 
     struct AssignmentPayload: Decodable {
         let name: String?
@@ -179,7 +184,7 @@ private struct CanvasTodoPayload: Decodable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case type, assignment, context_name
+        case type, assignment, context_name, cardId
     }
 
     init(from decoder: Decoder) throws {
@@ -187,12 +192,14 @@ private struct CanvasTodoPayload: Decodable {
         type = try container.decodeIfPresent(String.self, forKey: .type)
         assignment = try container.decodeIfPresent(AssignmentPayload.self, forKey: .assignment)
         context_name = try container.decodeIfPresent(String.self, forKey: .context_name)
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId)
     }
 }
 
 private struct CanvasGradePayload: Decodable {
     let course_name: String?
     let grades: GradesPayload?
+    let cardId: String?
 
     struct GradesPayload: Decodable {
         let current_score: Double?
@@ -202,13 +209,14 @@ private struct CanvasGradePayload: Decodable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case course_name, grades
+        case course_name, grades, cardId
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         course_name = try container.decodeIfPresent(String.self, forKey: .course_name)
         grades = try container.decodeIfPresent(GradesPayload.self, forKey: .grades)
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId)
     }
 }
 
@@ -218,13 +226,14 @@ private struct CanvasAnnouncementPayload: Decodable {
     let message: String?
     let posted_at: String?
     let author: AuthorPayload?
+    let cardId: String?
 
     struct AuthorPayload: Decodable {
         let display_name: String?
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, message, posted_at, author
+        case id, title, message, posted_at, author, cardId
     }
 
     init(from decoder: Decoder) throws {
@@ -234,5 +243,6 @@ private struct CanvasAnnouncementPayload: Decodable {
         message = try container.decodeIfPresent(String.self, forKey: .message)
         posted_at = try container.decodeIfPresent(String.self, forKey: .posted_at)
         author = try container.decodeIfPresent(AuthorPayload.self, forKey: .author)
+        cardId = try container.decodeIfPresent(String.self, forKey: .cardId)
     }
 }

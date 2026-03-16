@@ -12,6 +12,7 @@ struct BridgeExecCard: Identifiable {
     var outputLines: String
     var exitCode: Int?
     var isExpanded: Bool
+    var serverCardId: String?
     let startedAt: Date
     var finishedAt: Date?
 
@@ -35,6 +36,7 @@ struct BridgeExecCard: Identifiable {
         outputLines: String = "",
         exitCode: Int? = nil,
         isExpanded: Bool = false,
+        serverCardId: String? = nil,
         startedAt: Date = Date(),
         finishedAt: Date? = nil
     ) {
@@ -48,6 +50,7 @@ struct BridgeExecCard: Identifiable {
         self.outputLines = outputLines
         self.exitCode = exitCode
         self.isExpanded = isExpanded
+        self.serverCardId = serverCardId
         self.startedAt = startedAt
         self.finishedAt = finishedAt
     }

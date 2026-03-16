@@ -1330,6 +1330,80 @@ export class ConductorService {
   }
 
   /**
+   * Determines the card type for a tool name, or null if the tool doesn't
+   * produce cards suitable for inline rendering.
+   */
+  private static cardTypeForTool(toolName: string): { type: string; mode: "array" | "single" } | null {
+    const map: Record<string, { type: string; mode: "array" | "single" }> = {
+      "gmail.inbox":            { type: "email",    mode: "array" },
+      "gmail.search":           { type: "email",    mode: "array" },
+      "gmail.read":             { type: "email",    mode: "single" },
+      "calendar.list":          { type: "calendar",  mode: "array" },
+      "calendar.get":           { type: "calendar",  mode: "single" },
+      "canvas.courses":         { type: "canvas",   mode: "array" },
+      "canvas.assignments":     { type: "canvas",   mode: "array" },
+      "canvas.todo":            { type: "canvas",   mode: "array" },
+      "canvas.grades":          { type: "canvas",   mode: "array" },
+      "canvas.announcements":   { type: "canvas",   mode: "array" },
+    };
+    return map[toolName] ?? null;
+  }
+
+  /**
+   * Enriches a tool result JSON with stable cardId fields so the LLM can
+   * reference cards inline via ```card:TYPE:ID``` fenced blocks, and iOS
+   * card managers can match cards to those IDs.
+   */
+  private enrichResultWithCardIds(
+    toolName: string,
+    resultJson: string,
+  ): { enrichedResult: string; cardSummary: string } | null {
+    const info = ConductorService.cardTypeForTool(toolName);
+    if (!info) return null;
+
+    try {
+      const parsed = JSON.parse(resultJson);
+      const cardRefs: string[] = [];
+
+      if (info.mode === "array") {
+        // Array results: the top-level value may be an array directly,
+        // or wrapped in an object with a known key (e.g. { messages: [...] }, { events: [...] }).
+        const arr = Array.isArray(parsed)
+          ? parsed
+          : (parsed.messages ?? parsed.events ?? parsed.items ?? null);
+        if (Array.isArray(arr)) {
+          for (const item of arr) {
+            if (typeof item === "object" && item !== null) {
+              const id = crypto.randomUUID();
+              item.cardId = id;
+              cardRefs.push("```card:" + info.type + ":" + id + "\n```");
+            }
+          }
+        }
+      } else {
+        // Single-item result
+        if (typeof parsed === "object" && parsed !== null) {
+          const id = crypto.randomUUID();
+          parsed.cardId = id;
+          cardRefs.push("```card:" + info.type + ":" + id + "\n```");
+        }
+      }
+
+      if (cardRefs.length === 0) return null;
+
+      const enrichedResult = JSON.stringify(parsed);
+      const cardSummary =
+        "\n\n[Cards rendered to user. Reference each inline:\n" +
+        cardRefs.join("\n") +
+        "\n]";
+
+      return { enrichedResult, cardSummary };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Build the conversation array for the LLM, prepending the history summary
    * as context if one exists.
    */
@@ -1526,9 +1600,16 @@ export class ConductorService {
               },
             );
 
+            // Enrich tool results with stable card IDs for inline card references
+            const rawResult = execution.error ? null : (execution.result ?? "{}");
+            const enrichment = rawResult ? this.enrichResultWithCardIds(toolCall.name, rawResult) : null;
+            const resultForLLM = enrichment
+              ? enrichment.enrichedResult + enrichment.cardSummary
+              : (execution.error ? `Error: ${execution.error}` : rawResult!);
+
             this.sessions.appendTurn(session, {
               role: "tool",
-              content: execution.error ? `Error: ${execution.error}` : execution.result ?? "{}",
+              content: resultForLLM,
               tool_use_id: toolCall.id,
               tool_name: toolCall.name,
             });
@@ -1544,7 +1625,7 @@ export class ConductorService {
               }));
               emit(makeEvent("tool.result", session.sessionId, {
                 callId,
-                result: execution.error ? null : (execution.result ?? "{}"),
+                result: enrichment ? enrichment.enrichedResult : (execution.error ? null : rawResult!),
                 error: execution.error ?? null,
               }));
             }
