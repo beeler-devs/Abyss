@@ -446,6 +446,9 @@ final class ConversationViewModel: ObservableObject {
                 self.messages = self.conversationStore.messages
                 if let lastAssistant = self.messages.last(where: { $0.role == .assistant }) {
                     self.bridgeExecManager.updateLastAssistantMessageID(lastAssistant.id)
+                    self.emailManager.updateLastAssistantMessageID(lastAssistant.id)
+                    self.calendarManager.updateLastAssistantMessageID(lastAssistant.id)
+                    self.canvasCardManager.updateLastAssistantMessageID(lastAssistant.id)
                 }
             }
             .store(in: &cancellables)

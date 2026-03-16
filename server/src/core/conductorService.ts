@@ -1404,6 +1404,24 @@ export class ConductorService {
   }
 
   /**
+   * Appends card reference fenced blocks for any cards the LLM failed to
+   * reference inline, ensuring iOS always receives card refs in the final text.
+   */
+  private injectMissingCardReferences(
+    responseText: string,
+    pendingCardRefs: Array<{type: string, id: string}>,
+  ): string {
+    if (pendingCardRefs.length === 0) return responseText;
+    const existingIds = new Set<string>();
+    const re = /```card:\w+:([0-9a-f-]+)\s*\n?```/g;
+    let m;
+    while ((m = re.exec(responseText)) !== null) existingIds.add(m[1]);
+    const missing = pendingCardRefs.filter(r => !existingIds.has(r.id));
+    if (missing.length === 0) return responseText;
+    return responseText + "\n" + missing.map(r => "```card:" + r.type + ":" + r.id + "\n```").join("\n");
+  }
+
+  /**
    * Build the conversation array for the LLM, prepending the history summary
    * as context if one exists.
    */
@@ -1517,6 +1535,7 @@ export class ConductorService {
     const MAX_TOOL_ROUNDS = 8;
     let toolRound = 0;
     let emittedFinalResponse = false;
+    const pendingCardRefs: Array<{type: string, id: string}> = [];
     const deterministicBridgeToolCall = this.routeDeterministicBridgeIntent(transcript);
 
     while (toolRound < MAX_TOOL_ROUNDS) {
@@ -1603,6 +1622,21 @@ export class ConductorService {
             // Enrich tool results with stable card IDs for inline card references
             const rawResult = execution.error ? null : (execution.result ?? "{}");
             const enrichment = rawResult ? this.enrichResultWithCardIds(toolCall.name, rawResult) : null;
+            if (enrichment) {
+              // Collect card refs for post-response injection
+              try {
+                const info = ConductorService.cardTypeForTool(toolCall.name);
+                if (info) {
+                  const parsed = JSON.parse(enrichment.enrichedResult);
+                  const items = info.mode === "array"
+                    ? (Array.isArray(parsed) ? parsed : (parsed.messages ?? parsed.events ?? parsed.items ?? []))
+                    : [parsed];
+                  for (const item of items) {
+                    if (item?.cardId) pendingCardRefs.push({ type: info.type, id: item.cardId });
+                  }
+                }
+              } catch { /* ignore parse errors */ }
+            }
             const resultForLLM = enrichment
               ? enrichment.enrichedResult + enrichment.cardSummary
               : (execution.error ? `Error: ${execution.error}` : rawResult!);
@@ -1687,10 +1721,12 @@ export class ConductorService {
       }
 
       responseText = responseText.trim();
+      responseText = this.injectMissingCardReferences(responseText, pendingCardRefs);
 
+      const cardRefCount = (responseText.match(/```card:\w+:[0-9a-f-]+/g) || []).length;
       emit(makeEvent("assistant.speech.final", session.sessionId, { text: responseText }));
       tracePush("assistant.speech.final");
-      logger.info(`assistant.speech.final chunks=${chunkCount} len=${responseText.length}: "${responseText.length > 200 ? responseText.slice(0, 200) + "…" : responseText}"`, {
+      logger.info(`assistant.speech.final chunks=${chunkCount} len=${responseText.length} cardRefs=${cardRefCount} pendingCards=${pendingCardRefs.length}: "${responseText.length > 200 ? responseText.slice(0, 200) + "…" : responseText}"`, {
         sessionId: session.sessionId,
         eventId: sourceEventId,
       });

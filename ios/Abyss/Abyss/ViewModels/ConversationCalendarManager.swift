@@ -8,9 +8,14 @@ final class ConversationCalendarManager: ObservableObject {
 
     private let eventBus: EventBus
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
+    private var lastAssistantMessageID: UUID?
 
     init(eventBus: EventBus) {
         self.eventBus = eventBus
+    }
+
+    func updateLastAssistantMessageID(_ id: UUID) {
+        lastAssistantMessageID = id
     }
 
     func handleEventStream(_ event: Event) {
@@ -60,6 +65,7 @@ final class ConversationCalendarManager: ObservableObject {
                 attendees: event.attendees,
                 htmlLink: event.htmlLink,
                 isAllDay: event.isAllDay,
+                anchorMessageID: lastAssistantMessageID,
                 serverCardId: event.cardId
             ))
         }
@@ -82,6 +88,7 @@ final class ConversationCalendarManager: ObservableObject {
                 htmlLink: event.htmlLink,
                 isAllDay: event.isAllDay,
                 isExpanded: true,
+                anchorMessageID: lastAssistantMessageID,
                 serverCardId: event.cardId
             ))
         }
