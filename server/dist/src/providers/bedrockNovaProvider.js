@@ -29,8 +29,8 @@ export class BedrockNovaProvider {
         this.bearerToken = process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
         this.client = client ?? new BedrockRuntimeClient({ region: config.region });
     }
-    async generateResponse(conversation, tools) {
-        const { fullText, toolCalls } = await this.fetchResponse(conversation, tools);
+    async generateResponse(conversation, tools, userPreferences) {
+        const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences);
         const chunks = chunkText(fullText, 30, 80);
         const response = {
             fullText,
@@ -41,31 +41,35 @@ export class BedrockNovaProvider {
         }
         return response;
     }
-    buildSystemPrompt() {
-        return [{
-                text: [
-                    "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
-                    "Keep spoken responses concise, practical, and voice-friendly.",
-                    "Do not ask for speech-to-text tools. The user triggers listening manually.",
-                    "Avoid markdown tables and avoid long formatting.",
-                    "If webqa.cursor.run is available and the user asks to validate behavior in a browser, call webqa.cursor.run.",
-                    "If cursor.agent.spawn is available and the user asks to spawn an agent, run coding tasks, PR work, or repo analysis, prefer cursor.agent.spawn.",
-                    "When using cursor.agent.spawn or webqa.cursor.run, avoid aggressive polling; rely on webhook-driven updates unless explicitly asked to refresh.",
-                    "If cursor.agent.spawn is unavailable or a cursor_server_not_configured error is returned, fall back to legacy agent.spawn.",
-                    "When using legacy agent.spawn for repo work, if you do not know the exact owner/repo string, call repositories.list first.",
-                    "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
-                    "Never guess or hallucinate a repository name. Only use repos returned by repositories.list.",
-                    "If gmail.inbox, gmail.search, gmail.read, gmail.send, or gmail.reply tools are available, use them when the user asks about email. These tools are available because the user has already connected their Gmail account.",
-                    "For gmail.search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
-                    "When the user asks to write, compose, draft, or send an email, draft the content yourself and call gmail.send immediately with the to, subject, and body fields. Do NOT ask the user for text confirmation — the app will show a draft card where they can review and tap Send. Just write the email and call the tool.",
-                    "Similarly for gmail.reply — draft the reply body and call gmail.reply immediately. The app handles confirmation via a card.",
-                    "If gmail tools are NOT available but gmail.authenticate IS available, call gmail.authenticate when the user asks about email — this opens the sign-in screen on their device.",
-                    "If calendar.list, calendar.get, calendar.create, calendar.update, or calendar.delete tools are available, use them when the user asks about their schedule, meetings, or calendar.",
-                    "For calendar.list, translate natural language time references into ISO 8601 timeMin/timeMax (e.g. 'today' means start/end of today, 'this week' means Monday through Sunday, 'tomorrow at 3pm' needs the user's context).",
-                    "When the user asks to create, move, or schedule a calendar event, compose the details and call calendar.create or calendar.update immediately. The app will show a confirmation card.",
-                    "For calendar.delete, call the tool with the eventId. The app handles confirmation.",
-                ].join(" "),
-            }];
+    buildSystemPrompt(userPreferences) {
+        const parts = [
+            "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
+            "Keep spoken responses concise, practical, and voice-friendly.",
+            "Do not ask for speech-to-text tools. The user triggers listening manually.",
+            "Avoid markdown tables and avoid long formatting.",
+            "If webqa.cursor.run is available and the user asks to validate behavior in a browser, call webqa.cursor.run.",
+            "If cursor.agent.spawn is available and the user asks to spawn an agent, run coding tasks, PR work, or repo analysis, prefer cursor.agent.spawn.",
+            "When using cursor.agent.spawn or webqa.cursor.run, avoid aggressive polling; rely on webhook-driven updates unless explicitly asked to refresh.",
+            "If cursor.agent.spawn is unavailable or a cursor_server_not_configured error is returned, fall back to legacy agent.spawn.",
+            "When using legacy agent.spawn for repo work, if you do not know the exact owner/repo string, call repositories.list first.",
+            "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
+            "Never guess or hallucinate a repository name. Only use repos returned by repositories.list.",
+            "If gmail.inbox, gmail.search, gmail.read, gmail.send, or gmail.reply tools are available, use them when the user asks about email. These tools are available because the user has already connected their Gmail account.",
+            "For gmail.search, translate natural language into Gmail search syntax (e.g. 'from:alice subject:meeting after:2024/01/01').",
+            "When the user asks to write, compose, draft, or send an email, draft the content yourself and call gmail.send immediately with the to, subject, and body fields. Do NOT ask the user for text confirmation — the app will show a draft card where they can review and tap Send. Just write the email and call the tool.",
+            "Similarly for gmail.reply — draft the reply body and call gmail.reply immediately. The app handles confirmation via a card.",
+            "If gmail tools are NOT available but gmail.authenticate IS available, call gmail.authenticate when the user asks about email — this opens the sign-in screen on their device.",
+            "If calendar.list, calendar.get, calendar.create, calendar.update, or calendar.delete tools are available, use them when the user asks about their schedule, meetings, or calendar.",
+            "For calendar.list, translate natural language time references into ISO 8601 timeMin/timeMax (e.g. 'today' means start/end of today, 'this week' means Monday through Sunday, 'tomorrow at 3pm' needs the user's context).",
+            "When the user asks to create, move, or schedule a calendar event, compose the details and call calendar.create or calendar.update immediately. The app will show a confirmation card.",
+            "For calendar.delete, call the tool with the eventId. The app handles confirmation.",
+            "Use preferences.set when the user asks you to remember something about themselves or their preferences. Common keys: user.name, user.timezone, communication.style, communication.verbosity, email.style, email.signoff. Use custom.<key> for anything else.",
+        ];
+        if (userPreferences && Object.keys(userPreferences).length > 0) {
+            const prefLines = Object.entries(userPreferences).map(([k, v]) => `- ${k}: ${v}`);
+            parts.push(`User preferences (apply throughout):\n${prefLines.join("\n")}`);
+        }
+        return [{ text: parts.join(" ") }];
     }
     buildMessages(conversation) {
         const resolvedToolUseIds = new Set();
@@ -181,13 +185,14 @@ export class BedrockNovaProvider {
             toolNameToOriginal,
         };
     }
-    async fetchResponse(conversation, tools) {
+    async fetchResponse(conversation, tools, userPreferences) {
         const messages = this.buildMessages(conversation);
         const { toolConfig, toolNameToOriginal } = this.buildTools(tools);
         const maxTokens = toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens;
+        const systemPrompt = this.buildSystemPrompt(userPreferences);
         const contentBlocks = this.bearerToken
-            ? await this.fetchWithBearer(messages, toolConfig, maxTokens)
-            : await this.fetchWithSdk(messages, toolConfig, maxTokens);
+            ? await this.fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt)
+            : await this.fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt);
         const textParts = [];
         const toolCalls = [];
         for (const block of contentBlocks) {
@@ -210,20 +215,20 @@ export class BedrockNovaProvider {
             toolCalls,
         };
     }
-    async fetchWithSdk(messages, toolConfig, maxTokens) {
+    async fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt) {
         const response = await this.client.send(new ConverseCommand({
             modelId: this.config.modelId,
-            system: this.buildSystemPrompt(),
+            system: systemPrompt,
             messages,
             inferenceConfig: { maxTokens, temperature: 0.3 },
             ...(toolConfig ? { toolConfig } : {}),
         }));
         return (response.output?.message?.content ?? []);
     }
-    async fetchWithBearer(messages, toolConfig, maxTokens) {
+    async fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt) {
         const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(this.config.modelId)}/converse`;
         const body = {
-            system: this.buildSystemPrompt().map((b) => ({ text: b.text })),
+            system: systemPrompt.map((b) => ({ text: b.text })),
             messages: messages.map((m) => ({
                 role: m.role,
                 content: m.content?.map((c) => {

@@ -56,6 +56,7 @@ final class ConversationViewModel: ObservableObject {
     private var calendarManager: ConversationCalendarManager!
     private let emailDraftManager = EmailDraftManager()
     private let calendarDraftManager = CalendarDraftManager()
+    let preferencesStore = UserPreferencesStore()
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -310,6 +311,11 @@ final class ConversationViewModel: ObservableObject {
         registry.register(CalendarCreateConfirmTool(draftManager: calendarDraftManager))
         registry.register(CalendarUpdateConfirmTool(draftManager: calendarDraftManager))
         registry.register(CalendarDeleteConfirmTool(draftManager: calendarDraftManager))
+        registry.register(PreferencesSetTool(store: preferencesStore, onUpdate: { [weak self] prefs in
+            guard let self else { return }
+            self.sendPreferencesUpdate(prefs)
+        }))
+        registry.register(PreferencesGetTool(store: preferencesStore))
 
         toolRegistry = registry
         toolRouter = ToolRouter(registry: registry, eventBus: eventBus)
@@ -549,6 +555,7 @@ final class ConversationViewModel: ObservableObject {
         let gmailTokenExpiresAt = GmailAuthManager.loadExpiresAt()
         let canvasAccessToken = CanvasManager.loadAccessToken()
         let canvasBaseURL = CanvasManager.loadBaseURL()
+        let prefs = preferencesStore.getAll()
         try await client.connect(
             sessionId: sessionId,
             githubToken: githubToken,
@@ -556,7 +563,8 @@ final class ConversationViewModel: ObservableObject {
             gmailRefreshToken: gmailRefreshToken,
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
-            canvasBaseURL: canvasBaseURL
+            canvasBaseURL: canvasBaseURL,
+            preferences: prefs.isEmpty ? nil : prefs
         )
 
         inboundEventsTask?.cancel()
@@ -705,6 +713,13 @@ final class ConversationViewModel: ObservableObject {
         eventBus.emit(Event.error(code: "tool_error", message: message, sessionId: sessionId))
         errorMessage = message
         showError = true
+    }
+
+    private func sendPreferencesUpdate(_ preferences: [String: String]) {
+        Task {
+            let event = Event.preferencesSync(preferences: preferences, sessionId: sessionId)
+            await sendEventToConductor(event, surfaceErrors: false)
+        }
     }
 
     private func encode<T: Encodable>(_ value: T) -> String {

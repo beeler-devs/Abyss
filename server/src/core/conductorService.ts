@@ -841,6 +841,9 @@ export class ConductorService {
         if (typeof event.payload.canvasBaseURL === "string" && event.payload.canvasBaseURL) {
           session.canvasBaseURL = event.payload.canvasBaseURL;
         }
+        if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
+          session.userPreferences = event.payload.preferences as Record<string, string>;
+        }
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;
@@ -925,6 +928,14 @@ export class ConductorService {
           sessionId: session.sessionId,
           eventId: event.id,
         });
+        return;
+      }
+
+      case "preferences.sync": {
+        if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
+          session.userPreferences = event.payload.preferences as Record<string, string>;
+          logger.info(`preferences synced: ${Object.keys(session.userPreferences).join(", ")}`, { sessionId: session.sessionId });
+        }
         return;
       }
 
@@ -1169,7 +1180,7 @@ export class ConductorService {
         };
       } else {
         try {
-          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId));
+          modelResponse = await this.provider.generateResponse(this.buildConversation(session), this.availableTools(session.sessionId), session.userPreferences);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Unknown model provider error";
           emit(makeEvent("error", session.sessionId, {

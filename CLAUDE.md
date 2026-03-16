@@ -68,6 +68,23 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
 
+### User Preferences
+LLM-writable preference store that persists across sessions. iOS is source of truth.
+
+**Flow:** LLM calls `preferences.set(key, value)` → `UserPreferencesStore` writes to UserDefaults → `PreferencesSetTool.onUpdate` sends `preferences.sync` event to server → `ConductorService` updates `session.userPreferences`. On connect/reconnect, preferences are sent via `session.start` payload.
+
+**Dynamic system prompt:** Both providers (`bedrockNovaProvider.ts`, `anthropicProvider.ts`) accept `userPreferences` in `generateResponse()` and append them to the system prompt as `"User preferences (apply throughout): - key: value"`.
+
+**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `custom.*` for free-form.
+
+**Files:**
+- `ios/.../Models/UserPreferencesStore.swift` — `@MainActor ObservableObject`, UserDefaults-backed `[String: String]`
+- `ios/.../Tools/PreferencesSetTool.swift` — `preferences.set` tool (key, value args)
+- `ios/.../Tools/PreferencesGetTool.swift` — `preferences.get` tool (returns all prefs)
+- `Event.swift` — `SessionStart.preferences` field, `preferencesSync` event kind
+- `EventEnvelope.swift` — Serialization for preferences in `session.start` and `preferences.sync`
+- `server/src/core/types.ts` — `SessionState.userPreferences`, `ModelProvider.generateResponse()` accepts preferences
+
 ### Key Server Files
 - `server/src/server.ts` — HTTP/WS server setup; maintains `iosSocketsBySession` and `bridgeSocketsByDeviceId` maps
 - `server/src/core/conductorService.ts` — Orchestrates conversation turns, tool dispatch, rate limiting, Cursor integration
@@ -121,7 +138,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
-**Tool System:** `ToolProtocol` with `AnyTool` type erasure → `ToolRegistry` for registration → `ToolRouter` for event dispatch. Categories: Audio (`STTStart/Stop`, `TTSSpeak/Stop`), Conversation (`ConvoAppendMessage`, `ConvoSetState`), Agent (6 tools above), Gmail (`GmailAuthenticateTool`, `GmailSendConfirmTool`, `GmailReplyConfirmTool`), Calendar (`CalendarCreateConfirmTool`, `CalendarUpdateConfirmTool`, `CalendarDeleteConfirmTool`), Canvas (`CanvasAuthenticateTool`).
+**Tool System:** `ToolProtocol` with `AnyTool` type erasure → `ToolRegistry` for registration → `ToolRouter` for event dispatch. Categories: Audio (`STTStart/Stop`, `TTSSpeak/Stop`), Conversation (`ConvoAppendMessage`, `ConvoSetState`), Agent (6 tools above), Gmail (`GmailAuthenticateTool`, `GmailSendConfirmTool`, `GmailReplyConfirmTool`), Calendar (`CalendarCreateConfirmTool`, `CalendarUpdateConfirmTool`, `CalendarDeleteConfirmTool`), Canvas (`CanvasAuthenticateTool`), Preferences (`PreferencesSetTool`, `PreferencesGetTool`).
 
 **Conductor Clients:** `WebSocketConductorClient` (primary) — URLSession-based with auto-reconnect, exponential backoff, ping/pong keep-alive, AsyncStream inbound events. `LocalConductorClient` / `LocalConductorStub` for offline/testing.
 

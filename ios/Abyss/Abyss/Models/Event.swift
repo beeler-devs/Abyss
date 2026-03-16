@@ -43,6 +43,7 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeStatus(BridgeStatus)
         case bridgeExecOutput(BridgeExecOutput)
         case bridgeExecFinished(BridgeExecFinished)
+        case preferencesSync(PreferencesSync)
     }
 
     // MARK: - Payloads
@@ -55,6 +56,7 @@ struct Event: Identifiable, Codable, Sendable {
         let gmailTokenExpiresAt: Double?
         let canvasAccessToken: String?
         let canvasBaseURL: String?
+        let preferences: [String: String]?
     }
 
     struct TranscriptPartial: Codable, Sendable {
@@ -211,6 +213,10 @@ struct Event: Identifiable, Codable, Sendable {
         let stdoutTail: String
         let stderrTail: String
     }
+
+    struct PreferencesSync: Codable, Sendable {
+        let preferences: [String: String]
+    }
 }
 
 // MARK: - Convenience Factories
@@ -223,7 +229,8 @@ extension Event {
         gmailRefreshToken: String? = nil,
         gmailTokenExpiresAt: Double? = nil,
         canvasAccessToken: String? = nil,
-        canvasBaseURL: String? = nil
+        canvasBaseURL: String? = nil,
+        preferences: [String: String]? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .sessionStart(SessionStart(
             sessionId: sessionId,
@@ -232,8 +239,13 @@ extension Event {
             gmailRefreshToken: gmailRefreshToken,
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
-            canvasBaseURL: canvasBaseURL
+            canvasBaseURL: canvasBaseURL,
+            preferences: preferences
         )))
+    }
+
+    static func preferencesSync(preferences: [String: String], sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .preferencesSync(PreferencesSync(preferences: preferences)))
     }
 
     static func transcriptPartial(_ text: String, sessionId: String? = nil) -> Event {
@@ -414,6 +426,7 @@ extension Event.Kind {
         case .bridgeStatus(let payload): return "bridge.status: \(payload.status)"
         case .bridgeExecOutput(let payload): return "bridge.exec.output: \(payload.commandId.prefix(8))"
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
+        case .preferencesSync: return "preferences.sync"
         }
     }
 }

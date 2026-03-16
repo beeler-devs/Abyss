@@ -68,6 +68,7 @@ export interface SessionState {
   gmailTokenExpiresAt?: number;
   canvasAccessToken?: string;
   canvasBaseURL?: string;
+  userPreferences?: Record<string, string>;
   history: ConversationTurn[];
   historySummary?: string;
   pendingToolCalls: Map<string, PendingToolCall>;
@@ -110,5 +111,6 @@ export interface ModelProvider {
   generateResponse(
     conversation: ConversationTurn[],
     tools?: ToolDefinition[],
+    userPreferences?: Record<string, string>,
   ): Promise<ModelResponse>;
 }
