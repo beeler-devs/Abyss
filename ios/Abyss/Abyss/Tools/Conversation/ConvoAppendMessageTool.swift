@@ -48,14 +48,23 @@ final class ConversationStore: Sendable {
     private(set) var messages: [ConversationMessage] = []
 
     func append(_ message: ConversationMessage) {
-        // If the last message is a partial from the same role, replace it
+        // Fast path: last message is a partial from the same role — replace it
         if let last = messages.last,
            last.isPartial,
            last.role == message.role {
             messages[messages.count - 1] = message
-        } else {
-            messages.append(message)
+            return
         }
+
+        // Defensive: finalization arrived after a user message was interleaved —
+        // search backwards for an orphaned partial of the same role and replace it.
+        if !message.isPartial,
+           let idx = messages.lastIndex(where: { $0.isPartial && $0.role == message.role }) {
+            messages[idx] = message
+            return
+        }
+
+        messages.append(message)
     }
 
     func clear() {
