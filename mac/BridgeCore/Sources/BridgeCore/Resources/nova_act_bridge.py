@@ -100,7 +100,16 @@ def main() -> None:
                 session = NovaAct(**kwargs)
                 session.__enter__()
                 log("NovaAct session started")
-                respond({"ok": True})
+
+                # Best-effort page context extraction after opening the URL
+                start_response = {"ok": True}
+                if url and url != "about:blank":
+                    page_context = extract_page_context(session)
+                    if page_context:
+                        start_response["page_context"] = page_context
+                        log(f"start page context extracted: {len(page_context)} chars")
+
+                respond(start_response)
 
             elif command == "act":
                 if session is None:

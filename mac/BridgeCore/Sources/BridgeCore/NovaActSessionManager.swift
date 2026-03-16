@@ -26,7 +26,7 @@ public actor NovaActSessionManager {
         pythonPath: String? = nil,
         scriptPath: String,
         apiKey: String? = nil
-    ) async throws {
+    ) async throws -> String? {
         guard !isActive else {
             throw NovaActError.sessionAlreadyActive
         }
@@ -89,14 +89,16 @@ public actor NovaActSessionManager {
         }
 
         novaActLog.info("sending start command: url=\(url) headless=\(headless)")
-        let response = try await sendCommand(cmd, timeout: 60)
+        let response = try await sendCommand(cmd, timeout: 120)
         guard response["ok"] as? Bool == true else {
             let error = response["error"] as? String ?? "start failed"
             novaActLog.error("start failed: \(error)")
             await cleanup()
             throw NovaActError.startFailed(error)
         }
-        novaActLog.info("session started successfully")
+        let pageContext = response["page_context"] as? String
+        novaActLog.info("session started successfully pageContext=\(pageContext != nil)")
+        return pageContext
     }
 
     public struct ActResponse {

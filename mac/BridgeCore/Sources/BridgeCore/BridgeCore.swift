@@ -578,8 +578,9 @@ public actor BridgeCore {
 
                 await emitLog("[nova] starting session: url=\(args.url) headless=\(args.headless ?? false) apiKey=\(config.novaActApiKey != nil ? "present" : "MISSING")")
                 let manager = NovaActSessionManager()
+                let pageContext: String?
                 do {
-                    try await manager.start(
+                    pageContext = try await manager.start(
                         url: args.url,
                         headless: args.headless ?? false,
                         userDataDir: args.userDataDir,
@@ -591,8 +592,8 @@ public actor BridgeCore {
                     throw error
                 }
                 novaActManager = manager
-                await emitLog("[nova] session started successfully")
-                resultText = encodeJSONString(BridgeNovaStartResult(started: true))
+                await emitLog("[nova] session started successfully pageContext=\(pageContext != nil)")
+                resultText = encodeJSONString(BridgeNovaStartResult(started: true, pageContext: pageContext))
 
             case "bridge.nova.act":
                 guard config.permissions.allowNovaAct else {

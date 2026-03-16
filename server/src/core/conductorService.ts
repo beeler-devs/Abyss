@@ -467,7 +467,7 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
   {
     name: "bridge.nova.start",
     description:
-      "Start a persistent Nova Act browser session on a paired Mac. Opens a visible Chrome window at the given URL. Session persists across subsequent bridge.nova.act calls.",
+      "Start a persistent Nova Act browser session on a paired Mac. Opens a visible Chrome window at the given URL and returns a summary of the page content. Session persists across subsequent bridge.nova.act calls.",
     input_schema: {
       type: "object",
       properties: {
@@ -2439,7 +2439,7 @@ export class ConductorService {
             sessionId: session.sessionId,
             toolName,
             args,
-            timeoutMs: 60_000,
+            timeoutMs: 120_000,
           }, emit);
         }
 

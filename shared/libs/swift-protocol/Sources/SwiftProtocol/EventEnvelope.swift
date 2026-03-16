@@ -631,9 +631,11 @@ public struct BridgeNovaStartArguments: Codable, Sendable {
 
 public struct BridgeNovaStartResult: Codable, Sendable {
     public let started: Bool
+    public let pageContext: String?
 
-    public init(started: Bool) {
+    public init(started: Bool, pageContext: String? = nil) {
         self.started = started
+        self.pageContext = pageContext
     }
 }
 
