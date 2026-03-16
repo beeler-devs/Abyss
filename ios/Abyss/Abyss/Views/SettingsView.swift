@@ -388,10 +388,6 @@ private struct PairComputerSheet: View {
 
 // MARK: - Canvas Connect Flow
 
-extension URL: @retroactive Identifiable {
-    public var id: String { absoluteString }
-}
-
 private struct CanvasInstructionsView: View {
     let onOpenCanvas: () -> Void
     let onCancel: () -> Void
