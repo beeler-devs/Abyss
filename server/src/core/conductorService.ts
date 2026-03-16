@@ -899,6 +899,15 @@ function waitForToolResult(
   });
 }
 
+const TRIVIAL_PATTERN = /^(ok|okay|yes|no|sure|thanks|thank you|got it|sounds good|cool|great|yep|nope|alright|hmm|hm|right)\.?!?$/i;
+
+export function isSubstantiveGoal(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 8) return false;
+  if (trimmed.split(/\s+/).length < 3) return false;
+  if (TRIVIAL_PATTERN.test(trimmed)) return false;
+  return true;
+}
 
 export class ConductorService {
   private readonly provider: ModelProvider;
@@ -951,7 +960,7 @@ export class ConductorService {
     if (!this.proModelId) return undefined;
     const heavyMatches = tools.filter(t => HEAVY_TOOL_NAMES.has(t.name)).map(t => t.name);
     if (heavyMatches.length === 0) return undefined;
-    logger.info(`model.routing tier=pro reason=heavy_tools`, { tools: heavyMatches });
+    logger.info(`model.routing tier=pro reason=heavy_tools matched=[${heavyMatches.join(", ")}]`);
     return this.proModelId;
   }
 
@@ -1305,6 +1314,26 @@ export class ConductorService {
           },
           timestamp: new Date().toISOString(),
         });
+      } else if (!doc && this.contextGraphService) {
+        // Fallback: build minimal summary from last 3 user turns
+        const userTurns = session.history
+          .filter((t) => t.role === "user" && typeof t.content === "string")
+          .slice(-3);
+        if (userTurns.length > 0) {
+          const fallbackSummary = userTurns
+            .map((t) => (typeof t.content === "string" ? t.content : ""))
+            .join(" | ");
+          void this.contextGraphService.apply({
+            type: "session.finalized",
+            sessionId,
+            payload: {
+              memoryUserKey: session.memoryUserKey,
+              workingContext: session.workingContext,
+              summary: fallbackSummary,
+            },
+            timestamp: new Date().toISOString(),
+          });
+        }
       }
     } catch {
       // Finalization failures are non-fatal

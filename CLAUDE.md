@@ -117,6 +117,9 @@ Selected via `MODEL_PROVIDER` env var:
 - `bedrock` (default) — Amazon Nova via AWS Bedrock (`bedrockNovaProvider.ts`)
 - `anthropic` — Claude via Anthropic API (`anthropicProvider.ts`)
 
+### Dynamic Model Routing (Bedrock)
+When `BEDROCK_PRO_MODEL_ID` is set, requests are routed to Nova Pro for heavy tasks and Nova Lite for everything else. Routing is deterministic based on tool availability — if any "heavy" tool (bridge.claude.run, bridge.exec.run, bridge.exec.start, bridge.nova.start, bridge.nova.act, cursor.agent.spawn, webqa.cursor.run) is in the available tools array, the request uses Pro. Title generation and context summarization always use Lite (no `modelOverride` passed). The `classifyModelTier()` method in `ConductorService` handles routing and logs `model.routing tier=pro` when Pro is selected.
+
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
 
@@ -232,7 +235,8 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | `PORT` | 8080 | WebSocket server port |
 | `MODEL_PROVIDER` | `bedrock` | `bedrock` or `anthropic` |
 | `VOICE_PROVIDER` | `nova-sonic` | `local` or `nova-sonic` |
-| `BEDROCK_TEXT_MODEL_ID` | `us.amazon.nova-2-lite-v1:0` | Primary LLM |
+| `BEDROCK_TEXT_MODEL_ID` | `us.amazon.nova-2-lite-v1:0` | Primary LLM (Lite) |
+| `BEDROCK_PRO_MODEL_ID` | — | Pro model for heavy tasks (e.g. `us.amazon.nova-2-pro-v1:0`) |
 | `ANTHROPIC_API_KEY` | — | Required if using `anthropic` provider |
 | `AWS_REGION` | `us-east-1` | Required for Bedrock |
 | `CURSOR_API_KEY` | — | Optional; enables server-side Cursor agent tools |

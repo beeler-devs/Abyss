@@ -90,8 +90,6 @@ export interface SessionState {
     lastGoal?: string;
     activeExecutor?: string;
   };
-  graphContextCache?: string;
-  lastGraphQueryTs?: number;
 }
 
 export interface BridgeToolExecutionRequest {
@@ -125,5 +123,6 @@ export interface ModelProvider {
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
     canvasCourseContext?: string,
+    modelOverride?: string,
   ): Promise<ModelResponse>;
 }

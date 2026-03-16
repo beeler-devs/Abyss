@@ -54,6 +54,7 @@ const MEMORY_RETRIEVE_TIMEOUT_MS = parseInteger(process.env.MEMORY_RETRIEVE_TIME
 const MEMORY_MAX_INJECTED_CHARS = parseInteger(process.env.MEMORY_MAX_INJECTED_CHARS, 900);
 const MEMORY_RECENT_COUNT = parseInteger(process.env.MEMORY_RECENT_COUNT, 3);
 const MEMORY_SUMMARY_MODEL_ID = process.env.MEMORY_SUMMARY_MODEL_ID ?? "us.amazon.nova-2-lite-v1:0";
+const BEDROCK_PRO_MODEL_ID = process.env.BEDROCK_PRO_MODEL_ID ?? "";
 const NEPTUNE_GRAPH_ID = process.env.NEPTUNE_GRAPH_ID ?? "";
 const NEPTUNE_GRAPH_ENDPOINT = process.env.NEPTUNE_GRAPH_ENDPOINT ?? "";
 const NEPTUNE_GRAPH_REGION = process.env.NEPTUNE_GRAPH_REGION ?? process.env.AWS_REGION ?? "us-east-1";
@@ -125,11 +126,8 @@ const memoryService = MEMORY_ENABLED && MEMORY_S3_BUCKET
     })
   : undefined;
 
-const embeddingService = new EmbeddingService({
-  modelId: EMBEDDING_MODEL_ID,
-  dimensions: EMBEDDING_DIMENSIONS,
-  awsRegion: NEPTUNE_GRAPH_REGION,
-});
+const GRAPH_VECTOR_K = parseInteger(process.env.GRAPH_VECTOR_K, 5);
+const GRAPH_NEIGHBORHOOD_LIMIT = parseInteger(process.env.GRAPH_NEIGHBORHOOD_LIMIT, 3);
 
 const neptuneStore = NEPTUNE_GRAPH_ID
   ? new NeptuneAnalyticsStore({
@@ -138,10 +136,26 @@ const neptuneStore = NEPTUNE_GRAPH_ID
       region: NEPTUNE_GRAPH_REGION,
     })
   : undefined;
+const embeddingService = neptuneStore
+  ? new EmbeddingService({
+      modelId: EMBEDDING_MODEL_ID,
+      dimensions: EMBEDDING_DIMENSIONS,
+      awsRegion: NEPTUNE_GRAPH_REGION,
+    })
+  : undefined;
+
+if (neptuneStore) {
+  neptuneStore.healthCheck().catch((err) => logger.warn(`Neptune health check failed: ${String(err)}`));
+}
 
 const contextGraphService = (memoryService || neptuneStore)
   ? new ContextGraphService(
-      { retrieveTimeoutMs: MEMORY_RETRIEVE_TIMEOUT_MS, maxInjectedChars: MEMORY_MAX_INJECTED_CHARS },
+      {
+        retrieveTimeoutMs: MEMORY_RETRIEVE_TIMEOUT_MS,
+        maxInjectedChars: MEMORY_MAX_INJECTED_CHARS,
+        vectorSearchK: GRAPH_VECTOR_K,
+        neighborhoodLimit: GRAPH_NEIGHBORHOOD_LIMIT,
+      },
       { graphStore: neptuneStore, embeddingService, memoryService },
     )
   : undefined;
@@ -189,6 +203,7 @@ const conductor = new ConductorService(
       summarizeAfter: SUMMARIZE_AFTER_TURNS,
       recentToKeep: SUMMARIZE_RECENT_KEEP,
     },
+    proModelId: BEDROCK_PRO_MODEL_ID || undefined,
   },
 );
 
