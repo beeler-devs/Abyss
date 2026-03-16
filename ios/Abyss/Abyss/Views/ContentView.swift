@@ -61,7 +61,8 @@ struct ContentView: View {
                                     pairedBridgeDevices: [],
                                     bridgePairingMessage: nil,
                                     onPairComputer: nil,
-                                    onSetWorkspaceOverride: nil
+                                    onSetWorkspaceOverride: nil,
+                                    bridgeAutoReconnect: .constant(true)
                                 )
                             }
                     }
@@ -468,7 +469,8 @@ private struct ChatContentView: View {
                 },
                 onSetWorkspaceOverride: { deviceId, path in
                     viewModel.setWorkspaceOverride(deviceId: deviceId, path: path)
-                }
+                },
+                bridgeAutoReconnect: $viewModel.bridgeAutoReconnect
             )
         }
     }

@@ -25,6 +25,9 @@ final class ConversationViewModel: ObservableObject {
     @Published var isTTSMuted: Bool = UserDefaults.standard.bool(forKey: "isTTSMuted") {
         didSet { UserDefaults.standard.set(isTTSMuted, forKey: "isTTSMuted") }
     }
+    @Published var bridgeAutoReconnect: Bool = UserDefaults.standard.object(forKey: "bridgeAutoReconnect") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(bridgeAutoReconnect, forKey: "bridgeAutoReconnect") }
+    }
     @Published var isPTTHeld: Bool = false
     @Published var isTTSSpeaking: Bool = false
     @Published private(set) var useServerConductor: Bool = false
@@ -660,6 +663,10 @@ final class ConversationViewModel: ObservableObject {
             memoryUserKey: Self.memoryUserKey,
             bridgeWorkspaceOverrides: overrides
         )
+
+        if bridgeAutoReconnect {
+            eventCoordinator.reRegisterPairedBridgeCodes()
+        }
 
         inboundEventsTask?.cancel()
         inboundEventsTask = Task { [weak self] in

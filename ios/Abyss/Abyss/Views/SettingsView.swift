@@ -6,6 +6,7 @@ struct SettingsView: View {
     let bridgePairingMessage: String?
     let onPairComputer: ((String, String?) -> Void)?
     let onSetWorkspaceOverride: ((String, String?) -> Void)?
+    @Binding var bridgeAutoReconnect: Bool
     @EnvironmentObject private var gmailAuthManager: GmailAuthManager
     @EnvironmentObject private var canvasManager: CanvasManager
     @Environment(\.dismiss) private var dismiss
@@ -203,6 +204,8 @@ struct SettingsView: View {
                 }
 
                 Section("Bridge") {
+                    Toggle("Auto-reconnect to paired bridges", isOn: $bridgeAutoReconnect)
+
                     Button {
                         showPairComputerSheet = true
                     } label: {

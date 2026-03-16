@@ -8,6 +8,7 @@ struct PairedBridgeDevice: Codable, Identifiable, Equatable {
     let lastSeen: String?
     let workspaceRoot: String?
     let workspaceOverride: String?
+    let pairingCode: String?
 
     var id: String { deviceId }
 }
@@ -28,6 +29,7 @@ final class ConversationEventCoordinator: ObservableObject {
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
     private var cancellables: Set<AnyCancellable> = []
+    private var pendingPairingCode: String?
     private var activeLiveResponseId: String?
     private var assistantPartialSpeechResponseId: String?
     private var invalidatedLiveResponseIds: Set<String> = []
@@ -78,6 +80,7 @@ final class ConversationEventCoordinator: ObservableObject {
             return
         }
 
+        self.pendingPairingCode = normalizedCode
         AppLogger.conductor.info("Bridge pairing: sending request with code \(normalizedCode, privacy: .public)")
         bridgePairingMessage = "Sending pairing request…"
         let event = Event.bridgePairRequest(
@@ -89,6 +92,19 @@ final class ConversationEventCoordinator: ObservableObject {
 
         Task {
             await sendConductorEvent(event, true)
+        }
+    }
+
+    func reRegisterPairedBridgeCodes() {
+        for device in pairedBridgeDevices {
+            guard let code = device.pairingCode, !code.isEmpty else { continue }
+            AppLogger.conductor.info("Bridge auto-reconnect: re-registering code for \(device.deviceName, privacy: .public)")
+            let event = Event.bridgePairRequest(
+                code: code,
+                deviceName: device.deviceName,
+                sessionId: sessionId
+            )
+            Task { await sendConductorEvent(event, true) }
         }
     }
 
@@ -240,8 +256,10 @@ final class ConversationEventCoordinator: ObservableObject {
                 status: paired.status,
                 lastSeen: nil,
                 workspaceRoot: paired.workspaceRoot,
-                workspaceOverride: existingOverride
+                workspaceOverride: existingOverride,
+                pairingCode: pendingPairingCode
             )
+            pendingPairingCode = nil
             if let override = existingOverride, !override.isEmpty {
                 sendWorkspaceSet(deviceId: paired.deviceId, path: override)
             }
@@ -318,7 +336,8 @@ final class ConversationEventCoordinator: ObservableObject {
                 status: "offline",
                 lastSeen: device.lastSeen,
                 workspaceRoot: device.workspaceRoot,
-                workspaceOverride: device.workspaceOverride
+                workspaceOverride: device.workspaceOverride,
+                pairingCode: device.pairingCode
             )
         }
 
@@ -342,7 +361,8 @@ final class ConversationEventCoordinator: ObservableObject {
             status: existing.status,
             lastSeen: existing.lastSeen,
             workspaceRoot: existing.workspaceRoot,
-            workspaceOverride: newOverride
+            workspaceOverride: newOverride,
+            pairingCode: existing.pairingCode
         )
         if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {
             pairedBridgeDevices[index] = updated
@@ -364,7 +384,8 @@ final class ConversationEventCoordinator: ObservableObject {
         status: String,
         lastSeen: String?,
         workspaceRoot: String? = nil,
-        workspaceOverride: String? = nil
+        workspaceOverride: String? = nil,
+        pairingCode: String? = nil
     ) {
         let existing = pairedBridgeDevices.first(where: { $0.deviceId == deviceId })
         let updated = PairedBridgeDevice(
@@ -373,7 +394,8 @@ final class ConversationEventCoordinator: ObservableObject {
             status: status,
             lastSeen: lastSeen ?? existing?.lastSeen,
             workspaceRoot: workspaceRoot ?? existing?.workspaceRoot,
-            workspaceOverride: workspaceOverride ?? existing?.workspaceOverride
+            workspaceOverride: workspaceOverride ?? existing?.workspaceOverride,
+            pairingCode: pairingCode ?? existing?.pairingCode
         )
 
         if let index = pairedBridgeDevices.firstIndex(where: { $0.deviceId == deviceId }) {
