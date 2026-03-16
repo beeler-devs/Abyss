@@ -5,7 +5,6 @@ struct BridgeExecCard: Identifiable {
     let id: UUID
     var commandId: String?
     let callId: String
-    var anchorMessageID: UUID?
     let command: String
     var deviceName: String?
     var status: Status
@@ -29,7 +28,6 @@ struct BridgeExecCard: Identifiable {
         id: UUID = UUID(),
         commandId: String? = nil,
         callId: String,
-        anchorMessageID: UUID? = nil,
         command: String,
         deviceName: String? = nil,
         status: Status = .running,
@@ -43,7 +41,6 @@ struct BridgeExecCard: Identifiable {
         self.id = id
         self.commandId = commandId
         self.callId = callId
-        self.anchorMessageID = anchorMessageID
         self.command = command
         self.deviceName = deviceName
         self.status = status

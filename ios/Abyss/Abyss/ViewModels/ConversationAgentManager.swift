@@ -16,8 +16,6 @@ final class ConversationAgentManager: ObservableObject {
     private let isUsingServerClient: @MainActor @Sendable () -> Bool
 
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
-    private var pendingAnchorAssignments: [String] = []
-    private var pendingAssistantAppendAnchors: [String: String] = [:]
     private var agentStatusPollingTask: Task<Void, Never>?
     private var notifiedTerminalAgentIDs: Set<String> = []
     private var hasReceivedWebhookDrivenAgentStatus = false
@@ -51,13 +49,8 @@ final class ConversationAgentManager: ObservableObject {
             pendingToolCalls[toolCall.callId] = toolCall
             if toolCall.name == AgentSpawnTool.name {
                 registerPendingCard(from: toolCall)
-            } else if toolCall.name == ConvoAppendMessageTool.name {
-                handleConversationAppendToolCall(toolCall)
             }
         case .toolResult(let toolResult):
-            if let spawnCallID = pendingAssistantAppendAnchors.removeValue(forKey: toolResult.callId) {
-                handleConversationAppendResult(toolResult, for: spawnCallID)
-            }
             guard let toolCall = pendingToolCalls.removeValue(forKey: toolResult.callId) else {
                 return
             }
@@ -80,8 +73,6 @@ final class ConversationAgentManager: ObservableObject {
     func dismissCard(cardID: UUID) {
         guard let card = cards.first(where: { $0.id == cardID }) else { return }
         cards.removeAll { $0.id == cardID }
-        pendingAnchorAssignments.removeAll { $0 == card.spawnCallId }
-        pendingAssistantAppendAnchors = pendingAssistantAppendAnchors.filter { $0.value != card.spawnCallId }
     }
 
     func cancelAgent(cardID: UUID) {
@@ -120,11 +111,9 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: toolCall.callId,
                 prompt: args.prompt,
                 repository: args.repository,
-                autoCreatePR: args.autoCreatePr ?? false,
-                anchorMessageID: nil
+                autoCreatePR: args.autoCreatePr ?? false
             )
         )
-        pendingAnchorAssignments.append(toolCall.callId)
     }
 
     private func handleToolResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
@@ -157,8 +146,7 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: toolCall.callId,
                 prompt: "Cursor agent task",
                 repository: nil,
-                autoCreatePR: false,
-                anchorMessageID: latestAssistantMessageID()
+                autoCreatePR: false
             ).applyingSpawnResult(result)
             cards.append(fallback)
         }
@@ -190,8 +178,7 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: toolCall.callId,
                 prompt: result.name ?? "Cursor agent task",
                 repository: nil,
-                autoCreatePR: false,
-                anchorMessageID: latestAssistantMessageID()
+                autoCreatePR: false
             ).applyingStatusResult(result)
             cards.append(fallback)
         }
@@ -230,8 +217,7 @@ final class ConversationAgentManager: ObservableObject {
                 spawnCallId: "server-\(agentID)",
                 prompt: status.summary ?? status.detail ?? "Cursor agent task",
                 repository: nil,
-                autoCreatePR: false,
-                anchorMessageID: latestAssistantMessageID()
+                autoCreatePR: false
             ).applyingAgentStatusEvent(status)
             cards.append(fallback)
         }
@@ -316,29 +302,6 @@ final class ConversationAgentManager: ObservableObject {
         Task { await sendConductorEvent(event) }
     }
 
-    private func handleConversationAppendToolCall(_ toolCall: Event.ToolCall) {
-        guard let args = decode(ConvoAppendMessageTool.Arguments.self, from: toolCall.arguments),
-              args.role == ConversationMessage.Role.assistant.rawValue,
-              let pendingSpawnCallID = pendingAnchorAssignments.first else {
-            return
-        }
-
-        pendingAnchorAssignments.removeFirst()
-        pendingAssistantAppendAnchors[toolCall.callId] = pendingSpawnCallID
-    }
-
-    private func handleConversationAppendResult(_ toolResult: Event.ToolResult, for spawnCallID: String) {
-        guard toolResult.error == nil,
-              let result = decode(ConvoAppendMessageTool.Result.self, from: toolResult.result),
-              let messageID = UUID(uuidString: result.messageId) else {
-            return
-        }
-
-        _ = updateCard(spawnCallId: spawnCallID) {
-            $0.anchorMessageID = messageID
-        }
-    }
-
     @discardableResult
     private func updateCard(
         spawnCallId: String,
@@ -363,9 +326,6 @@ final class ConversationAgentManager: ObservableObject {
         return true
     }
 
-    private func latestAssistantMessageID() -> UUID? {
-        conversationMessages().last(where: { $0.role == .assistant })?.id
-    }
 
     private func shouldAutoPollAgentStatus() -> Bool {
         if shouldUseWebhookUpdates() && hasReceivedWebhookDrivenAgentStatus {
@@ -402,6 +362,9 @@ private extension AgentProgressCard {
         copy.agentURL = result.url
         copy.prURL = result.prUrl
         copy.createdAt = result.createdAt
+        if let cardId = result.cardId {
+            copy.serverCardId = cardId
+        }
         copy.summary = copy.summaryTextForStatus(currentSummary: copy.summary)
         copy.errorMessage = nil
         copy.updatedAt = Date()

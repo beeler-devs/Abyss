@@ -4,6 +4,7 @@ struct GmailSendConfirmTool: Tool, @unchecked Sendable {
     static let name = "gmail.send.confirm"
 
     struct Arguments: Codable, Sendable {
+        let callId: String?
         let to: String
         let cc: String?
         let subject: String
@@ -23,23 +24,19 @@ struct GmailSendConfirmTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
-        AppLogger.tooling.info("gmail.send.confirm execute: to=\(arguments.to, privacy: .public) subject=\(arguments.subject, privacy: .public)")
-        let callId = UUID().uuidString
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                to: arguments.to,
-                cc: arguments.cc,
-                subject: arguments.subject,
-                body: arguments.body,
-                messageId: nil,
-                anchorMessageID: nil
-            )
-            AppLogger.tooling.info("gmail.send.confirm result: confirmed=\(confirmed, privacy: .public)")
-            return Result(confirmed: confirmed, message: "User confirmed. Email sent.")
-        } catch is EmailDraftManager.DraftError {
-            AppLogger.tooling.info("gmail.send.confirm result: cancelled by user")
-            return Result(confirmed: false, message: "User cancelled the email.")
-        }
+        let resolvedCallId = arguments.callId ?? UUID().uuidString
+        AppLogger.tooling.info("gmail.send.confirm execute: callId=\(resolvedCallId, privacy: .public) to=\(arguments.to, privacy: .public) subject=\(arguments.subject, privacy: .public)")
+
+        draftManager.addDraft(
+            callId: resolvedCallId,
+            to: arguments.to,
+            cc: arguments.cc,
+            subject: arguments.subject,
+            body: arguments.body,
+            messageId: nil
+        )
+
+        // Return immediately — non-blocking. Server doesn't wait for this result.
+        return Result(confirmed: true, message: "Draft shown to user for confirmation.")
     }
 }

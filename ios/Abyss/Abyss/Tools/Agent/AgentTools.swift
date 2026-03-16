@@ -26,6 +26,7 @@ struct AgentSpawnTool: Tool, @unchecked Sendable {
         let prUrl: String?
         let branchName: String?
         let createdAt: String?
+        let cardId: String?
     }
 
     private let client: CursorCloudAgentsProviding

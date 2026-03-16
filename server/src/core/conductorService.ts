@@ -1235,6 +1235,76 @@ export class ConductorService {
         return;
       }
 
+      case "gmail.send.execute": {
+        const execCallId = asString(event.payload.callId);
+        const confirmed = event.payload.confirmed === true;
+        if (!execCallId) {
+          logger.warn("gmail.send.execute missing callId", { sessionId: session.sessionId });
+          return;
+        }
+
+        const pending = session.pendingGmailSends.get(execCallId);
+        if (!pending) {
+          logger.warn(`gmail.send.execute no pending send for callId=${execCallId}`, { sessionId: session.sessionId });
+          return;
+        }
+        session.pendingGmailSends.delete(execCallId);
+
+        if (!confirmed) {
+          logger.info(`gmail.send.execute cancelled callId=${execCallId}`, { sessionId: session.sessionId });
+          emit(makeEvent("gmail.send.result", session.sessionId, {
+            callId: execCallId,
+            status: "cancelled",
+            message: "User cancelled the email.",
+          }));
+          return;
+        }
+
+        // Use possibly-edited values from the execute event
+        const execTo = asString(event.payload.to) || pending.to;
+        const execSubject = asString(event.payload.subject) || pending.subject;
+        const execBody = asString(event.payload.body) || pending.body;
+        const execCc = asString(event.payload.cc) || pending.cc;
+
+        try {
+          if (pending.type === "reply" && pending.messageId) {
+            const replyResult = await this.gmailClient!.reply(session, pending.messageId, {
+              body: execBody,
+              to: execTo,
+              cc: execCc,
+            });
+            logger.info(`gmail.send.execute reply sent callId=${execCallId}`, { sessionId: session.sessionId });
+            emit(makeEvent("gmail.send.result", session.sessionId, {
+              callId: execCallId,
+              status: "sent",
+              result: replyResult,
+            }));
+          } else {
+            const sendResult = await this.gmailClient!.send(session, {
+              to: execTo,
+              cc: execCc,
+              subject: execSubject,
+              body: execBody,
+            });
+            logger.info(`gmail.send.execute send sent callId=${execCallId}`, { sessionId: session.sessionId });
+            emit(makeEvent("gmail.send.result", session.sessionId, {
+              callId: execCallId,
+              status: "sent",
+              result: sendResult,
+            }));
+          }
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          logger.error(`gmail.send.execute failed callId=${execCallId}: ${errorMsg}`, { sessionId: session.sessionId });
+          emit(makeEvent("gmail.send.result", session.sessionId, {
+            callId: execCallId,
+            status: "failed",
+            error: errorMsg,
+          }));
+        }
+        return;
+      }
+
       case "preferences.sync": {
         if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
           session.userPreferences = event.payload.preferences as Record<string, string>;
@@ -1445,7 +1515,8 @@ export class ConductorService {
   private shouldEmitServerToolToClient(toolName: string): boolean {
     return toolName.startsWith("canvas.") ||
       toolName.startsWith("gmail.") ||
-      toolName.startsWith("calendar.");
+      toolName.startsWith("calendar.") ||
+      toolName === "cursor.agent.spawn";
   }
 
   /**
@@ -1765,6 +1836,37 @@ export class ConductorService {
                 }
               } catch { /* ignore parse errors */ }
             }
+
+            // Track draft card refs for gmail.send/reply pending_confirmation results
+            if ((toolCall.name === "gmail.send" || toolCall.name === "gmail.reply") && !execution.error && rawResult) {
+              try {
+                const parsed = JSON.parse(rawResult);
+                if (parsed.confirmCallId) {
+                  pendingCardRefs.push({ type: "draft", id: parsed.confirmCallId });
+                }
+              } catch { /* ignore */ }
+            }
+
+            // Track agent card refs for cursor.agent.spawn results
+            if (toolCall.name === "cursor.agent.spawn" && !execution.error && rawResult) {
+              try {
+                const parsed = JSON.parse(rawResult);
+                if (parsed.cardId) {
+                  pendingCardRefs.push({ type: "agent", id: parsed.cardId });
+                }
+              } catch { /* ignore */ }
+            }
+
+            // Track bridge exec card refs
+            if ((toolCall.name === "bridge.exec.run" || toolCall.name === "bridge.exec.start" || toolCall.name === "bridge.claude.run") && !execution.error && rawResult) {
+              try {
+                const parsed = JSON.parse(rawResult);
+                if (parsed.cardId) {
+                  pendingCardRefs.push({ type: "bridge", id: parsed.cardId });
+                }
+              } catch { /* ignore */ }
+            }
+
             const resultForLLM = enrichment
               ? enrichment.enrichedResult + enrichment.cardSummary
               : (execution.error ? `Error: ${execution.error}` : rawResult!);
@@ -2051,6 +2153,7 @@ export class ConductorService {
             emit,
           );
 
+          const agentCardId = crypto.randomUUID();
           return {
             result: stableJSONStringify({
               agentId: spawned.agentId,
@@ -2060,7 +2163,8 @@ export class ConductorService {
               url: spawned.runUrl,
               prUrl: spawned.prUrl,
               branchName: spawned.branchName,
-            }),
+              cardId: agentCardId,
+            }) + "\n\n[Agent card rendered to user. Reference inline:\n```card:agent:" + agentCardId + "\n```\n]",
             error: null,
           };
         }
@@ -2243,6 +2347,17 @@ export class ConductorService {
             timeoutMs,
           }, emit);
 
+          // Inject cardId for bridge exec tools so they can be referenced inline
+          if (!bridgeResult.error && bridgeResult.result && (toolName === "bridge.exec.run" || toolName === "bridge.exec.start")) {
+            try {
+              const parsed = JSON.parse(bridgeResult.result) as Record<string, unknown>;
+              const bridgeCardId = crypto.randomUUID();
+              parsed.cardId = bridgeCardId;
+              bridgeResult.result = JSON.stringify(parsed);
+              bridgeResult.result += "\n\n[Bridge exec card rendered to user. Reference inline:\n```card:bridge:" + bridgeCardId + "\n```\n]";
+            } catch { /* ignore parse failure */ }
+          }
+
           if (!bridgeResult.error && bridgeResult.result) {
             if (toolName === "bridge.exec.start") {
               try {
@@ -2293,13 +2408,26 @@ export class ConductorService {
 
           const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
           const claudeTimeoutMs = Math.max(1, Math.min(660, Math.trunc(claudeTimeoutRaw ?? 660))) * 1_000;
-          return await this.bridgeToolExecutor({
+          const claudeResult = await this.bridgeToolExecutor({
             callId,
             sessionId: session.sessionId,
             toolName,
             args: resolvedArgs,
             timeoutMs: claudeTimeoutMs,
           }, emit);
+
+          // Inject cardId for inline card reference
+          if (!claudeResult.error && claudeResult.result) {
+            try {
+              const parsed = JSON.parse(claudeResult.result) as Record<string, unknown>;
+              const bridgeCardId = crypto.randomUUID();
+              parsed.cardId = bridgeCardId;
+              claudeResult.result = JSON.stringify(parsed);
+              claudeResult.result += "\n\n[Bridge exec card rendered to user. Reference inline:\n```card:bridge:" + bridgeCardId + "\n```\n]";
+            } catch { /* ignore parse failure */ }
+          }
+
+          return claudeResult;
         }
 
         case "bridge.nova.start": {
@@ -2389,12 +2517,12 @@ export class ConductorService {
           }
           const cc = stringFromRecord(args, "cc");
 
-          // Emit draft to iOS for user confirmation
+          // Emit draft to iOS for user confirmation (non-blocking)
           const confirmCallId = crypto.randomUUID();
           const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
             callId: confirmCallId,
             name: "gmail.send.confirm",
-            arguments: JSON.stringify({ to, cc: cc ?? undefined, subject, body }),
+            arguments: JSON.stringify({ callId: confirmCallId, to, cc: cc ?? undefined, subject, body }),
           });
           session.pendingToolCalls.set(confirmCallId, {
             callId: confirmCallId,
@@ -2402,32 +2530,23 @@ export class ConductorService {
             emittedAt: confirmEnvelope.timestamp,
             toolArguments: { to, cc, subject, body },
           });
+          session.pendingGmailSends.set(confirmCallId, {
+            callId: confirmCallId,
+            originalToolCallId: callId,
+            type: "send",
+            to,
+            cc: cc ?? undefined,
+            subject,
+            body,
+          });
           emit(confirmEnvelope);
-          logger.info(`gmail.send waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
+          logger.info(`gmail.send pending confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          // Wait for user confirmation (120s timeout — user needs time to read)
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            logger.warn(`gmail.send confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
-            return { result: null, error: confirmError ?? "gmail_send_not_confirmed" };
-          }
-
-          let confirmed = false;
-          try {
-            const parsed = JSON.parse(confirmResult);
-            confirmed = parsed.confirmed === true;
-          } catch {
-            return { result: null, error: "gmail_send_invalid_confirmation" };
-          }
-
-          logger.info(`gmail.send confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
-
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the email." }), error: null };
-          }
-
-          const sendResult = await this.gmailClient.send(session, { to, cc, subject, body });
-          return { result: stableJSONStringify(sendResult), error: null };
+          return {
+            result: stableJSONStringify({ status: "pending_confirmation", confirmCallId, message: "Draft shown to user. Waiting for confirmation." }) +
+              "\n\n[Draft card rendered to user. Reference inline:\n```card:draft:" + confirmCallId + "\n```\n]",
+            error: null,
+          };
         }
 
         case "gmail.reply": {
@@ -2442,12 +2561,12 @@ export class ConductorService {
           const to = stringFromRecord(args, "to");
           const cc = stringFromRecord(args, "cc");
 
-          // Emit draft to iOS for user confirmation
+          // Emit draft to iOS for user confirmation (non-blocking)
           const confirmCallId = crypto.randomUUID();
           const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
             callId: confirmCallId,
             name: "gmail.reply.confirm",
-            arguments: JSON.stringify({ messageId, body, to: to ?? undefined, cc: cc ?? undefined }),
+            arguments: JSON.stringify({ callId: confirmCallId, messageId, body, to: to ?? undefined, cc: cc ?? undefined }),
           });
           session.pendingToolCalls.set(confirmCallId, {
             callId: confirmCallId,
@@ -2455,31 +2574,24 @@ export class ConductorService {
             emittedAt: confirmEnvelope.timestamp,
             toolArguments: { messageId, body, to, cc },
           });
+          session.pendingGmailSends.set(confirmCallId, {
+            callId: confirmCallId,
+            originalToolCallId: callId,
+            type: "reply",
+            to: to ?? "",
+            cc: cc ?? undefined,
+            subject: "Re:",
+            body,
+            messageId,
+          });
           emit(confirmEnvelope);
-          logger.info(`gmail.reply waiting for confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
+          logger.info(`gmail.reply pending confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            logger.warn(`gmail.reply confirmation failed: ${confirmError ?? "no_result"}`, { sessionId: session.sessionId, callId: confirmCallId });
-            return { result: null, error: confirmError ?? "gmail_reply_not_confirmed" };
-          }
-
-          let confirmed = false;
-          try {
-            const parsed = JSON.parse(confirmResult);
-            confirmed = parsed.confirmed === true;
-          } catch {
-            return { result: null, error: "gmail_reply_invalid_confirmation" };
-          }
-
-          logger.info(`gmail.reply confirmation result: ${confirmed ? "confirmed" : "cancelled"}`, { sessionId: session.sessionId, callId: confirmCallId });
-
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to send the reply." }), error: null };
-          }
-
-          const replyResult = await this.gmailClient.reply(session, messageId, { body, to, cc });
-          return { result: stableJSONStringify(replyResult), error: null };
+          return {
+            result: stableJSONStringify({ status: "pending_confirmation", confirmCallId, message: "Draft reply shown to user. Waiting for confirmation." }) +
+              "\n\n[Draft card rendered to user. Reference inline:\n```card:draft:" + confirmCallId + "\n```\n]",
+            error: null,
+          };
         }
 
         // Canvas LMS tools

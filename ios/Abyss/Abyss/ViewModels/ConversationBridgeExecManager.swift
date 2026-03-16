@@ -8,17 +8,12 @@ final class ConversationBridgeExecManager: ObservableObject {
 
     private var pendingByCallId: [String: UUID] = [:]
     private var cardByCommandId: [String: UUID] = [:]
-    private var lastAssistantMessageID: UUID?
 
     private static let bridgeExecToolNames: Set<String> = [
         "bridge.exec.run",
         "bridge.exec.start",
         "bridge.claude.run",
     ]
-
-    func updateLastAssistantMessageID(_ id: UUID) {
-        lastAssistantMessageID = id
-    }
 
     func handleEventStream(_ event: Event) {
         switch event.kind {
@@ -27,7 +22,6 @@ final class ConversationBridgeExecManager: ObservableObject {
             let command = parseCommand(from: toolCall)
             var card = BridgeExecCard(
                 callId: toolCall.callId,
-                anchorMessageID: lastAssistantMessageID,
                 command: command,
                 status: .running
             )
@@ -39,10 +33,14 @@ final class ConversationBridgeExecManager: ObservableObject {
             guard let cardId = pendingByCallId[toolResult.callId] else { return }
             guard let index = cards.firstIndex(where: { $0.id == cardId }) else { return }
 
-            if let resultJSON = toolResult.result,
-               let commandId = parseCommandId(from: resultJSON) {
-                cards[index].commandId = commandId
-                cardByCommandId[commandId] = cardId
+            if let resultJSON = toolResult.result {
+                if let commandId = parseCommandId(from: resultJSON) {
+                    cards[index].commandId = commandId
+                    cardByCommandId[commandId] = cardId
+                }
+                if let serverCardId = parseCardId(from: resultJSON) {
+                    cards[index].serverCardId = serverCardId
+                }
             }
 
             if toolResult.isError {
@@ -115,5 +113,13 @@ final class ConversationBridgeExecManager: ObservableObject {
             return nil
         }
         return json["commandId"] as? String
+    }
+
+    private func parseCardId(from resultJSON: String) -> String? {
+        guard let data = resultJSON.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        return json["cardId"] as? String
     }
 }

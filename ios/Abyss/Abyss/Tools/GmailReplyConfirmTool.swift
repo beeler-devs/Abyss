@@ -4,6 +4,7 @@ struct GmailReplyConfirmTool: Tool, @unchecked Sendable {
     static let name = "gmail.reply.confirm"
 
     struct Arguments: Codable, Sendable {
+        let callId: String?
         let messageId: String
         let body: String
         let to: String?
@@ -23,20 +24,18 @@ struct GmailReplyConfirmTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
-        let callId = UUID().uuidString
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                to: arguments.to ?? "",
-                cc: arguments.cc,
-                subject: "Re:",
-                body: arguments.body,
-                messageId: arguments.messageId,
-                anchorMessageID: nil
-            )
-            return Result(confirmed: confirmed, message: "User confirmed. Reply sent.")
-        } catch is EmailDraftManager.DraftError {
-            return Result(confirmed: false, message: "User cancelled the reply.")
-        }
+        let resolvedCallId = arguments.callId ?? UUID().uuidString
+
+        draftManager.addDraft(
+            callId: resolvedCallId,
+            to: arguments.to ?? "",
+            cc: arguments.cc,
+            subject: "Re:",
+            body: arguments.body,
+            messageId: arguments.messageId
+        )
+
+        // Return immediately — non-blocking. Server doesn't wait for this result.
+        return Result(confirmed: true, message: "Draft reply shown to user for confirmation.")
     }
 }

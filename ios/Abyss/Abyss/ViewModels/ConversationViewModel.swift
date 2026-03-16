@@ -308,12 +308,30 @@ final class ConversationViewModel: ObservableObject {
         emailManager.toggleExpanded(cardId: cardID)
     }
 
-    func confirmEmailDraft(callId: String) {
-        emailDraftManager.confirmSend(callId: callId)
+    func confirmEmailDraft(callId: String, to: String, subject: String, body: String) {
+        let draft = emailDraftManager.confirmSend(callId: callId, to: to, subject: subject, body: body)
+        let event = Event.gmailSendExecute(
+            callId: callId,
+            confirmed: true,
+            to: to,
+            subject: subject,
+            body: body,
+            cc: draft?.cc,
+            sessionId: sessionId
+        )
+        eventBus.emit(event)
+        Task { await sendEventToConductor(event) }
     }
 
     func cancelEmailDraft(callId: String) {
         emailDraftManager.cancelDraft(callId: callId)
+        let event = Event.gmailSendExecute(
+            callId: callId,
+            confirmed: false,
+            sessionId: sessionId
+        )
+        eventBus.emit(event)
+        Task { await sendEventToConductor(event) }
     }
 
     func toggleCalendarEventExpanded(cardID: UUID) {
@@ -429,6 +447,7 @@ final class ConversationViewModel: ObservableObject {
             toolRouter: toolRouter,
             audioPipeline: audioPipeline,
             agentManager: agentManager,
+            emailDraftManager: emailDraftManager,
             sessionId: sessionId,
             sendConductorEvent: { [weak self] event, surfaceErrors in
                 await self?.sendEventToConductor(event, surfaceErrors: surfaceErrors)
@@ -444,12 +463,6 @@ final class ConversationViewModel: ObservableObject {
             .sink { [weak self] _ in
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
-                if let lastAssistant = self.messages.last(where: { $0.role == .assistant }) {
-                    self.bridgeExecManager.updateLastAssistantMessageID(lastAssistant.id)
-                    self.emailManager.updateLastAssistantMessageID(lastAssistant.id)
-                    self.calendarManager.updateLastAssistantMessageID(lastAssistant.id)
-                    self.canvasCardManager.updateLastAssistantMessageID(lastAssistant.id)
-                }
             }
             .store(in: &cancellables)
 

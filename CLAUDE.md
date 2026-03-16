@@ -66,18 +66,31 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`, `web.search`) execute directly on the server and return results to the LLM
 7. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
-### Inline Card Rendering
-When server-side tools (gmail.*, calendar.*, canvas.*) return results, `ConductorService.enrichResultWithCardIds()` injects a `cardId` (UUID) into each item in the JSON. The enriched result is sent to both iOS (for card managers) and the LLM (with a card summary instruction). The LLM references cards inline in its response via `` ```card:TYPE:CARD_ID``` `` fenced blocks. On iOS, `MarkdownTextView` parses these as `.cardReference` blocks and resolves them via `TranscriptView.resolveCard()` to render actual card views inline in the prose. Cards rendered inline are excluded from the anchored/unanchored card sections to avoid duplication. During streaming, unresolved card references show a `CardPlaceholderView` with shimmer animation.
+### Inline Card Rendering (Inline-Only Architecture)
+ALL cards render inline via `` ```card:TYPE:CARD_ID``` `` fenced blocks in assistant message text. Cards are permanently fixed in the message — they never shift position. The old anchor-based rendering system (System 2) has been removed, except for a minimal fallback for `CalendarDraftCard` (deferred from conversion).
 
-**Card types:** `email`, `calendar`, `canvas` (with future support for `agent`, `bridge`)
+**How it works:** Server-side tools inject `cardId` into their results (via `enrichResultWithCardIds()` for read-only cards, or explicit injection for agent/bridge/draft cards). The LLM references each card inline. On iOS, `MarkdownTextView` parses `.cardReference` blocks and resolves them via `TranscriptView.resolveCard()`.
+
+**Card types:** `email`, `calendar`, `canvas`, `agent`, `bridge`, `draft`
+
+**Server card injection points:**
+- Read-only cards (email, calendar, canvas): `enrichResultWithCardIds()` + `cardTypeForTool()`
+- Agent cards: `cursor.agent.spawn` result includes `cardId` + card reference instruction
+- Bridge exec cards: `bridge.exec.run`, `bridge.exec.start`, `bridge.claude.run` results include `cardId` + card reference instruction
+- Email draft cards: `gmail.send`/`gmail.reply` results include `confirmCallId` as card ID + card reference instruction
+- `injectMissingCardReferences()` catches any cards the LLM fails to reference inline
+
+**`TranscriptItem` enum:** Only `.message`, `.calendarDraftCard`, `.messageActions`. All other card types render exclusively through `resolveCard()`.
+
+**`anchorMessageID` usage:** Only exists on `CalendarDraftCard` and its manager/tools. All other card models use `serverCardId` for inline resolution.
 
 **Files:**
-- `server/src/core/conductorService.ts` — `enrichResultWithCardIds()`, `cardTypeForTool()`
+- `server/src/core/conductorService.ts` — `enrichResultWithCardIds()`, `cardTypeForTool()`, `injectMissingCardReferences()`, card injection in tool handlers
 - `ios/.../Views/MarkdownTextView.swift` — `Block.cardReference`/`.cardPlaceholder` cases, `cardResolver` closure
 - `ios/.../Views/CardPlaceholderView.swift` — Placeholder with generic/typed/unresolved states
-- `ios/.../Views/TranscriptView.swift` — `resolveCard()`, dedup logic in `transcriptItems`
-- All card models (`EmailCard`, `CalendarEventCard`, `CanvasCard`, `BridgeExecCard`, `AgentProgressCard`) — `serverCardId: String?`
-- Card managers (`ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`) — parse `cardId` from enriched JSON
+- `ios/.../Views/TranscriptView.swift` — `resolveCard()` (primary rendering), minimal calendar draft anchor fallback
+- All card models — `serverCardId: String?` (no `anchorMessageID` except `CalendarDraftCard`)
+- Card managers — parse `cardId` from enriched JSON, no anchor tracking (except `CalendarDraftManager`)
 
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).

@@ -11,13 +11,13 @@ enum EmailDraftSendState: Equatable, Sendable {
 struct EmailDraftCard: Identifiable, Equatable, Sendable {
     let id: UUID
     let callId: String
-    let to: String
-    let cc: String?
-    let subject: String
-    let body: String
+    var to: String
+    var cc: String?
+    var subject: String
+    var body: String
     let messageId: String?
     var sendState: EmailDraftSendState
-    var anchorMessageID: UUID?
+    var serverCardId: String?
 
     var isReply: Bool { messageId != nil }
 
@@ -30,7 +30,7 @@ struct EmailDraftCard: Identifiable, Equatable, Sendable {
         body: String,
         messageId: String? = nil,
         sendState: EmailDraftSendState = .pending,
-        anchorMessageID: UUID? = nil
+        serverCardId: String? = nil
     ) {
         self.id = id
         self.callId = callId
@@ -40,6 +40,6 @@ struct EmailDraftCard: Identifiable, Equatable, Sendable {
         self.body = body
         self.messageId = messageId
         self.sendState = sendState
-        self.anchorMessageID = anchorMessageID
+        self.serverCardId = serverCardId
     }
 }
