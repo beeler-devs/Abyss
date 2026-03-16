@@ -234,6 +234,10 @@ final class ConversationViewModel: ObservableObject {
         eventCoordinator.requestBridgePairing(pairingCode: pairingCode, deviceName: deviceName)
     }
 
+    func setWorkspaceOverride(deviceId: String, path: String?) {
+        eventCoordinator.setWorkspaceOverride(deviceId: deviceId, path: path)
+    }
+
     private func setupToolSystem(transcriber: SpeechTranscriber? = nil, tts: TextToSpeech? = nil) {
         let registry = ToolRegistry()
         let sttImpl = transcriber ?? self.transcriber
