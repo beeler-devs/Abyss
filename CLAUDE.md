@@ -66,6 +66,19 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`) execute directly on the server and return results to the LLM
 7. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
+### Inline Card Rendering
+When server-side tools (gmail.*, calendar.*, canvas.*) return results, `ConductorService.enrichResultWithCardIds()` injects a `cardId` (UUID) into each item in the JSON. The enriched result is sent to both iOS (for card managers) and the LLM (with a card summary instruction). The LLM references cards inline in its response via `` ```card:TYPE:CARD_ID``` `` fenced blocks. On iOS, `MarkdownTextView` parses these as `.cardReference` blocks and resolves them via `TranscriptView.resolveCard()` to render actual card views inline in the prose. Cards rendered inline are excluded from the anchored/unanchored card sections to avoid duplication. During streaming, unresolved card references show a `CardPlaceholderView` with shimmer animation.
+
+**Card types:** `email`, `calendar`, `canvas` (with future support for `agent`, `bridge`)
+
+**Files:**
+- `server/src/core/conductorService.ts` — `enrichResultWithCardIds()`, `cardTypeForTool()`
+- `ios/.../Views/MarkdownTextView.swift` — `Block.cardReference`/`.cardPlaceholder` cases, `cardResolver` closure
+- `ios/.../Views/CardPlaceholderView.swift` — Placeholder with generic/typed/unresolved states
+- `ios/.../Views/TranscriptView.swift` — `resolveCard()`, dedup logic in `transcriptItems`
+- All card models (`EmailCard`, `CalendarEventCard`, `CanvasCard`, `BridgeExecCard`, `AgentProgressCard`) — `serverCardId: String?`
+- Card managers (`ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`) — parse `cardId` from enriched JSON
+
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
 
