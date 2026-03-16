@@ -89,9 +89,9 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 
 **Dynamic system prompt:** Both providers (`bedrockNovaProvider.ts`, `anthropicProvider.ts`) accept `userPreferences` in `generateResponse()` and append them to the system prompt as `"User preferences (apply throughout): - key: value"`.
 
-**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `bridge.claude.allowedTools` (comma-separated Claude Code tools: Bash, Read, Edit, Write, LS, Glob, Grep, MultiEdit), `custom.*` for free-form.
+**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `bridge.claude.allowedTools` (comma-separated Claude Code tools: Bash, Read, Edit, Write, MultiEdit, Glob, Grep, LS, Agent, WebFetch, WebSearch, NotebookEdit, TodoRead, TodoWrite), `custom.*` for free-form.
 
-**First-run gate for Claude Code:** When `bridge.claude.run` is called and no `bridge.claude.allowedTools` preference exists, the tool returns a prompt instructing the LLM to ask the user which tools to allow before proceeding. The user's choice is saved via `preferences.set` and persists across sessions.
+**Default Claude Code tools:** When `bridge.claude.run` is called and no `bridge.claude.allowedTools` preference exists, all built-in tools are allowed by default. The user can override via `preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...')` to restrict the set.
 
 **Files:**
 - `ios/.../Models/UserPreferencesStore.swift` — `@MainActor ObservableObject`, UserDefaults-backed `[String: String]`

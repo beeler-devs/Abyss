@@ -514,7 +514,7 @@ public actor BridgeCore {
             case "bridge.claude.run":
                 let args = try decodeArguments(BridgeClaudeRunArguments.self, json: payload.arguments)
                 let allowedTools = normalizedClaudeToolList(args.allowedTools)
-                    ?? "Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit"
+                    ?? "Bash,Read,Edit,Write,MultiEdit,Glob,Grep,LS,Agent,WebFetch,WebSearch,NotebookEdit,TodoRead,TodoWrite"
 
                 func shellEscape(_ str: String) -> String {
                     return "'" + str.replacingOccurrences(of: "'", with: "'\\''") + "'"

@@ -2220,7 +2220,7 @@ export class ConductorService {
           }
 
           // Resolve allowedTools: explicit arg > user preference > default (all tools)
-          const DEFAULT_ALLOWED_TOOLS = "Bash,Read,Edit,Write,LS,Glob,Grep,MultiEdit";
+          const DEFAULT_ALLOWED_TOOLS = "Bash,Read,Edit,Write,MultiEdit,Glob,Grep,LS,Agent,WebFetch,WebSearch,NotebookEdit,TodoRead,TodoWrite";
           const explicitTools = typeof args.allowedTools === "string" ? args.allowedTools : undefined;
           const prefTools = session.userPreferences?.["bridge.claude.allowedTools"];
           const resolvedAllowedTools = explicitTools ?? prefTools ?? DEFAULT_ALLOWED_TOOLS;
