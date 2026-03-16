@@ -321,9 +321,29 @@ public actor BridgeCore {
             Task { [weak self] in
                 try? await self?.handleToolCall(envelope)
             }
+        case "bridge.workspace.set":
+            Task { await handleWorkspaceSet(envelope) }
         default:
             break
         }
+    }
+
+    private func handleWorkspaceSet(_ envelope: EventEnvelope) async {
+        guard let path = envelope.payload.objectValue?["workspacePath"]?.stringValue,
+              !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            await emitLog("[workspace] bridge.workspace.set: missing or empty workspacePath")
+            return
+        }
+
+        var isDir: ObjCBool = false
+        let exists = FileManager.default.fileExists(atPath: path, isDirectory: &isDir)
+        guard exists && isDir.boolValue else {
+            await emitLog("[workspace] bridge.workspace.set: path does not exist or is not a directory: \(path)")
+            return
+        }
+
+        await updateWorkspaceRoot(URL(fileURLWithPath: path))
+        await emitLog("[workspace] workspace updated to \(path)")
     }
 
     private func handleToolCall(_ envelope: EventEnvelope) async throws {
