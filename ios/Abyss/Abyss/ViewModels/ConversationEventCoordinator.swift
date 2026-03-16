@@ -167,6 +167,18 @@ final class ConversationEventCoordinator: ObservableObject {
                 return
             }
 
+            // Server-side tools (canvas/gmail/calendar) are executed on the server.
+            // The server sends tool.call + tool.result events so card managers can
+            // render inline cards. Do NOT dispatch these locally — there are no iOS
+            // tools registered for them, and dispatching would emit an error result
+            // that poisons the card manager's pending-call tracking.
+            if toolCall.name.hasPrefix("canvas.") ||
+               toolCall.name.hasPrefix("gmail.") ||
+               toolCall.name.hasPrefix("calendar.") {
+                eventBus.emit(event)
+                return
+            }
+
             if audioPipeline.isHandsFreeLiveConversationMode,
                toolCall.name == ConvoAppendMessageTool.name,
                let arguments = decode(ConvoAppendMessageTool.Arguments.self, from: toolCall.arguments),
