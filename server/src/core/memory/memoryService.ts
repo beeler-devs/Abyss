@@ -7,6 +7,10 @@ import {
   RetrieveCommand,
 } from "@aws-sdk/client-bedrock-agent-runtime";
 import {
+  BedrockAgentClient,
+  StartIngestionJobCommand,
+} from "@aws-sdk/client-bedrock-agent";
+import {
   S3Client,
   PutObjectCommand,
   ListObjectsV2Command,
@@ -20,6 +24,7 @@ export interface MemoryServiceConfig {
   s3Bucket: string;
   s3Prefix: string;
   knowledgeBaseId?: string;
+  knowledgeBaseDataSourceId?: string;
   awsRegion: string;
   summaryModelId: string;
   retrieveTimeoutMs: number;
@@ -89,12 +94,14 @@ export class MemoryService {
   private readonly s3: S3Client;
   private readonly bedrock: BedrockRuntimeClient;
   private readonly agentRuntime: BedrockAgentRuntimeClient;
+  private readonly bedrockAgent: BedrockAgentClient;
 
   constructor(config: MemoryServiceConfig) {
     this.config = config;
     this.s3 = new S3Client({ region: config.awsRegion });
     this.bedrock = new BedrockRuntimeClient({ region: config.awsRegion });
     this.agentRuntime = new BedrockAgentRuntimeClient({ region: config.awsRegion });
+    this.bedrockAgent = new BedrockAgentClient({ region: config.awsRegion });
   }
 
   async summarizeAndStore(
@@ -206,8 +213,13 @@ Respond with JSON only:
   }
 
   private async triggerKbIngestion(): Promise<void> {
-    // Bedrock KB sync requires a data source ID — if not configured, skip silently
-    // Full implementation requires MEMORY_KB_DATA_SOURCE_ID env var
+    if (!this.config.knowledgeBaseId || !this.config.knowledgeBaseDataSourceId) return;
+    await this.bedrockAgent.send(
+      new StartIngestionJobCommand({
+        knowledgeBaseId: this.config.knowledgeBaseId,
+        dataSourceId: this.config.knowledgeBaseDataSourceId,
+      }),
+    );
   }
 
   async retrieveContext(input: MemoryRetrieveInput): Promise<string | null> {
