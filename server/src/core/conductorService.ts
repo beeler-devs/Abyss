@@ -1506,6 +1506,34 @@ export class ConductorService {
       }
     }
 
+    // Hard guard: reject cursor/agent spawn for email, calendar, or canvas tasks.
+    // The LLM sometimes ignores system prompt instructions and routes these requests
+    // to cursor.agent.spawn, which can't handle them. Return an actionable error.
+    if (toolName === "cursor.agent.spawn" || toolName === "agent.spawn") {
+      const tools = this.availableTools(session.sessionId);
+      const toolNames = new Set(tools.map((t) => t.name));
+      const prompt = (stringFromRecord(args, "prompt") ?? "").toLowerCase();
+
+      if (toolNames.has("gmail.send") && /\b(email|e-mail|gmail|mail|send.*to|compose|draft)\b/i.test(prompt)) {
+        return {
+          result: null,
+          error: "wrong_tool: Use gmail.send or gmail.reply for email tasks, not cursor.agent.spawn. The Gmail tools are available.",
+        };
+      }
+      if (toolNames.has("calendar.create") && /\b(calendar|schedule|meeting|event|appointment)\b/i.test(prompt)) {
+        return {
+          result: null,
+          error: "wrong_tool: Use calendar.* tools for scheduling tasks, not cursor.agent.spawn. The Calendar tools are available.",
+        };
+      }
+      if (toolNames.has("canvas.courses") && /\b(canvas|course|assignment|grade|syllabus|class)\b/i.test(prompt)) {
+        return {
+          result: null,
+          error: "wrong_tool: Use canvas.* tools for coursework tasks, not cursor.agent.spawn. The Canvas tools are available.",
+        };
+      }
+    }
+
     try {
       switch (toolName) {
         case "cursor.agent.spawn": {
