@@ -652,10 +652,12 @@ public struct BridgeNovaActArguments: Codable, Sendable {
 public struct BridgeNovaActResult: Codable, Sendable {
     public let result: String
     public let success: Bool
+    public let pageContext: String?
 
-    public init(result: String, success: Bool) {
+    public init(result: String, success: Bool, pageContext: String? = nil) {
         self.result = result
         self.success = success
+        self.pageContext = pageContext
     }
 }
 

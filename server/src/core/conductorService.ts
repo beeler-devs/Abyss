@@ -467,13 +467,13 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
   {
     name: "bridge.nova.start",
     description:
-      "Start a persistent Nova Act browser session on a paired Mac. Opens Chrome at the given URL. Session persists across subsequent bridge.nova.act calls.",
+      "Start a persistent Nova Act browser session on a paired Mac. Opens a visible Chrome window at the given URL. Session persists across subsequent bridge.nova.act calls.",
     input_schema: {
       type: "object",
       properties: {
         deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
         url: { type: "string", description: "The URL to open Chrome at." },
-        headless: { type: "boolean", description: "Run Chrome headless (default true)." },
+        headless: { type: "boolean", description: "Run Chrome headless (default false — browser is visible)." },
         userDataDir: { type: "string", description: "Optional Chrome user data directory for persistent profiles." },
       },
       required: ["url"],
@@ -482,7 +482,7 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
   {
     name: "bridge.nova.act",
     description:
-      "Execute a natural-language browser instruction in the active Nova Act session. Optionally extract structured data with a JSON schema.",
+      "Execute a natural-language browser instruction in the active Nova Act session. Returns a page content summary after navigation. Optionally extract structured data with a JSON schema.",
     input_schema: {
       type: "object",
       properties: {

@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let novaActLog = Logger(subsystem: "app.abyss.bridge", category: "NovaAct")
 
 /// Manages a persistent Python process running the Nova Act bridge script.
 /// Communicates via stdin/stdout JSON-RPC (one JSON object per line).
@@ -39,6 +42,11 @@ public actor NovaActSessionManager {
         env["PYTHONUNBUFFERED"] = "1"
         if let apiKey, !apiKey.isEmpty {
             env["NOVA_ACT_API_KEY"] = apiKey
+            novaActLog.info("using app-provided API key (\(apiKey.prefix(8))...)")
+        } else if let envKey = env["NOVA_ACT_API_KEY"], !envKey.isEmpty {
+            novaActLog.info("using env var API key (\(envKey.prefix(8))...)")
+        } else {
+            novaActLog.warning("no Nova Act API key available — start will likely fail")
         }
         proc.environment = env
 
@@ -57,8 +65,9 @@ public actor NovaActSessionManager {
         stderr.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             if !data.isEmpty, let text = String(data: data, encoding: .utf8) {
-                // stderr debug output from Python script — log but don't parse
-                let _ = text // Silently consume; in production, wire to log handler
+                for line in text.split(separator: "\n") {
+                    novaActLog.info("python: \(line, privacy: .public)")
+                }
             }
         }
 
@@ -69,6 +78,7 @@ public actor NovaActSessionManager {
             Task { await self?.ingestStdout(text) }
         }
 
+        novaActLog.info("launching Python process: \(resolvedPython) \(scriptPath)")
         try proc.run()
         isActive = true
 
@@ -78,15 +88,23 @@ public actor NovaActSessionManager {
             cmd["user_data_dir"] = dir
         }
 
+        novaActLog.info("sending start command: url=\(url) headless=\(headless)")
         let response = try await sendCommand(cmd, timeout: 60)
         guard response["ok"] as? Bool == true else {
             let error = response["error"] as? String ?? "start failed"
+            novaActLog.error("start failed: \(error)")
             await cleanup()
             throw NovaActError.startFailed(error)
         }
+        novaActLog.info("session started successfully")
     }
 
-    public func act(instruction: String, schema: String?) async throws -> String {
+    public struct ActResponse {
+        public let result: String
+        public let pageContext: String?
+    }
+
+    public func act(instruction: String, schema: String?) async throws -> ActResponse {
         guard isActive else {
             throw NovaActError.noActiveSession
         }
@@ -96,14 +114,18 @@ public actor NovaActSessionManager {
             cmd["schema"] = schema
         }
 
+        novaActLog.info("sending act command: \(instruction.prefix(120))")
         let response = try await sendCommand(cmd, timeout: commandTimeoutSeconds)
         guard response["ok"] as? Bool == true else {
             let error = response["error"] as? String ?? "act failed"
+            novaActLog.error("act failed: \(error)")
             throw NovaActError.actFailed(error)
         }
 
         let result = response["result"] as? String ?? ""
-        return result
+        let pageContext = response["page_context"] as? String
+        novaActLog.info("act complete, result length=\(result.count) pageContext=\(pageContext != nil)")
+        return ActResponse(result: result, pageContext: pageContext)
     }
 
     public func stop() async throws -> Bool {
