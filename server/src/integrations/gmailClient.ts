@@ -57,8 +57,17 @@ export class GmailClient {
       throw new Error("gmail_not_authenticated");
     }
 
-    if (session.gmailTokenExpiresAt && Date.now() < session.gmailTokenExpiresAt - 60_000) {
-      return session.gmailAccessToken;
+    if (session.gmailTokenExpiresAt) {
+      // iOS stores expiresAt as epoch seconds; Date.now() returns milliseconds.
+      // Heuristic: any value > 1e12 is already ms, otherwise convert s → ms.
+      const expiresAtMs = session.gmailTokenExpiresAt > 1e12
+        ? session.gmailTokenExpiresAt
+        : session.gmailTokenExpiresAt * 1000;
+      const isValid = Date.now() < expiresAtMs - 60_000;
+      logger.info(`gmail token check: expiresAtMs=${expiresAtMs} now=${Date.now()} valid=${isValid} hasRefreshToken=${!!session.gmailRefreshToken}`);
+      if (isValid) {
+        return session.gmailAccessToken;
+      }
     }
 
     if (!session.gmailRefreshToken) {

@@ -293,6 +293,7 @@ struct TranscriptView: View {
 
     private var showsTypingIndicator: Bool {
         appState == .thinking && assistantPartialSpeech.isEmpty && !hasPersistedAssistantPartial
+            && emailDraftCards.isEmpty && calendarDraftCards.isEmpty
     }
 
     private var lastMessageSnapshot: MessageSnapshot? {
