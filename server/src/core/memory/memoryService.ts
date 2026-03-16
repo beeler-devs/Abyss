@@ -127,10 +127,10 @@ export class MemoryService {
     sessionId: string,
     history: ConversationTurn[],
     workingContext?: WorkingContextSnapshot,
-  ): Promise<void> {
-    if (!memoryUserKey || memoryUserKey.length > 128 || /[^a-zA-Z0-9_\-]/.test(memoryUserKey)) return;
-    if (!this.config.enabled) return;
-    if (!isMeaningfulHistory(history)) return;
+  ): Promise<MemoryDocument | null> {
+    if (!memoryUserKey || memoryUserKey.length > 128 || /[^a-zA-Z0-9_\-]/.test(memoryUserKey)) return null;
+    if (!this.config.enabled) return null;
+    if (!isMeaningfulHistory(history)) return null;
 
     // Filter to meaningful turns for summary
     const relevantTurns = history.filter((t) => {
@@ -230,6 +230,8 @@ Respond with JSON only:
     if (this.config.knowledgeBaseId) {
       void this.triggerKbIngestion();
     }
+
+    return doc;
   }
 
   private async triggerKbIngestion(): Promise<void> {

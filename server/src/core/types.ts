@@ -90,6 +90,8 @@ export interface SessionState {
     lastGoal?: string;
     activeExecutor?: string;
   };
+  graphContextCache?: string;
+  lastGraphQueryTs?: number;
 }
 
 export interface BridgeToolExecutionRequest {

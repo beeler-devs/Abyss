@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import { ConductorService } from "../src/core/conductorService.js";
 import { MemoryService, MemoryServiceConfig } from "../src/core/memory/memoryService.js";
+import { ContextGraphService } from "../src/contextGraph/contextGraphService.js";
 import { makeEvent } from "../src/core/events.js";
 import { ModelProvider, ConversationTurn, ModelResponse } from "../src/core/types.js";
 
@@ -59,6 +60,10 @@ test("on first user turn, injects memory as user turn when available", async () 
   };
 
   const memService = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const contextGraphService = new ContextGraphService(
+    { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
+    { memoryService: memService },
+  );
   let capturedConversation: ConversationTurn[] = [];
   const provider: ModelProvider = {
     name: "capture",
@@ -74,7 +79,7 @@ test("on first user turn, injects memory as user turn when available", async () 
   const conductor = new ConductorService(
     provider,
     { maxTurns: 10, rateLimitPerMinute: 300 },
-    { memoryService: memService },
+    { contextGraphService },
   );
 
   const events: string[] = [];
@@ -115,11 +120,15 @@ test("does not inject memory twice in same session (memoryHydrated guard)", asyn
   };
 
   const memService = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const contextGraphService = new ContextGraphService(
+    { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
+    { memoryService: memService },
+  );
   const provider = new StubProvider("response");
   const conductor = new ConductorService(
     provider,
     { maxTurns: 10, rateLimitPerMinute: 300 },
-    { memoryService: memService },
+    { contextGraphService },
   );
 
   const emit = () => {};
@@ -133,10 +142,14 @@ test("does not inject memory twice in same session (memoryHydrated guard)", asyn
 
 test("finalizeSession no-ops when session missing", async () => {
   const memService = new MemoryService(makeConfig());
+  const contextGraphService = new ContextGraphService(
+    { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
+    { memoryService: memService },
+  );
   const conductor = new ConductorService(
     new StubProvider("hi"),
     { maxTurns: 10, rateLimitPerMinute: 300 },
-    { memoryService: memService },
+    { contextGraphService },
   );
   // Should not throw
   await conductor.finalizeSession("nonexistent-session");
@@ -147,10 +160,14 @@ test("finalizeSession no-ops when session has no memoryUserKey", async () => {
   const mockBedrock = { send: async () => { summarizeCalled = true; return {}; } };
   const mockS3 = { send: async () => ({}) };
   const memService = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+  const contextGraphService = new ContextGraphService(
+    { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
+    { memoryService: memService },
+  );
   const conductor = new ConductorService(
     new StubProvider("hi"),
     { maxTurns: 10, rateLimitPerMinute: 300 },
-    { memoryService: memService },
+    { contextGraphService },
   );
 
   const emit = () => {};
@@ -173,11 +190,15 @@ test("finalizeSession does not write to S3 for session with fewer than 3 user tu
   };
   const mockBedrock = { send: async () => ({}) };
   const memService = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+  const contextGraphService = new ContextGraphService(
+    { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
+    { memoryService: memService },
+  );
 
   const conductor = new ConductorService(
     new StubProvider("hi"),
     { maxTurns: 10, rateLimitPerMinute: 300 },
-    { memoryService: memService },
+    { contextGraphService },
   );
 
   const emit = () => {};
@@ -208,11 +229,15 @@ test("finalizeSession calls summarizeAndStore for meaningful session", async () 
     return origSummarize(...args);
   };
 
+  const contextGraphService = new ContextGraphService(
+    { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
+    { memoryService: memService },
+  );
   const provider = new StubProvider("response");
   const conductor = new ConductorService(
     provider,
     { maxTurns: 10, rateLimitPerMinute: 300 },
-    { memoryService: memService },
+    { contextGraphService },
   );
 
   const emit = () => {};
