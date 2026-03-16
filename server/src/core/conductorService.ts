@@ -1357,7 +1357,8 @@ export class ConductorService {
   private shouldEmitServerToolToClient(toolName: string): boolean {
     return toolName.startsWith("canvas.") ||
       toolName.startsWith("gmail.") ||
-      toolName.startsWith("calendar.");
+      toolName.startsWith("calendar.") ||
+      toolName === "cursor.agent.spawn";
   }
 
   /**

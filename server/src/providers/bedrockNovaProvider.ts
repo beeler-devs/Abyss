@@ -133,6 +133,7 @@ export class BedrockNovaProvider implements ModelProvider {
       "If webqa.cursor.run is available and the user asks to validate behavior in a browser, call webqa.cursor.run.",
       "If cursor.agent.spawn is available and the user asks to spawn an agent, run coding tasks, PR work, or repo analysis, prefer cursor.agent.spawn.",
       "When using cursor.agent.spawn or webqa.cursor.run, avoid aggressive polling; rely on webhook-driven updates unless explicitly asked to refresh.",
+      "After spawning a Cursor Cloud Agent, keep your spoken response brief — just confirm what you started. The UI already shows an agent progress card with status, branch name, and a link to the agent run. Do not mention URLs, links, or agent run details in your response.",
       "If cursor.agent.spawn is unavailable or a cursor_server_not_configured error is returned, fall back to legacy agent.spawn.",
       "When using legacy agent.spawn for repo work, if you do not know the exact owner/repo string, call repositories.list first.",
       "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",

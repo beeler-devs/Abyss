@@ -209,6 +209,7 @@ export class AnthropicProvider implements ModelProvider {
       "If webqa_cursor_run is available and the user asks to validate behavior in a browser, call webqa_cursor_run.",
       "If cursor_agent_spawn is available and the user asks to spawn an agent, run coding tasks, PR work, or repo analysis, prefer cursor_agent_spawn.",
       "When using cursor_agent_spawn or webqa_cursor_run, avoid aggressive polling; rely on webhook-driven updates unless explicitly asked to refresh.",
+      "After spawning a Cursor Cloud Agent, keep your spoken response brief — just confirm what you started. The UI already shows an agent progress card with status, branch name, and a link to the agent run. Do not mention URLs, links, or agent run details in your response.",
       "If cursor_agent_spawn is unavailable or a cursor_server_not_configured error is returned, fall back to legacy agent_spawn.",
       "When using legacy agent_spawn for repo work, if you do not know the exact owner/repo string, call repositories_list first.",
       "By default set autoCreatePr: false and autoBranch: false unless the user explicitly asks to create a PR or branch.",
