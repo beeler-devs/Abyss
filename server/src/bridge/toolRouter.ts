@@ -68,6 +68,7 @@ export interface BridgeToolRouterDependencies {
   state: BridgeStateStore;
   sendToBridge: (deviceId: string, event: EventEnvelope) => boolean;
   emitToIOS: (event: EventEnvelope) => void;
+  isLiveSession?: (sessionId: string) => boolean;
   verboseToolRoutingLogs?: boolean;
 }
 
@@ -86,12 +87,14 @@ export class BridgeToolRouter {
   private readonly claudeLineBuffers = new Map<string, string>(); // commandId → partial line
   private readonly lastClaudeProgressAt = new Map<string, number>(); // commandId → ms
   private readonly claudeExitCodeByCommandId = new Map<string, number>();
+  private readonly isLiveSession: (sessionId: string) => boolean;
   private readonly verboseToolRoutingLogs: boolean;
 
   constructor(deps: BridgeToolRouterDependencies) {
     this.state = deps.state;
     this.sendToBridge = deps.sendToBridge;
     this.emitToIOS = deps.emitToIOS;
+    this.isLiveSession = deps.isLiveSession ?? (() => false);
     this.verboseToolRoutingLogs = deps.verboseToolRoutingLogs ?? false;
   }
 
@@ -933,6 +936,10 @@ export class BridgeToolRouter {
   }
 
   private emitAssistantSpeechToolCall(sessionId: string, text: string): void {
+    // In live (Nova Sonic) sessions, the bidirectional audio stream handles speech.
+    // Emitting tts.speak would conflict with the hands-free audio engine.
+    if (this.isLiveSession(sessionId)) return;
+
     this.emitToIOS(makeEvent("tool.call", sessionId, {
       callId: `bridge-tts-${crypto.randomUUID()}`,
       name: "tts.speak",

@@ -99,6 +99,7 @@ const bridgeRouter = new BridgeToolRouter({
   emitToIOS: (event) => {
     emitToSession(event);
   },
+  isLiveSession: (sessionId): boolean => conductor.isSessionLive(sessionId),
   verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
 });
 

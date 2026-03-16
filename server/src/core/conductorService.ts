@@ -942,6 +942,10 @@ export class ConductorService {
     return this.sessions.getAgentIdForSpawnCall(spawnCallId);
   }
 
+  isSessionLive(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.isLiveSession ?? false;
+  }
+
   listAvailableTools(sessionId: string): ToolDefinition[] {
     return this.availableTools(sessionId);
   }
