@@ -785,6 +785,7 @@ final class BufferedPCMPlaybackQueue {
 @MainActor
 private final class RemoteAudioCapture: RemoteVoiceCapturing {
     private static let targetSampleRate: Double = 16_000
+    private static let preferredHardwareSampleRate: Double = 48_000
 
     private final class CaptureRunState {
         struct Snapshot {
@@ -888,12 +889,19 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         engine.attach(sinkNode)
         engine.connect(inputNode, to: sinkNode, format: captureFormat)
 
-        // Connect playerNode using Float32 at the mixer's native rate (typically 48kHz).
-        // Voice processing requires Float32 at hardware rate; Int16/24kHz causes engine.start() to silently fail.
+        // Build assistant playback around the voice-processing I/O rate.
+        // On device the mixer's pre-start format can still report 44.1kHz even when
+        // voice-processing input is already fixed at 48kHz, and using that stale rate
+        // causes the duplex graph to fail silently with engine.isRunning == false.
         let mixerFormat = engine.mainMixerNode.outputFormat(forBus: 0)
+        let playbackSampleRate = resolvedPlaybackSampleRate(
+            captureFormat: captureFormat,
+            mixerFormat: mixerFormat,
+            session: session
+        )
         let playbackFmt = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: mixerFormat.sampleRate,
+            sampleRate: playbackSampleRate,
             channels: 1,
             interleaved: false
         )!
@@ -1047,7 +1055,60 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             mode: .voiceChat,
             options: [.defaultToSpeaker, .allowBluetoothHFP, .duckOthers]
         )
+        applySessionPreference("preferredSampleRate") {
+            try session.setPreferredSampleRate(Self.preferredHardwareSampleRate)
+        }
+        applySessionPreference("preferredIOBufferDuration") {
+            try session.setPreferredIOBufferDuration(0.02)
+        }
+        applySessionPreference("preferredInputNumberOfChannels") {
+            try session.setPreferredInputNumberOfChannels(1)
+        }
         try session.setActive(true)
+    }
+
+    private func applySessionPreference(
+        _ label: String,
+        operation: () throws -> Void
+    ) {
+        do {
+            try operation()
+        } catch {
+            let nsError = error as NSError
+            AppLogger.audio.warning(
+                """
+                Hands-free session preference \(label, privacy: .public) failed: \
+                domain=\(nsError.domain, privacy: .public) code=\(nsError.code) \
+                message=\(nsError.localizedDescription, privacy: .public)
+                """
+            )
+        }
+    }
+
+    private func resolvedPlaybackSampleRate(
+        captureFormat: AVAudioFormat,
+        mixerFormat: AVAudioFormat,
+        session: AVAudioSession
+    ) -> Double {
+        let captureRate = captureFormat.sampleRate
+        let sessionRate = session.sampleRate
+        let mixerRate = mixerFormat.sampleRate
+
+        if abs(mixerRate - captureRate) > 1 {
+            AppLogger.audio.warning(
+                """
+                Hands-free playback rate mismatch before start: capture=\(captureRate, privacy: .public) \
+                mixer=\(mixerRate, privacy: .public) session=\(sessionRate, privacy: .public). \
+                Using capture/session hardware rate for assistant playback.
+                """
+            )
+        }
+
+        if sessionRate > 0, abs(sessionRate - captureRate) <= 1 {
+            return sessionRate
+        }
+
+        return captureRate
     }
 
     private func enableVoiceProcessing(on node: AVAudioIONode, label: String) {
