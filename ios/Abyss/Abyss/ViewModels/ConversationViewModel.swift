@@ -33,6 +33,16 @@ final class ConversationViewModel: ObservableObject {
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
 
+    private static let memoryUserKey: String = {
+        let key = "memoryUserKey"
+        if let existing = UserDefaults.standard.string(forKey: key) {
+            return existing
+        }
+        let newKey = UUID().uuidString
+        UserDefaults.standard.set(newKey, forKey: key)
+        return newKey
+    }()
+
     let eventBus = EventBus()
     let conversationStore = ConversationStore()
     let appStateStore = AppStateStore()
@@ -587,7 +597,8 @@ final class ConversationViewModel: ObservableObject {
             gmailTokenExpiresAt: gmailTokenExpiresAt,
             canvasAccessToken: canvasAccessToken,
             canvasBaseURL: canvasBaseURL,
-            preferences: prefs.isEmpty ? nil : prefs
+            preferences: prefs.isEmpty ? nil : prefs,
+            memoryUserKey: Self.memoryUserKey
         )
 
         inboundEventsTask?.cancel()
