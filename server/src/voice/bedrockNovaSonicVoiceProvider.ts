@@ -460,10 +460,13 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
   }
 
   private finalizeAccumulatedAssistantText(session: SonicSession): boolean {
-    const text = session.accumulatedAssistantText.trim();
+    // Use speculative text if it's more complete (FINAL may not have caught up yet).
+    const finalText = session.accumulatedAssistantText.trim();
+    const specText = session.accumulatedSpeculativeText.trim();
+    const text = specText.length > finalText.length ? specText : finalText;
     if (!text) {
       session.accumulatedAssistantText = "";
-    session.accumulatedSpeculativeText = "";
+      session.accumulatedSpeculativeText = "";
       return false;
     }
 
