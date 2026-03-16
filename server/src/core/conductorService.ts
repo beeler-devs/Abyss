@@ -709,7 +709,7 @@ export class ConductorService {
               transcript: text,
             });
             if (context) {
-              this.sessions.appendTurn(session, { role: "system", content: context });
+              this.sessions.appendTurn(session, { role: "user", content: `[Prior context from previous sessions]\n${context}` });
               emit(makeEvent("session.memory.loaded", event.sessionId, {
                 memoryUserKey: session.memoryUserKey,
                 contextLength: context.length,
