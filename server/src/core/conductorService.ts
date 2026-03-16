@@ -5,6 +5,7 @@ import { CanvasClient } from "../integrations/canvasClient.js";
 import { CursorClient } from "../integrations/cursorClient.js";
 import { GmailClient } from "../integrations/gmailClient.js";
 import { GitHubClient } from "../integrations/githubClient.js";
+import { SearchClient } from "../integrations/searchClient.js";
 import {
   isTerminalAgentStatus,
   normalizeMode,
@@ -44,6 +45,7 @@ export interface ConductorServiceDependencies {
   canvasClient?: CanvasClient;
   calendarClient?: CalendarClient;
   githubClient?: GitHubClient;
+  searchClient?: SearchClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
@@ -665,6 +667,22 @@ const SERVER_CANVAS_TOOLS: ToolDefinition[] = [
   },
 ];
 
+const SERVER_SEARCH_TOOLS: ToolDefinition[] = [
+  {
+    name: "web.search",
+    description:
+      "Search the web for current information. Use this when you need up-to-date facts, recent events, or information you're unsure about. Returns titles, URLs, and snippets from top results. Summarize findings conversationally rather than listing raw results.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The search query string." },
+        maxResults: { type: "number", description: "Number of results to return (default 5, max 10)." },
+      },
+      required: ["query"],
+    },
+  },
+];
+
 const SERVER_GITHUB_TOOLS: ToolDefinition[] = [
   {
     name: "github.repos.list",
@@ -821,6 +839,7 @@ export class ConductorService {
   private readonly canvasClient?: CanvasClient;
   private readonly calendarClient?: CalendarClient;
   private readonly githubClient?: GitHubClient;
+  private readonly searchClient?: SearchClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
@@ -843,6 +862,7 @@ export class ConductorService {
     this.canvasClient = dependencies.canvasClient;
     this.calendarClient = dependencies.calendarClient;
     this.githubClient = dependencies.githubClient;
+    this.searchClient = dependencies.searchClient;
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -1234,6 +1254,10 @@ export class ConductorService {
       }
     }
 
+    if (this.searchClient?.isConfigured()) {
+      tools.push(...SERVER_SEARCH_TOOLS);
+    }
+
     return tools;
   }
 
@@ -1256,6 +1280,10 @@ export class ConductorService {
 
     if (toolName.startsWith("github.")) {
       return Boolean(this.githubClient);
+    }
+
+    if (toolName.startsWith("web.")) {
+      return true;
     }
 
     if (this.cursorClient.isConfigured() && toolName === "repositories.list") {
@@ -2423,6 +2451,19 @@ export class ConductorService {
             : undefined;
           const issue = await this.githubClient.createIssue(session, { repo, title, body, labels });
           return { result: stableJSONStringify(issue), error: null };
+        }
+
+        case "web.search": {
+          if (!this.searchClient?.isConfigured()) {
+            return { result: null, error: "search_not_configured: SEARCH_API_KEY is not set." };
+          }
+          const query = asString(args.query);
+          if (!query) {
+            return { result: null, error: "search_missing_query" };
+          }
+          const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
+          const searchResponse = await this.searchClient.search(query, maxResults);
+          return { result: stableJSONStringify(searchResponse), error: null };
         }
 
         default:

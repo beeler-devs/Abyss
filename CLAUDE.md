@@ -63,7 +63,7 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 3. LLM responds with tool calls → conductor emits `tool.call` events
 4. Tools execute locally (iOS handles `audio.*`, `ui.*`) or are routed to the bridge (`bridge.exec.run`, `bridge.fs.*`)
 5. Tool results are sent back as `tool.result` events → conductor resumes LLM
-6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`) execute directly on the server and return results to the LLM
+6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`, `web.search`) execute directly on the server and return results to the LLM
 7. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
 ### Context Summarization
@@ -96,7 +96,7 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 - `server/src/bridge/state.ts` — Device pairing and online/offline tracking
 - `server/src/bridge/toolRouter.ts` — Routes bridge tools to connected macOS devices
 - `server/src/providers/` — Pluggable LLM backends; factory in `index.ts`
-- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `calendarClient.ts` (Google Calendar), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents)
+- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `calendarClient.ts` (Google Calendar), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents), `searchClient.ts` (Brave Web Search)
 - `server/src/voice/` — Voice providers; `bedrockNovaSonicVoiceProvider.ts` for Nova Sonic streaming
 
 ### Model Providers
@@ -138,6 +138,8 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 **Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`. Canvas tool results render as `CanvasCardView` cards in the transcript via `ConversationCanvasManager` (same pattern as Calendar). Cards use a unified `CanvasCard` model with variant enum (`.course`, `.assignment`, `.todo`, `.grade`, `.announcement`). At session start, the server pre-fetches courses via `canvasClient.courses()` and stores a summary in `session.canvasCourseContext`, which is injected into the system prompt for ambient awareness.
 
 **Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use iOS confirmation card pattern via `EmailDraftManager`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in.
+
+**Web Search Integration:** Server-side `SearchClient` (`server/src/integrations/searchClient.ts`) wraps the Brave Search API. Provides 1 tool: `web.search(query, maxResults?)`. Available when `SEARCH_API_KEY` env var is set. Results include title, URL, and snippet (truncated to 300 chars). No iOS-side config needed.
 
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
@@ -191,6 +193,7 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | `CURSOR_API_KEY` | — | Optional; enables server-side Cursor agent tools |
 | `GOOGLE_CLIENT_ID` | — | Required for Gmail + Calendar OAuth |
 | `GOOGLE_CLIENT_SECRET` | — | Required for Gmail + Calendar OAuth |
+| `SEARCH_API_KEY` | — | Optional; enables `web.search` tool (Brave Search API) |
 
 AWS credentials are resolved via Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or standard SDK chain (profile, env vars, or instance role).
 
