@@ -117,6 +117,7 @@ export class MemoryService {
     history: ConversationTurn[],
     workingContext?: WorkingContextSnapshot,
   ): Promise<void> {
+    if (!memoryUserKey || memoryUserKey.length > 128 || /[^a-zA-Z0-9_\-]/.test(memoryUserKey)) return;
     if (!this.config.enabled) return;
     if (!isMeaningfulHistory(history)) return;
 
@@ -234,6 +235,7 @@ Respond with JSON only:
   }
 
   async retrieveContext(input: MemoryRetrieveInput): Promise<string | null> {
+    if (!input.memoryUserKey || input.memoryUserKey.length > 128 || /[^a-zA-Z0-9_\-]/.test(input.memoryUserKey)) return null;
     if (!this.config.enabled) return null;
 
     const deadline = Date.now() + this.config.retrieveTimeoutMs;
