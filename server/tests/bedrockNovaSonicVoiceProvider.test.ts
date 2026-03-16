@@ -138,7 +138,7 @@ test("nova-sonic finalizes complete user turns once", async (t) => {
 
   const appendCalls = findToolCalls(harness.emitted, "convo.appendMessage");
   assert.equal(appendCalls.length, 1);
-  assert.deepEqual(JSON.parse(String(appendCalls[0]?.payload.arguments)), {
+  assert.deepEqual(parseToolArguments(appendCalls[0]), {
     role: "user",
     text: "build the project",
     isPartial: false,
@@ -207,8 +207,7 @@ test("nova-sonic aggregates assistant text chunks into one partial message, fina
 
   // Text contentEnd emits a partial appendMessage, not speech.final yet
   await waitFor(() => findToolCalls(harness.emitted, "convo.appendMessage").length === 1);
-  assert.deepEqual(JSON.parse(String(findToolCalls(harness.emitted, "convo.appendMessage")[0]?.payload.arguments)), {
-    role: "assistant",
+  assertAssistantAppend(findToolCalls(harness.emitted, "convo.appendMessage")[0], {
     text: "Hello world",
     isPartial: true,
   });
@@ -231,8 +230,7 @@ test("nova-sonic aggregates assistant text chunks into one partial message, fina
 
   const appendCalls = findToolCalls(harness.emitted, "convo.appendMessage");
   assert.equal(appendCalls.length, 2); // 1 partial + 1 final
-  assert.deepEqual(JSON.parse(String(appendCalls.at(-1)?.payload.arguments)), {
-    role: "assistant",
+  assertAssistantAppend(appendCalls.at(-1), {
     text: "Hello world",
     isPartial: false,
   });
@@ -394,13 +392,11 @@ test("nova-sonic finalizes accumulated assistant text on completionEnd even befo
 
   const appendCalls = findToolCalls(harness.emitted, "convo.appendMessage");
   assert.equal(appendCalls.length, 2);
-  assert.deepEqual(JSON.parse(String(appendCalls[0]?.payload.arguments)), {
-    role: "assistant",
+  assertAssistantAppend(appendCalls[0], {
     text: "Sentence one.",
     isPartial: true,
   });
-  assert.deepEqual(JSON.parse(String(appendCalls[1]?.payload.arguments)), {
-    role: "assistant",
+  assertAssistantAppend(appendCalls[1], {
     text: "Sentence one.",
     isPartial: false,
   });
@@ -535,6 +531,150 @@ test("nova-sonic emits interruption and returns to listening on interrupted comp
 
   await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
   assert.equal(findStateTransitions(harness.emitted, "listening").length, 2);
+});
+
+test("nova-sonic interrupt closes the active session, drops stale events, and starts a fresh response", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeAllResponses();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.outboundEvents.some((event) => "sessionStart" in event));
+
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "assistant-live-1",
+      completionId: "completion-live-1",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  }, 0);
+  harness.client.emitEvent({
+    textOutput: {
+      contentId: "assistant-live-1",
+      content: "First live reply.",
+    },
+  }, 0);
+  harness.client.emitEvent({
+    contentEnd: {
+      contentId: "assistant-live-1",
+      type: "TEXT",
+      stopReason: "END_TURN",
+    },
+  }, 0);
+
+  await waitFor(() => findToolCalls(harness.emitted, "convo.appendMessage").length === 1);
+  const firstPartial = parseToolArguments(findToolCalls(harness.emitted, "convo.appendMessage")[0]);
+  assert.equal(firstPartial.isPartial, true);
+  assert.equal(typeof firstPartial.liveResponseId, "string");
+
+  await harness.provider.interrupt("session-1");
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.audio.interrupted").length === 1);
+
+  const interruptedEvent = eventsOfType(harness.emitted, "assistant.audio.interrupted")[0];
+  assert.equal(interruptedEvent?.payload.liveResponseId, firstPartial.liveResponseId);
+
+  await harness.provider.startStream("session-1", harness.context);
+  await waitFor(() => harness.client.sendCallCount === 2);
+
+  harness.client.emitEvent({
+    completionEnd: {
+      completionId: "completion-live-1",
+      stopReason: "END_TURN",
+    },
+  }, 0);
+
+  await waitForTicks();
+  assert.equal(eventsOfType(harness.emitted, "assistant.speech.final").length, 0);
+
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "assistant-live-2",
+      completionId: "completion-live-2",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  }, 1);
+  harness.client.emitEvent({
+    textOutput: {
+      contentId: "assistant-live-2",
+      content: "Fresh reply.",
+    },
+  }, 1);
+  harness.client.emitEvent({
+    contentEnd: {
+      contentId: "assistant-live-2",
+      type: "TEXT",
+      stopReason: "END_TURN",
+    },
+  }, 1);
+  harness.client.emitEvent({
+    completionEnd: {
+      completionId: "completion-live-2",
+      stopReason: "END_TURN",
+    },
+  }, 1);
+
+  await waitFor(() => eventsOfType(harness.emitted, "assistant.speech.final").length === 1);
+  const finalAppend = findToolCalls(harness.emitted, "convo.appendMessage").at(-1);
+  assertAssistantAppend(finalAppend, {
+    text: "Fresh reply.",
+    isPartial: false,
+  });
+  assert.notEqual(parseToolArguments(finalAppend).liveResponseId, firstPartial.liveResponseId);
+});
+
+test("nova-sonic timeout emits recoverable failure and does not finalize the assistant draft", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeAllResponses();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "assistant-timeout-1",
+      completionId: "completion-timeout-1",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  }, 0);
+  harness.client.emitEvent({
+    textOutput: {
+      contentId: "assistant-timeout-1",
+      content: "This draft should be cleared.",
+    },
+  }, 0);
+  harness.client.emitEvent({
+    contentEnd: {
+      contentId: "assistant-timeout-1",
+      type: "TEXT",
+      stopReason: "END_TURN",
+    },
+  }, 0);
+
+  await waitFor(() => findToolCalls(harness.emitted, "convo.appendMessage").length === 1);
+  harness.client.emitFailure("Timed out waiting for audio bytes (59 seconds).", "modelTimeoutException", 0);
+
+  await waitFor(() => eventsOfType(harness.emitted, "error").length === 1);
+
+  const errorEvent = eventsOfType(harness.emitted, "error")[0];
+  assert.equal(errorEvent?.payload.code, "voice_provider_failed");
+  assert.match(String(errorEvent?.payload.message ?? ""), /Timed out waiting for audio bytes/);
+  assert.equal(findStateTransitions(harness.emitted, "listening").length, 2);
+
+  const assistantFinals = findToolCalls(harness.emitted, "convo.appendMessage").filter((event) => {
+    const args = parseToolArguments(event);
+    return args.role === "assistant" && args.isPartial === false;
+  });
+  assert.equal(assistantFinals.length, 0);
 });
 
 test("nova-sonic executes multiple tool uses and returns both tool results", async (t) => {
@@ -817,6 +957,22 @@ function findStateTransitions(events: EventEnvelope[], state: string): EventEnve
   });
 }
 
+function parseToolArguments(event: EventEnvelope | undefined): Record<string, any> {
+  return JSON.parse(String(event?.payload.arguments ?? "{}"));
+}
+
+function assertAssistantAppend(
+  event: EventEnvelope | undefined,
+  expected: { text: string; isPartial: boolean },
+): void {
+  const args = parseToolArguments(event);
+  assert.equal(args.role, "assistant");
+  assert.equal(args.text, expected.text);
+  assert.equal(args.isPartial, expected.isPartial);
+  assert.equal(typeof args.liveResponseId, "string");
+  assert.ok(args.liveResponseId.length > 0);
+}
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs = 1_000,
@@ -837,7 +993,7 @@ async function waitForTicks(): Promise<void> {
 class FakeBidirectionalClient {
   readonly outboundEvents: Array<Record<string, any>> = [];
   private readonly decoder = new TextDecoder();
-  private currentInbound: AsyncQueue<any> | null = null;
+  private readonly inbounds: AsyncQueue<any>[] = [];
   private failFirstSendWith?: string;
   sendCallCount = 0;
 
@@ -853,22 +1009,33 @@ class FakeBidirectionalClient {
       throw new Error(message);
     }
     const inbound = new AsyncQueue<any>();
-    this.currentInbound = inbound;
+    this.inbounds.push(inbound);
     void this.captureOutgoing(command.input?.body);
     return { body: inbound };
   }
 
-  emitEvent(event: Record<string, unknown>): void {
-    this.currentInbound?.push({
+  emitEvent(event: Record<string, unknown>, streamIndex = this.inbounds.length - 1): void {
+    this.inbounds[streamIndex]?.push({
       chunk: {
         bytes: Buffer.from(JSON.stringify({ event }), "utf8"),
       },
     });
   }
 
-  closeResponse(): void {
-    this.currentInbound?.close();
-    this.currentInbound = null;
+  emitFailure(message: string, kind: string, streamIndex = this.inbounds.length - 1): void {
+    this.inbounds[streamIndex]?.push({
+      [kind]: { message },
+    });
+  }
+
+  closeResponse(streamIndex = this.inbounds.length - 1): void {
+    this.inbounds[streamIndex]?.close();
+  }
+
+  closeAllResponses(): void {
+    for (const inbound of this.inbounds) {
+      inbound.close();
+    }
   }
 
   private async captureOutgoing(body: AsyncIterable<{ chunk?: { bytes?: Uint8Array } }> | undefined): Promise<void> {

@@ -220,6 +220,99 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
         XCTAssertLessThan(ttsStopIndex, interruptedIndex)
     }
 
+    func testInterruptedLiveDraftDoesNotFinalizeWhenStaleFinalAppendArrives() async {
+        let mockConductor = MockConductorClient()
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: MockSpeechTranscriber(),
+            tts: MockTextToSpeech(),
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.setChatActive(true)
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.appendMessage",
+            arguments: encodeAppendArguments(
+                role: "assistant",
+                text: "Draft reply",
+                isPartial: true,
+                liveResponseId: "live-1"
+            ),
+            callId: "append-partial-live-1",
+            sessionId: "session-test"
+        ))
+        await waitForCondition {
+            viewModel.messages.count == 1 && viewModel.messages.last?.isPartial == true
+        }
+
+        mockConductor.emitInbound(Event.assistantAudioInterrupted(
+            "user_interrupt",
+            liveResponseId: "live-1",
+            sessionId: "session-test"
+        ))
+        await waitForCondition {
+            viewModel.messages.isEmpty && viewModel.assistantPartialSpeech.isEmpty
+        }
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.appendMessage",
+            arguments: encodeAppendArguments(
+                role: "assistant",
+                text: "Draft reply",
+                isPartial: false,
+                liveResponseId: "live-1"
+            ),
+            callId: "append-final-live-1",
+            sessionId: "session-test"
+        ))
+        try? await Task.sleep(nanoseconds: 120_000_000)
+
+        XCTAssertTrue(viewModel.messages.isEmpty)
+    }
+
+    func testVoiceProviderFailureClearsLiveOverlayAndRestoresListening() async {
+        let mockConductor = MockConductorClient()
+        let viewModel = ConversationViewModel(
+            conductorClient: mockConductor,
+            transcriber: MockSpeechTranscriber(),
+            tts: MockTextToSpeech(),
+            autoStartSession: true
+        )
+
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        viewModel.setChatActive(true)
+        await waitForCondition { viewModel.appState == .listening }
+
+        mockConductor.emitInbound(Event.toolCall(
+            name: "convo.setState",
+            arguments: #"{"state":"thinking"}"#,
+            callId: "state-thinking-live-fail",
+            sessionId: "session-test"
+        ))
+        await waitForCondition { viewModel.appState == .thinking }
+
+        mockConductor.emitInbound(Event.speechPartial(
+            "Still working",
+            liveResponseId: "live-fail",
+            sessionId: "session-test"
+        ))
+        await waitForCondition { viewModel.assistantPartialSpeech == "Still working" }
+
+        mockConductor.emitInbound(Event.error(
+            code: "voice_provider_failed",
+            message: "Timed out waiting for audio bytes (59 seconds).",
+            sessionId: "session-test"
+        ))
+        await waitForCondition {
+            viewModel.assistantPartialSpeech.isEmpty && viewModel.appState == .listening
+        }
+
+        XCTAssertTrue(viewModel.messages.isEmpty)
+        XCTAssertEqual(viewModel.appState, .listening)
+    }
+
     private func waitForCondition(
         timeoutNanoseconds: UInt64 = 1_000_000_000,
         pollNanoseconds: UInt64 = 20_000_000,
@@ -239,5 +332,21 @@ final class ConversationViewModelLiveModeTests: XCTestCase {
             }
         }
         return nil
+    }
+
+    private func encodeAppendArguments(
+        role: String,
+        text: String,
+        isPartial: Bool,
+        liveResponseId: String
+    ) -> String {
+        let arguments = ConvoAppendMessageTool.Arguments(
+            role: role,
+            text: text,
+            isPartial: isPartial,
+            liveResponseId: liveResponseId
+        )
+        let data = try! JSONEncoder().encode(arguments)
+        return String(decoding: data, as: UTF8.self)
     }
 }

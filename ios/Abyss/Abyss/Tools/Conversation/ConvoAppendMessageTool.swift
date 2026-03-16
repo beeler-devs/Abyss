@@ -9,6 +9,14 @@ struct ConvoAppendMessageTool: Tool {
         let role: String   // "user", "assistant", or "system"
         let text: String
         let isPartial: Bool?
+        let liveResponseId: String?
+
+        init(role: String, text: String, isPartial: Bool? = nil, liveResponseId: String? = nil) {
+            self.role = role
+            self.text = text
+            self.isPartial = isPartial
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct Result: Codable, Sendable {
@@ -34,7 +42,8 @@ struct ConvoAppendMessageTool: Tool {
         let message = ConversationMessage(
             role: role,
             text: arguments.text,
-            isPartial: arguments.isPartial ?? false
+            isPartial: arguments.isPartial ?? false,
+            liveResponseId: arguments.liveResponseId
         )
 
         store.append(message)
@@ -48,6 +57,16 @@ final class ConversationStore: Sendable {
     private(set) var messages: [ConversationMessage] = []
 
     func append(_ message: ConversationMessage) {
+        if let liveResponseId = message.liveResponseId {
+            if let index = messages.lastIndex(where: { $0.role == message.role && $0.liveResponseId == liveResponseId }) {
+                messages[index] = message
+                return
+            }
+
+            messages.append(message)
+            return
+        }
+
         // Fast path: last message is a partial from the same role — replace it
         if let last = messages.last,
            last.isPartial,
@@ -67,25 +86,46 @@ final class ConversationStore: Sendable {
         messages.append(message)
     }
 
-    func hasPartialMessage(role: ConversationMessage.Role) -> Bool {
-        messages.contains { $0.role == role && $0.isPartial }
+    func hasPartialMessage(role: ConversationMessage.Role, liveResponseId: String? = nil) -> Bool {
+        messages.contains {
+            $0.role == role
+                && $0.isPartial
+                && (liveResponseId == nil || $0.liveResponseId == liveResponseId)
+        }
     }
 
-    func upsertStreamingMessage(role: ConversationMessage.Role, text: String) {
+    func upsertStreamingMessage(role: ConversationMessage.Role, text: String, liveResponseId: String? = nil) {
         guard let normalized = normalizedText(text) else { return }
 
-        if let idx = messages.lastIndex(where: { $0.role == role && $0.isPartial }) {
+        if let idx = messages.lastIndex(where: {
+            $0.role == role
+                && $0.isPartial
+                && (liveResponseId == nil || $0.liveResponseId == liveResponseId)
+        }) {
             var updated = messages[idx]
             updated.text = mergeStreamingText(existing: updated.text, incoming: normalized)
             messages[idx] = updated
             return
         }
 
-        messages.append(ConversationMessage(role: role, text: normalized, isPartial: true))
+        messages.append(ConversationMessage(
+            role: role,
+            text: normalized,
+            isPartial: true,
+            liveResponseId: liveResponseId
+        ))
     }
 
-    func finalizeLastPartialMessage(role: ConversationMessage.Role, finalText: String? = nil) {
-        guard let idx = messages.lastIndex(where: { $0.role == role && $0.isPartial }) else {
+    func finalizeLastPartialMessage(
+        role: ConversationMessage.Role,
+        finalText: String? = nil,
+        liveResponseId: String? = nil
+    ) {
+        guard let idx = messages.lastIndex(where: {
+            $0.role == role
+                && $0.isPartial
+                && (liveResponseId == nil || $0.liveResponseId == liveResponseId)
+        }) else {
             return
         }
 
@@ -95,6 +135,17 @@ final class ConversationStore: Sendable {
         }
         updated.isPartial = false
         messages[idx] = updated
+    }
+
+    func removePartialMessage(role: ConversationMessage.Role, liveResponseId: String? = nil) {
+        guard let index = messages.lastIndex(where: {
+            $0.role == role
+                && $0.isPartial
+                && (liveResponseId == nil || $0.liveResponseId == liveResponseId)
+        }) else {
+            return
+        }
+        messages.remove(at: index)
     }
 
     func clear() {

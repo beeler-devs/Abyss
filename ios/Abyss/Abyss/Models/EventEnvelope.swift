@@ -87,24 +87,24 @@ struct EventEnvelope: Codable, Sendable {
             payload = streamEndPayload
         case .assistantSpeechPartial(let value):
             type = "assistant.speech.partial"
-            payload = ["text": .string(value.text)]
+            payload = Self.assistantLivePayload(base: ["text": .string(value.text)], liveResponseId: value.liveResponseId)
         case .assistantSpeechFinal(let value):
             type = "assistant.speech.final"
-            payload = ["text": .string(value.text)]
+            payload = Self.assistantLivePayload(base: ["text": .string(value.text)], liveResponseId: value.liveResponseId)
         case .assistantAudioChunk(let value):
             type = "assistant.audio.chunk"
-            payload = [
+            payload = Self.assistantLivePayload(base: [
                 "audio": .string(value.audio),
                 "encoding": .string(value.encoding),
                 "sampleRateHertz": .number(Double(value.sampleRateHertz)),
                 "channelCount": .number(Double(value.channelCount)),
-            ]
-        case .assistantAudioEnd:
+            ], liveResponseId: value.liveResponseId)
+        case .assistantAudioEnd(let value):
             type = "assistant.audio.end"
-            payload = [:]
+            payload = Self.assistantLivePayload(base: [:], liveResponseId: value.liveResponseId)
         case .assistantAudioInterrupted(let value):
             type = "assistant.audio.interrupted"
-            payload = ["reason": .string(value.reason)]
+            payload = Self.assistantLivePayload(base: ["reason": .string(value.reason)], liveResponseId: value.liveResponseId)
         case .assistantUIPatch(let value):
             type = "assistant.ui.patch"
             payload = ["patch": .string(value.patch)]
@@ -268,21 +268,31 @@ struct EventEnvelope: Codable, Sendable {
         case "user.audio.stream.end":
             kind = .userAudioStreamEnd(Event.UserAudioStreamEnd(reason: payload["reason"]?.stringValue))
         case "assistant.speech.partial":
-            kind = .assistantSpeechPartial(Event.SpeechPartial(text: try requireString("text")))
+            kind = .assistantSpeechPartial(Event.SpeechPartial(
+                text: try requireString("text"),
+                liveResponseId: payload["liveResponseId"]?.stringValue
+            ))
         case "assistant.speech.final":
-            kind = .assistantSpeechFinal(Event.SpeechFinal(text: try requireString("text")))
+            kind = .assistantSpeechFinal(Event.SpeechFinal(
+                text: try requireString("text"),
+                liveResponseId: payload["liveResponseId"]?.stringValue
+            ))
         case "assistant.audio.chunk":
             kind = .assistantAudioChunk(Event.AssistantAudioChunk(
                 audio: try requireString("audio"),
                 encoding: payload["encoding"]?.stringValue ?? "pcm_s16le",
                 sampleRateHertz: payload["sampleRateHertz"]?.intValue ?? 16_000,
-                channelCount: payload["channelCount"]?.intValue ?? 1
+                channelCount: payload["channelCount"]?.intValue ?? 1,
+                liveResponseId: payload["liveResponseId"]?.stringValue
             ))
         case "assistant.audio.end":
-            kind = .assistantAudioEnd(Event.AssistantAudioEnd())
+            kind = .assistantAudioEnd(Event.AssistantAudioEnd(
+                liveResponseId: payload["liveResponseId"]?.stringValue
+            ))
         case "assistant.audio.interrupted":
             kind = .assistantAudioInterrupted(Event.AssistantAudioInterrupted(
-                reason: payload["reason"]?.stringValue ?? "unknown"
+                reason: payload["reason"]?.stringValue ?? "unknown",
+                liveResponseId: payload["liveResponseId"]?.stringValue
             ))
         case "assistant.ui.patch":
             kind = .assistantUIPatch(Event.UIPatch(patch: try requireString("patch")))
@@ -410,6 +420,13 @@ struct EventEnvelope: Codable, Sendable {
         if let sessionId {
             payload["sessionId"] = .string(sessionId)
         }
+        return payload
+    }
+
+    private static func assistantLivePayload(base: [String: JSONValue], liveResponseId: String?) -> [String: JSONValue] {
+        guard let liveResponseId else { return base }
+        var payload = base
+        payload["liveResponseId"] = .string(liveResponseId)
         return payload
     }
 

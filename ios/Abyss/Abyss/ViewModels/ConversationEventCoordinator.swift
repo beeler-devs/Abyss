@@ -27,6 +27,9 @@ final class ConversationEventCoordinator: ObservableObject {
     private let agentManager: ConversationAgentManager
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
+    private var activeLiveResponseId: String?
+    private var assistantPartialSpeechResponseId: String?
+    private var invalidatedLiveResponseIds: Set<String> = []
 
     private static let pairedBridgeDevicesKey = "pairedBridgeDevices"
 
@@ -90,10 +93,12 @@ final class ConversationEventCoordinator: ObservableObject {
                 eventBus.emit(event)
                 return
             }
-            let merged = mergeAssistantPartialText(with: partial.text)
-            guard !merged.isEmpty else { return }
-            assistantPartialSpeech = merged
-            conversationStore.upsertStreamingMessage(role: .assistant, text: merged)
+            guard let liveResponseId = partial.liveResponseId,
+                  !shouldIgnoreLiveResponse(liveResponseId) else {
+                return
+            }
+            activateLiveResponse(liveResponseId)
+            updateAssistantOverlay(with: partial.text, liveResponseId: liveResponseId)
             eventBus.emit(event)
 
         case .assistantSpeechFinal(let final):
@@ -102,45 +107,84 @@ final class ConversationEventCoordinator: ObservableObject {
                 eventBus.emit(event)
                 return
             }
-            let merged = mergeAssistantPartialText(with: final.text)
-            if !merged.isEmpty {
-                assistantPartialSpeech = merged
-                conversationStore.upsertStreamingMessage(role: .assistant, text: merged)
+            guard let liveResponseId = final.liveResponseId,
+                  !shouldIgnoreLiveResponse(liveResponseId) else {
+                return
             }
+            activateLiveResponse(liveResponseId)
+            updateAssistantOverlay(with: final.text, liveResponseId: liveResponseId)
             eventBus.emit(event)
 
         case .assistantAudioChunk(let chunk):
+            if audioPipeline.isHandsFreeLiveConversationMode {
+                guard let liveResponseId = chunk.liveResponseId,
+                      !shouldIgnoreLiveResponse(liveResponseId) else {
+                    return
+                }
+                activateLiveResponse(liveResponseId)
+            }
             eventBus.emit(event)
             await audioPipeline.handleAssistantAudioChunk(chunk)
 
-        case .assistantAudioEnd:
+        case .assistantAudioEnd(let audioEnd):
+            if audioPipeline.isHandsFreeLiveConversationMode,
+               let liveResponseId = audioEnd.liveResponseId,
+               shouldIgnoreLiveResponse(liveResponseId) {
+                return
+            }
             eventBus.emit(event)
             await audioPipeline.handleAssistantAudioEnd()
 
-        case .assistantAudioInterrupted:
+        case .assistantAudioInterrupted(let interrupted):
+            if audioPipeline.isHandsFreeLiveConversationMode,
+               let liveResponseId = interrupted.liveResponseId,
+               shouldIgnoreLiveResponse(liveResponseId) {
+                return
+            }
             eventBus.emit(event)
             await audioPipeline.handleAssistantAudioInterrupted()
             if audioPipeline.isHandsFreeLiveConversationMode {
-                finalizeAssistantMessageIfNeeded()
+                invalidateActiveLiveResponse(interrupted.liveResponseId)
             }
 
         case .toolCall(let toolCall):
-            eventBus.emit(event)
             if toolCall.name.hasPrefix("bridge.") {
+                eventBus.emit(event)
                 return
             }
 
+            if audioPipeline.isHandsFreeLiveConversationMode,
+               toolCall.name == ConvoAppendMessageTool.name,
+               let arguments = decode(ConvoAppendMessageTool.Arguments.self, from: toolCall.arguments),
+               arguments.role == ConversationMessage.Role.assistant.rawValue,
+               let liveResponseId = arguments.liveResponseId {
+                if shouldIgnoreLiveResponse(liveResponseId) {
+                    let result = makeNoOpAppendMessageResult(callId: toolCall.callId)
+                    await sendConductorEvent(result, true)
+                    return
+                }
+                activateLiveResponse(liveResponseId)
+            }
+
+            eventBus.emit(event)
             let toolResultEvent = await toolRouter.dispatch(toolCall)
             await sendConductorEvent(toolResultEvent, true)
+
+            if audioPipeline.isHandsFreeLiveConversationMode,
+               toolCall.name == ConvoAppendMessageTool.name,
+               let arguments = decode(ConvoAppendMessageTool.Arguments.self, from: toolCall.arguments),
+               arguments.role == ConversationMessage.Role.assistant.rawValue,
+               let liveResponseId = arguments.liveResponseId {
+                clearAssistantOverlay(for: liveResponseId)
+                if arguments.isPartial == false {
+                    completeLiveResponse(liveResponseId)
+                }
+            }
 
             if toolCall.name == ConvoSetStateTool.name,
                let requested = decode(ConvoSetStateTool.Arguments.self, from: toolCall.arguments),
                let requestedState = AppState(rawValue: requested.state) {
                 await audioPipeline.applyRemoteState(requestedState)
-                if audioPipeline.isHandsFreeLiveConversationMode,
-                   requestedState == .idle || requestedState == .listening {
-                    finalizeAssistantMessageIfNeeded()
-                }
             }
 
         case .bridgePairPending(let pending):
@@ -183,7 +227,15 @@ final class ConversationEventCoordinator: ObservableObject {
         case .bridgeExecOutput, .bridgeExecFinished, .bridgeWorkspaceSet:
             eventBus.emit(event)
 
-        case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult, .error,
+        case .error(let error):
+            eventBus.emit(event)
+            if audioPipeline.isHandsFreeLiveConversationMode,
+               error.code == "voice_provider_failed" {
+                invalidateActiveLiveResponse(activeLiveResponseId)
+                await audioPipeline.applyRemoteState(.listening)
+            }
+
+        case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult,
                 .userAudioTranscriptPartial, .userAudioTranscriptFinal, .userAudioStreamStart,
                 .userAudioStreamChunk, .userAudioStreamEnd, .audioOutputInterrupted,
                 .agentCompleted, .bridgePairRequest, .preferencesSync:
@@ -286,44 +338,99 @@ final class ConversationEventCoordinator: ObservableObject {
         return try? JSONDecoder().decode(type, from: Data(json.utf8))
     }
 
-    private func finalizeAssistantMessageIfNeeded() {
-        let finalText = assistantPartialSpeech.trimmingCharacters(in: .whitespacesAndNewlines)
-        if conversationStore.hasPartialMessage(role: .assistant) {
-            conversationStore.finalizeLastPartialMessage(
-                role: .assistant,
-                finalText: finalText.isEmpty ? nil : finalText
-            )
-        } else if !finalText.isEmpty {
-            conversationStore.append(ConversationMessage(role: .assistant, text: finalText))
-        }
-        assistantPartialSpeech = ""
+    private func shouldIgnoreLiveResponse(_ liveResponseId: String) -> Bool {
+        invalidatedLiveResponseIds.contains(liveResponseId)
     }
 
-    private func mergeAssistantPartialText(with incoming: String) -> String {
+    private func activateLiveResponse(_ liveResponseId: String) {
+        invalidatedLiveResponseIds.remove(liveResponseId)
+        guard activeLiveResponseId != liveResponseId else { return }
+        if let activeLiveResponseId {
+            invalidateActiveLiveResponse(activeLiveResponseId)
+        }
+        activeLiveResponseId = liveResponseId
+    }
+
+    private func completeLiveResponse(_ liveResponseId: String) {
+        clearAssistantOverlay(for: liveResponseId)
+        if activeLiveResponseId == liveResponseId {
+            activeLiveResponseId = nil
+        }
+        invalidatedLiveResponseIds.insert(liveResponseId)
+    }
+
+    private func invalidateActiveLiveResponse(_ liveResponseId: String?) {
+        guard let liveResponseId else {
+            assistantPartialSpeech = ""
+            assistantPartialSpeechResponseId = nil
+            activeLiveResponseId = nil
+            return
+        }
+        invalidatedLiveResponseIds.insert(liveResponseId)
+        conversationStore.removePartialMessage(role: .assistant, liveResponseId: liveResponseId)
+        clearAssistantOverlay(for: liveResponseId)
+        if activeLiveResponseId == liveResponseId {
+            activeLiveResponseId = nil
+        }
+    }
+
+    private func updateAssistantOverlay(with incoming: String, liveResponseId: String) {
+        guard !conversationStore.hasPartialMessage(role: .assistant, liveResponseId: liveResponseId) else {
+            clearAssistantOverlay(for: liveResponseId)
+            return
+        }
+
         let next = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !next.isEmpty else { return assistantPartialSpeech }
+        guard !next.isEmpty else { return }
 
-        let current = assistantPartialSpeech.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !current.isEmpty else { return next }
-        guard current != next else { return current }
+        if assistantPartialSpeechResponseId != liveResponseId {
+            assistantPartialSpeechResponseId = liveResponseId
+            assistantPartialSpeech = next
+            return
+        }
 
-        if next.hasPrefix(current) {
+        assistantPartialSpeech = mergeAssistantPartialText(current: assistantPartialSpeech, incoming: next)
+    }
+
+    private func clearAssistantOverlay(for liveResponseId: String?) {
+        guard liveResponseId == nil || assistantPartialSpeechResponseId == liveResponseId else {
+            return
+        }
+        assistantPartialSpeech = ""
+        assistantPartialSpeechResponseId = nil
+    }
+
+    private func mergeAssistantPartialText(current: String, incoming: String) -> String {
+        let normalizedCurrent = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !next.isEmpty else { return normalizedCurrent }
+        guard !normalizedCurrent.isEmpty else { return next }
+        guard normalizedCurrent != next else { return normalizedCurrent }
+
+        if next.hasPrefix(normalizedCurrent) {
             return next
         }
 
-        if current.hasPrefix(next) {
-            return current
+        if normalizedCurrent.hasPrefix(next) {
+            return normalizedCurrent
         }
 
-        let maxOverlap = min(current.count, next.count)
+        let maxOverlap = min(normalizedCurrent.count, next.count)
         if maxOverlap > 0 {
             for overlap in stride(from: maxOverlap, through: 1, by: -1) {
-                if current.suffix(overlap) == next.prefix(overlap) {
-                    return current + next.dropFirst(overlap)
+                if normalizedCurrent.suffix(overlap) == next.prefix(overlap) {
+                    return normalizedCurrent + next.dropFirst(overlap)
                 }
             }
         }
 
-        return current + " " + next
+        return normalizedCurrent + " " + next
+    }
+
+    private func makeNoOpAppendMessageResult(callId: String) -> Event {
+        let result = ConvoAppendMessageTool.Result(messageId: UUID().uuidString)
+        let payload = (try? JSONEncoder().encode(result))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? #"{"messageId":""}"#
+        return Event.toolResult(callId: callId, result: payload, sessionId: sessionId)
     }
 }

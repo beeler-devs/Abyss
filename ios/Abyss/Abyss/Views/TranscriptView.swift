@@ -103,7 +103,7 @@ struct TranscriptView: View {
                             isPartial: true
                         ))
                         .id("partial_assistant")
-                    } else if appState == .thinking {
+                    } else if showsTypingIndicator {
                         MessageBubble(message: ConversationMessage(
                             role: .assistant,
                             text: "Typing...",
@@ -251,6 +251,10 @@ struct TranscriptView: View {
 
     private var hasPersistedAssistantPartial: Bool {
         messages.contains { $0.role == .assistant && $0.isPartial }
+    }
+
+    private var showsTypingIndicator: Bool {
+        appState == .thinking && assistantPartialSpeech.isEmpty && !hasPersistedAssistantPartial
     }
 
     private var lastMessageSnapshot: MessageSnapshot? {

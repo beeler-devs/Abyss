@@ -87,10 +87,22 @@ struct Event: Identifiable, Codable, Sendable {
 
     struct SpeechPartial: Codable, Sendable {
         let text: String
+        let liveResponseId: String?
+
+        init(text: String, liveResponseId: String? = nil) {
+            self.text = text
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct SpeechFinal: Codable, Sendable {
         let text: String
+        let liveResponseId: String?
+
+        init(text: String, liveResponseId: String? = nil) {
+            self.text = text
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct AssistantAudioChunk: Codable, Sendable {
@@ -98,12 +110,39 @@ struct Event: Identifiable, Codable, Sendable {
         let encoding: String
         let sampleRateHertz: Int
         let channelCount: Int
+        let liveResponseId: String?
+
+        init(
+            audio: String,
+            encoding: String,
+            sampleRateHertz: Int,
+            channelCount: Int,
+            liveResponseId: String? = nil
+        ) {
+            self.audio = audio
+            self.encoding = encoding
+            self.sampleRateHertz = sampleRateHertz
+            self.channelCount = channelCount
+            self.liveResponseId = liveResponseId
+        }
     }
 
-    struct AssistantAudioEnd: Codable, Sendable {}
+    struct AssistantAudioEnd: Codable, Sendable {
+        let liveResponseId: String?
+
+        init(liveResponseId: String? = nil) {
+            self.liveResponseId = liveResponseId
+        }
+    }
 
     struct AssistantAudioInterrupted: Codable, Sendable {
         let reason: String
+        let liveResponseId: String?
+
+        init(reason: String, liveResponseId: String? = nil) {
+            self.reason = reason
+            self.liveResponseId = liveResponseId
+        }
     }
 
     struct UIPatch: Codable, Sendable {
@@ -295,12 +334,12 @@ extension Event {
         Event(sessionId: sessionId, kind: .userAudioStreamEnd(UserAudioStreamEnd(reason: reason)))
     }
 
-    static func speechPartial(_ text: String, sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantSpeechPartial(SpeechPartial(text: text)))
+    static func speechPartial(_ text: String, liveResponseId: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantSpeechPartial(SpeechPartial(text: text, liveResponseId: liveResponseId)))
     }
 
-    static func speechFinal(_ text: String, sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantSpeechFinal(SpeechFinal(text: text)))
+    static func speechFinal(_ text: String, liveResponseId: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantSpeechFinal(SpeechFinal(text: text, liveResponseId: liveResponseId)))
     }
 
     static func assistantAudioChunk(
@@ -308,22 +347,31 @@ extension Event {
         encoding: String = "pcm_s16le",
         sampleRateHertz: Int = 16_000,
         channelCount: Int = 1,
+        liveResponseId: String? = nil,
         sessionId: String? = nil
     ) -> Event {
         Event(sessionId: sessionId, kind: .assistantAudioChunk(AssistantAudioChunk(
             audio: audio,
             encoding: encoding,
             sampleRateHertz: sampleRateHertz,
-            channelCount: channelCount
+            channelCount: channelCount,
+            liveResponseId: liveResponseId
         )))
     }
 
-    static func assistantAudioEnd(sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantAudioEnd(AssistantAudioEnd()))
+    static func assistantAudioEnd(liveResponseId: String? = nil, sessionId: String? = nil) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioEnd(AssistantAudioEnd(liveResponseId: liveResponseId)))
     }
 
-    static func assistantAudioInterrupted(_ reason: String = "unknown", sessionId: String? = nil) -> Event {
-        Event(sessionId: sessionId, kind: .assistantAudioInterrupted(AssistantAudioInterrupted(reason: reason)))
+    static func assistantAudioInterrupted(
+        _ reason: String = "unknown",
+        liveResponseId: String? = nil,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .assistantAudioInterrupted(AssistantAudioInterrupted(
+            reason: reason,
+            liveResponseId: liveResponseId
+        )))
     }
 
     static func uiPatch(_ patch: String, sessionId: String? = nil) -> Event {

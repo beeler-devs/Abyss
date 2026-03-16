@@ -39,50 +39,48 @@ final class ConversationStoreTests: XCTestCase {
         XCTAssertEqual(store.messages.first?.isPartial, false)
     }
 
-    func testIdleStateFinalizesPendingAssistantSpeechWhenFinalAppendNeverArrives() async {
-        let mockConductor = MockConductorClient()
-        let viewModel = ConversationViewModel(
-            conductorClient: mockConductor,
-            transcriber: MockSpeechTranscriber(),
-            tts: MockTextToSpeech(),
-            autoStartSession: true
-        )
+    func testLiveResponseIdReplacesExistingPartialInsteadOfAppendingDuplicate() {
+        let store = ConversationStore()
 
-        try? await Task.sleep(nanoseconds: 80_000_000)
-
-        mockConductor.emitInbound(Event.speechPartial("First sentence."))
-        await waitForCondition {
-            viewModel.messages.last?.text == "First sentence." && viewModel.messages.last?.isPartial == true
-        }
-
-        mockConductor.emitInbound(Event.speechPartial("Second sentence."))
-        await waitForCondition {
-            viewModel.messages.last?.text == "First sentence. Second sentence."
-        }
-
-        mockConductor.emitInbound(Event.toolCall(
-            name: "convo.setState",
-            arguments: #"{"state":"idle"}"#,
-            callId: "assistant-idle",
-            sessionId: "session-test"
+        store.append(ConversationMessage(
+            role: .assistant,
+            text: "First sentence.",
+            isPartial: true,
+            liveResponseId: "live-1"
+        ))
+        store.append(ConversationMessage(
+            role: .assistant,
+            text: "First sentence. Second sentence.",
+            isPartial: false,
+            liveResponseId: "live-1"
         ))
 
-        await waitForCondition {
-            viewModel.messages.last?.text == "First sentence. Second sentence."
-                && viewModel.messages.last?.isPartial == false
-                && viewModel.assistantPartialSpeech.isEmpty
-        }
+        XCTAssertEqual(store.messages.count, 1)
+        XCTAssertEqual(store.messages.first?.text, "First sentence. Second sentence.")
+        XCTAssertEqual(store.messages.first?.isPartial, false)
+        XCTAssertEqual(store.messages.first?.liveResponseId, "live-1")
     }
 
-    private func waitForCondition(
-        timeoutNanoseconds: UInt64 = 1_000_000_000,
-        pollNanoseconds: UInt64 = 20_000_000,
-        _ condition: @escaping @MainActor () -> Bool
-    ) async {
-        var waited: UInt64 = 0
-        while !condition(), waited < timeoutNanoseconds {
-            try? await Task.sleep(nanoseconds: pollNanoseconds)
-            waited += pollNanoseconds
-        }
+    func testRemovePartialMessageClearsOnlyMatchingLiveResponseDraft() {
+        let store = ConversationStore()
+
+        store.append(ConversationMessage(
+            role: .assistant,
+            text: "Old draft",
+            isPartial: true,
+            liveResponseId: "live-old"
+        ))
+        store.append(ConversationMessage(
+            role: .assistant,
+            text: "Finalized reply",
+            isPartial: false,
+            liveResponseId: "live-final"
+        ))
+
+        store.removePartialMessage(role: .assistant, liveResponseId: "live-old")
+
+        XCTAssertEqual(store.messages.count, 1)
+        XCTAssertEqual(store.messages.first?.text, "Finalized reply")
+        XCTAssertEqual(store.messages.first?.isPartial, false)
     }
 }
