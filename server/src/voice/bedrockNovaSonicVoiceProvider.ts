@@ -323,10 +323,49 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
     this.sendEvent(session, { promptStart: promptStartPayload });
 
-    const toolsLine = toolCount > 0
-      ? ` You have access to ${toolCount} tools including code execution, file operations, git, and agent spawning. Call them one at a time.`
-      : "";
-    const systemPrompt = `You are the Abyss voice-first coding assistant.${toolsLine} VOICE OUTPUT RULES: Lead with the answer. Be concise and direct. Never say URLs, code, file paths, JSON, UUIDs, or commit hashes aloud — summarize them instead. Convert timestamps to natural language. Say names instead of email addresses. For long lists, state the top items and summarize the rest. Summarize errors to the root cause. Do not narrate what the UI already shows. Do not use markdown formatting.`;
+    const sessionCtx = session.context.getSessionContext?.(session.sessionId);
+
+    const promptParts: string[] = [
+      "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
+    ];
+
+    if (toolCount > 0) {
+      promptParts.push(`You have access to ${toolCount} tools. Call them one at a time.`);
+    }
+
+    // Bridge context
+    if (sessionCtx?.bridgeDeviceName || sessionCtx?.bridgeWorkspaceRoot) {
+      const bridgeLines: string[] = [];
+      if (sessionCtx.bridgeDeviceName) {
+        bridgeLines.push(`A macOS bridge named "${sessionCtx.bridgeDeviceName}" is connected.`);
+      }
+      if (sessionCtx.bridgeWorkspaceRoot) {
+        bridgeLines.push(`Primary workspace: ${sessionCtx.bridgeWorkspaceRoot}`);
+      }
+      if (sessionCtx.bridgeWorkspaceRoots?.length) {
+        bridgeLines.push(`All workspace roots: ${sessionCtx.bridgeWorkspaceRoots.join(", ")}`);
+      }
+      promptParts.push(`BRIDGE: ${bridgeLines.join(" ")}`);
+    }
+
+    // Tool guidance
+    promptParts.push(
+      "TOOL GUIDANCE: For complex coding or editing tasks on the Mac, use bridge_claude_run with a prompt describing the task. For simple shell commands, use bridge_exec_run with a command string. For file operations use bridge_fs_readFile, bridge_fs_search, bridge_fs_readRange, bridge_fs_applyPatch. For git use bridge_git_status, bridge_git_diff, bridge_git_stage, bridge_git_commit. Do NOT pass deviceId to bridge tools — it is resolved automatically. Use the cwd parameter to specify working directory when needed.",
+    );
+
+    // User preferences
+    if (sessionCtx?.userPreferences && Object.keys(sessionCtx.userPreferences).length > 0) {
+      const prefLines = Object.entries(sessionCtx.userPreferences)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+      promptParts.push(`User preferences: ${prefLines}`);
+    }
+
+    promptParts.push(
+      "VOICE OUTPUT RULES: Lead with the answer. Be concise and direct. Never say URLs, code, file paths, JSON, UUIDs, or commit hashes aloud — summarize them instead. Convert timestamps to natural language. Say names instead of email addresses. For long lists, state the top items and summarize the rest. Summarize errors to the root cause. Do not narrate what the UI already shows. Do not use markdown formatting.",
+    );
+
+    const systemPrompt = promptParts.join(" ");
 
     const systemContentName = `system-${crypto.randomUUID()}`;
     this.sendEvent(session, {

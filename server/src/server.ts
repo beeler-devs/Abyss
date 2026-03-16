@@ -354,6 +354,17 @@ wss.on("connection", (socket, request) => {
         emit: (outbound) => emitToSession(outbound),
         listTools: (sessionId) => conductor.listAvailableTools(sessionId),
         executeTool: async (sessionId, toolCall, emit) => conductor.executeDirectToolCall(sessionId, toolCall, emit),
+        getSessionContext: (sessionId) => {
+          const devices = bridgeState.getSessionDevices(sessionId);
+          const onlineDevice = devices.find((d) => d.status === "online")
+            ?? bridgeState.getOnlineDevices()[0];
+          return {
+            bridgeDeviceName: onlineDevice?.deviceName,
+            bridgeWorkspaceRoot: onlineDevice?.workspaceRoot,
+            bridgeWorkspaceRoots: onlineDevice?.workspaceRoots,
+            userPreferences: conductor.getUserPreferences(sessionId),
+          };
+        },
       });
       return;
     }

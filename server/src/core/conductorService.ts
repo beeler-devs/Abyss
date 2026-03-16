@@ -950,6 +950,10 @@ export class ConductorService {
     return this.availableTools(sessionId);
   }
 
+  getUserPreferences(sessionId: string): Record<string, string> | undefined {
+    return this.sessions.get(sessionId)?.userPreferences;
+  }
+
   setLiveSession(sessionId: string, live: boolean): void {
     const session = this.sessions.getOrCreate(sessionId);
     session.isLiveSession = live;
