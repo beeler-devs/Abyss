@@ -838,10 +838,13 @@ export class ConductorService {
     const session = this.sessions.get(sessionId);
     if (!session || !session.memoryUserKey) return;
     try {
+      const historyToSummarize = session.history.filter(
+        (t) => !(t.role === "user" && typeof t.content === "string" && t.content.startsWith("[Prior context from previous sessions]")),
+      );
       await this.memoryService.summarizeAndStore(
         session.memoryUserKey,
         sessionId,
-        session.history,
+        historyToSummarize,
         session.workingContext,
       );
     } catch {

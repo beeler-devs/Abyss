@@ -19,8 +19,7 @@ Set `MEMORY_S3_BUCKET=abyss-memory` in `.env`. Summaries are written under the p
   "Effect": "Allow",
   "Action": [
     "s3:PutObject",
-    "s3:GetObject",
-    "s3:ListObjectsV2"
+    "s3:GetObject"
   ],
   "Resource": "arn:aws:s3:::abyss-memory/*"
 }

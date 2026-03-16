@@ -60,6 +60,17 @@ export interface MemoryRetrieveInput {
   transcript?: string;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([
+    promise.then((result) => { clearTimeout(timer); return result; }),
+    timeout,
+  ]);
+}
+
 function isMeaningfulHistory(history: ConversationTurn[]): boolean {
   const userTurns = history.filter((t) => t.role === "user" && typeof t.content === "string");
   if (userTurns.length >= 3) return true;
@@ -203,7 +214,8 @@ Respond with JSON only:
       nextSteps: parsedSummary.nextSteps,
     };
 
-    const key = `${this.config.s3Prefix}${memoryUserKey}/${new Date().toISOString().replace(/[:.]/g, "-")}-${sessionId}.json`;
+    const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_\-]/g, "-").slice(0, 64);
+    const key = `${this.config.s3Prefix}${memoryUserKey}/${new Date().toISOString().replace(/[:.]/g, "-")}-${safeSessionId}.json`;
 
     await this.s3.send(
       new PutObjectCommand({
@@ -243,7 +255,7 @@ Respond with JSON only:
     try {
       // Fast path: list recent S3 objects for user (respect timeout)
       const listTimeoutMs = deadline - Date.now();
-      const listResultOrTimeout = await Promise.race([
+      const listResultOrTimeout = await withTimeout(
         this.s3.send(
           new ListObjectsV2Command({
             Bucket: this.config.s3Bucket,
@@ -251,8 +263,8 @@ Respond with JSON only:
             MaxKeys: 100,
           }),
         ),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), listTimeoutMs)),
-      ]);
+        listTimeoutMs,
+      );
       if (listResultOrTimeout === null) return null;
       const listResult = listResultOrTimeout;
 
@@ -279,10 +291,7 @@ Respond with JSON only:
         return JSON.parse(text) as MemoryDocument;
       });
 
-      const docs = await Promise.race([
-        Promise.allSettled(fetchPromises),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), remaining)),
-      ]);
+      const docs = await withTimeout(Promise.allSettled(fetchPromises), remaining);
 
       if (!docs) return null;
 
@@ -297,7 +306,7 @@ Respond with JSON only:
         const kbRemaining = deadline - Date.now();
         if (kbRemaining > 200) {
           try {
-            const kbResult = await Promise.race([
+            const kbResult = await withTimeout(
               this.agentRuntime.send(
                 new RetrieveCommand({
                   knowledgeBaseId: this.config.knowledgeBaseId,
@@ -307,8 +316,8 @@ Respond with JSON only:
                   },
                 }),
               ),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), kbRemaining)),
-            ]);
+              kbRemaining,
+            );
 
             if (kbResult && "retrievalResults" in kbResult) {
               for (const result of kbResult.retrievalResults ?? []) {
@@ -343,7 +352,7 @@ Respond with JSON only:
 
     const lines: string[] = ["Prior context:"];
 
-    for (const doc of docs.slice(0, 3)) {
+    for (const doc of docs.slice(0, this.config.recentMemoryCount)) {
       const date = new Date(doc.timestamp).toLocaleDateString();
       lines.push(`• [${date}] ${doc.summary}`);
       if (doc.repo) lines.push(`  Repo: ${doc.repo}${doc.branch ? ` (${doc.branch})` : ""}`);

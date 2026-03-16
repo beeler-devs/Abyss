@@ -328,11 +328,11 @@ wss.on("connection", (socket, request) => {
     if (context?.kind === "ios" && context.sessionId) {
       if (iosSocketsBySession.get(context.sessionId) === socket) {
         iosSocketsBySession.delete(context.sessionId);
+        void conductor.finalizeSession(context.sessionId);
       }
       if (voiceProvider) {
         void voiceProvider.closeSession(context.sessionId);
       }
-      void conductor.finalizeSession(context.sessionId);
     }
 
     if (context?.kind === "bridge" && context.deviceId) {

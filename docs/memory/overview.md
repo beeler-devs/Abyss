@@ -21,7 +21,7 @@ first user.speech.final
             └── Bedrock KB Retrieve (semantic, optional — runs if KB configured)
                     │
                     ▼
-            inject as system turn before first LLM call
+            inject as user turn (prefixed "[Prior context from previous sessions]") before first LLM call
 
 ... conversation ...
 
