@@ -120,6 +120,10 @@ Selected via `MODEL_PROVIDER` env var:
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
 
+**Auto-reconnect:** `PairedBridgeDevice` stores the `pairingCode` used during initial pairing. On every iOS WebSocket connect, `reRegisterPairedBridgeCodes()` re-sends `bridge.pair.request` for each stored code, so the Mac bridge can re-register after a server restart without regenerating a pairing code. Controlled by `bridgeAutoReconnect` UserDefaults setting (default true), toggled in Settings > Bridge.
+
+**Mac toolbar status:** `connectionStateLabel` and `connectionDotColor` gate on both `connectionState` and `paired` — shows orange "Not Paired" when WebSocket is connected but pairing failed. Pairing error logs are debounced to once per 30 seconds via `lastPairingErrorLogged`.
+
 ### Bridge Exec Cards (Streaming Output)
 When the LLM calls `bridge.exec.run`, `bridge.exec.start`, or `bridge.claude.run`, iOS shows a `BridgeExecCard` in the transcript with streaming terminal output. `ConversationBridgeExecManager` listens for `toolCall` → `toolResult` → `bridgeExecOutput` → `bridgeExecFinished` events and maintains card state. Cards display command text, a status pill (Running/Done/Failed), monospace output area (capped at ~100KB), and exit code + duration footer. Follows the same anchored-card pattern as agent/email/calendar/canvas cards.
 
