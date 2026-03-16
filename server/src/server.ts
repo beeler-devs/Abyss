@@ -17,6 +17,7 @@ import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
 import { GitHubClient } from "./integrations/githubClient.js";
 import { buildProvider } from "./providers/index.js";
+import { MemoryService } from "./core/memory/memoryService.js";
 import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProvider.js";
 import { VoiceProvider } from "./voice/types.js";
 
@@ -39,6 +40,15 @@ const CURSOR_WEBHOOK_URL = process.env.CURSOR_WEBHOOK_URL ?? "";
 const CURSOR_WEBHOOK_SECRET = process.env.CURSOR_WEBHOOK_SECRET ?? "";
 const MAX_WEBHOOK_BYTES = parseInteger(process.env.CURSOR_WEBHOOK_MAX_BYTES, 512_000);
 const BRIDGE_PAIRING_TTL_MS = parseInteger(process.env.BRIDGE_PAIRING_TTL_MS, 5 * 60_000);
+const MEMORY_ENABLED = parseBoolean(process.env.MEMORY_ENABLED, false);
+const MEMORY_S3_BUCKET = process.env.MEMORY_S3_BUCKET ?? "";
+const MEMORY_S3_PREFIX = process.env.MEMORY_S3_PREFIX ?? "memories/";
+const MEMORY_KB_ID = process.env.MEMORY_KB_ID ?? "";
+const MEMORY_KB_DATA_SOURCE_ID = process.env.MEMORY_KB_DATA_SOURCE_ID ?? "";
+const MEMORY_RETRIEVE_TIMEOUT_MS = parseInteger(process.env.MEMORY_RETRIEVE_TIMEOUT_MS, 1500);
+const MEMORY_MAX_INJECTED_CHARS = parseInteger(process.env.MEMORY_MAX_INJECTED_CHARS, 900);
+const MEMORY_RECENT_COUNT = parseInteger(process.env.MEMORY_RECENT_COUNT, 3);
+const MEMORY_SUMMARY_MODEL_ID = process.env.MEMORY_SUMMARY_MODEL_ID ?? "us.amazon.nova-2-lite-v1:0";
 
 const provider = buildProvider({
   modelProvider: MODEL_PROVIDER,
@@ -90,6 +100,21 @@ const bridgeRouter = new BridgeToolRouter({
   verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
 });
 
+const memoryService = MEMORY_ENABLED && MEMORY_S3_BUCKET
+  ? new MemoryService({
+      enabled: true,
+      s3Bucket: MEMORY_S3_BUCKET,
+      s3Prefix: MEMORY_S3_PREFIX,
+      knowledgeBaseId: MEMORY_KB_ID || undefined,
+      knowledgeBaseDataSourceId: MEMORY_KB_DATA_SOURCE_ID || undefined,
+      awsRegion: process.env.AWS_REGION ?? "us-east-1",
+      summaryModelId: MEMORY_SUMMARY_MODEL_ID,
+      retrieveTimeoutMs: MEMORY_RETRIEVE_TIMEOUT_MS,
+      maxInjectedChars: MEMORY_MAX_INJECTED_CHARS,
+      recentMemoryCount: MEMORY_RECENT_COUNT,
+    })
+  : undefined;
+
 const conductor = new ConductorService(
   provider,
   {
@@ -127,6 +152,7 @@ const conductor = new ConductorService(
       return devices.some((device) => bridgeDeviceSupportsTool(device.capabilities, toolName));
     },
     verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
+    memoryService,
     summarizationConfig: {
       summarizeAfter: SUMMARIZE_AFTER_TURNS,
       recentToKeep: SUMMARIZE_RECENT_KEEP,
@@ -336,6 +362,7 @@ wss.on("connection", (socket, request) => {
     if (context?.kind === "ios" && context.sessionId) {
       if (iosSocketsBySession.get(context.sessionId) === socket) {
         iosSocketsBySession.delete(context.sessionId);
+        void conductor.finalizeSession(context.sessionId);
       }
       if (voiceProvider) {
         void voiceProvider.closeSession(context.sessionId);
