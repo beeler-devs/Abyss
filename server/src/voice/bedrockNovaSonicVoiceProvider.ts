@@ -63,6 +63,8 @@ interface SonicSession {
   restarting: boolean;
   streamGeneration: number;
   bargedIn: boolean;
+  /** Tracks consecutive failures per tool name for circuit-breaking. */
+  toolFailureCounts: Map<string, number>;
 }
 
 interface SonicEventEnvelope {
@@ -194,6 +196,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       restarting: false,
       streamGeneration: 0,
       bargedIn: false,
+      toolFailureCounts: new Map(),
     };
     this.sessions.set(sessionId, session);
     await this.openModelStream(session);
@@ -992,6 +995,21 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
+    // Circuit breaker: if the same tool has failed too many times in a row,
+    // return a hard stop error instead of executing again.
+    const MAX_CONSECUTIVE_FAILURES = 3;
+    const priorFailures = session.toolFailureCounts.get(toolCall.name) ?? 0;
+    if (priorFailures >= MAX_CONSECUTIVE_FAILURES) {
+      logger.warn(
+        `circuit breaker: ${toolCall.name} failed ${priorFailures} times consecutively, refusing to retry`,
+        { sessionId: session.sessionId },
+      );
+      this.sendToolResult(session, toolCall.id, JSON.stringify({
+        error: `${toolCall.name} has failed ${priorFailures} times in a row. Do NOT retry this tool. Tell the user what went wrong and ask how they would like to proceed.`,
+      }));
+      return;
+    }
+
     session.toolExecutionInFlight = true;
     try {
       const result = await session.context.executeTool(session.sessionId, toolCall, session.context.emit);
@@ -999,42 +1017,52 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         return;
       }
 
-      const contentName = `tool-${crypto.randomUUID()}`;
+      // Track consecutive failures per tool for circuit breaking.
+      if (result.error) {
+        session.toolFailureCounts.set(toolCall.name, priorFailures + 1);
+      } else {
+        session.toolFailureCounts.delete(toolCall.name);
+      }
 
-      this.sendEvent(session, {
-        contentStart: {
-          promptName: session.promptName,
-          contentName,
-          interactive: false,
-          type: "TOOL",
-          role: "TOOL",
-          toolResultInputConfiguration: {
-            toolUseId: toolCall.id,
-            type: "TEXT",
-            textInputConfiguration: {
-              mediaType: "text/plain",
-            },
-          },
-        },
-      });
-      this.sendEvent(session, {
-        toolResult: {
-          promptName: session.promptName,
-          contentName,
-          content: result.error
-            ? JSON.stringify({ error: result.error })
-            : (result.result ?? "{}"),
-        },
-      });
-      this.sendEvent(session, {
-        contentEnd: {
-          promptName: session.promptName,
-          contentName,
-        },
-      });
+      this.sendToolResult(session, toolCall.id, result.error
+        ? JSON.stringify({ error: result.error })
+        : (result.result ?? "{}"));
     } finally {
       session.toolExecutionInFlight = false;
     }
+  }
+
+  private sendToolResult(session: SonicSession, toolUseId: string, content: string): void {
+    const contentName = `tool-${crypto.randomUUID()}`;
+    this.sendEvent(session, {
+      contentStart: {
+        promptName: session.promptName,
+        contentName,
+        interactive: false,
+        type: "TOOL",
+        role: "TOOL",
+        toolResultInputConfiguration: {
+          toolUseId,
+          type: "TEXT",
+          textInputConfiguration: {
+            mediaType: "text/plain",
+          },
+        },
+      },
+    });
+    this.sendEvent(session, {
+      toolResult: {
+        promptName: session.promptName,
+        contentName,
+        content,
+      },
+    });
+    this.sendEvent(session, {
+      contentEnd: {
+        promptName: session.promptName,
+        contentName,
+      },
+    });
   }
 
   private sendEvent(session: SonicSession, event: Record<string, unknown>): void {
