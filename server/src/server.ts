@@ -835,6 +835,7 @@ function readCapabilities(value: unknown): BridgeCapabilities | undefined {
     gitCommit: optionalBoolean(raw.gitCommit),
     gitPush: optionalBoolean(raw.gitPush),
     claudeRun,
+    novaAct: optionalBoolean(raw.novaAct),
   };
 }
 
@@ -894,6 +895,10 @@ function bridgeDeviceSupportsTool(capabilities: BridgeCapabilities, toolName: st
       return capabilities.gitPush ?? false;
     case "bridge.claude.run":
       return capabilities.claudeRun ?? false;
+    case "bridge.nova.start":
+    case "bridge.nova.act":
+    case "bridge.nova.stop":
+      return capabilities.novaAct ?? false;
     default:
       return false;
   }

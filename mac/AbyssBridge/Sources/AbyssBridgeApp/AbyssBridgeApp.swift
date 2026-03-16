@@ -84,6 +84,7 @@ final class BridgeAppModel: ObservableObject {
     @Published var allowGitPush = false
     @Published var requireGitPushConfirmation = true
     @Published var allowClaudeRun = false
+    @Published var allowNovaAct = false
 
     private var bridgeCore: BridgeCore?
     private let defaults = UserDefaults.standard
@@ -101,6 +102,7 @@ final class BridgeAppModel: ObservableObject {
     private static let allowGitPushKey = "bridge.permissions.allowGitPush"
     private static let requireGitPushConfirmationKey = "bridge.permissions.requireGitPushConfirmation"
     private static let allowClaudeRunKey = "bridge.permissions.allowClaudeRun"
+    private static let allowNovaActKey = "bridge.permissions.allowNovaAct"
 
     private let stableDeviceId: String
 
@@ -122,6 +124,7 @@ final class BridgeAppModel: ObservableObject {
         self.allowGitPush = defaults.object(forKey: Self.allowGitPushKey) as? Bool ?? false
         self.requireGitPushConfirmation = defaults.object(forKey: Self.requireGitPushConfirmationKey) as? Bool ?? true
         self.allowClaudeRun = defaults.object(forKey: Self.allowClaudeRunKey) as? Bool ?? false
+        self.allowNovaAct = defaults.object(forKey: Self.allowNovaActKey) as? Bool ?? false
 
         restoreWorkspaces()
         bootstrapBridgeCore()
@@ -241,6 +244,7 @@ final class BridgeAppModel: ObservableObject {
         defaults.set(allowGitPush, forKey: Self.allowGitPushKey)
         defaults.set(requireGitPushConfirmation, forKey: Self.requireGitPushConfirmationKey)
         defaults.set(allowClaudeRun, forKey: Self.allowClaudeRunKey)
+        defaults.set(allowNovaAct, forKey: Self.allowNovaActKey)
 
         statusMessage = "Permissions saved."
         Task {
@@ -317,7 +321,8 @@ final class BridgeAppModel: ObservableObject {
             allowWritesApplyPatch: allowWritesApplyPatch,
             allowGitPush: allowGitPush,
             requireGitPushConfirmation: requireGitPushConfirmation,
-            allowClaudeRun: allowClaudeRun
+            allowClaudeRun: allowClaudeRun,
+            allowNovaAct: allowNovaAct
         )
     }
 
@@ -515,6 +520,8 @@ struct BridgeStatusView: View {
                         .onChange(of: model.requireGitPushConfirmation) { model.applyPermissions() }
                     Toggle("Allow Claude Code (bridge.claude.run)", isOn: $model.allowClaudeRun)
                         .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
+                    Toggle("Allow Nova Act (browser automation)", isOn: $model.allowNovaAct)
+                        .onChange(of: model.allowNovaAct) { model.applyPermissions() }
                 }
 
                 Section("Active Command") {

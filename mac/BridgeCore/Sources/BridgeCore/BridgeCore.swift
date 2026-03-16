@@ -25,6 +25,7 @@ public actor BridgeCore {
     private var callbacksInstalled = false
     private var hasRipgrep: Bool?
     private var claudeStreamStates: [String: ClaudeCLIStreamState] = [:]
+    private var novaActManager: NovaActSessionManager?
 
     private let envelopeEncoder: JSONEncoder
     private let envelopeDecoder: JSONDecoder
@@ -170,6 +171,8 @@ public actor BridgeCore {
         state = .disconnected
         paired = false
         activeCommand = nil
+        await novaActManager?.forceKill()
+        novaActManager = nil
         await emitStatus()
     }
 
@@ -532,6 +535,52 @@ public actor BridgeCore {
 
                 let resultString = firstNonEmptyString([parsed?.result, claudeOutput]) ?? ""
                 resultText = encodeJSONString(BridgeClaudeRunResult(result: resultString, sessionId: parsed?.sessionId))
+
+            case "bridge.nova.start":
+                guard config.permissions.allowNovaAct else {
+                    throw BridgeCoreError.permissionDenied("novaAct disabled")
+                }
+                let novaAlreadyActive = await novaActManager?.isActive ?? false
+                guard novaActManager == nil || !novaAlreadyActive else {
+                    throw BridgeCoreError.internalError("Nova Act session already active")
+                }
+                let args = try decodeArguments(BridgeNovaStartArguments.self, json: payload.arguments)
+
+                let scriptPath: String
+                if let bundledScript = Bundle.module.url(forResource: "nova_act_bridge", withExtension: "py", subdirectory: "Resources") {
+                    scriptPath = bundledScript.path
+                } else {
+                    throw BridgeCoreError.internalError("nova_act_bridge.py not found in bundle")
+                }
+
+                let manager = NovaActSessionManager()
+                try await manager.start(
+                    url: args.url,
+                    headless: args.headless ?? true,
+                    userDataDir: args.userDataDir,
+                    scriptPath: scriptPath
+                )
+                novaActManager = manager
+                resultText = encodeJSONString(BridgeNovaStartResult(started: true))
+
+            case "bridge.nova.act":
+                guard config.permissions.allowNovaAct else {
+                    throw BridgeCoreError.permissionDenied("novaAct disabled")
+                }
+                let novaActActive = await novaActManager?.isActive ?? false
+                guard let manager = novaActManager, novaActActive else {
+                    throw BridgeCoreError.internalError("No active Nova Act session. Call bridge.nova.start first.")
+                }
+                let args = try decodeArguments(BridgeNovaActArguments.self, json: payload.arguments)
+                let actResult = try await manager.act(instruction: args.instruction, schema: args.schema)
+                resultText = encodeJSONString(BridgeNovaActResult(result: actResult, success: true))
+
+            case "bridge.nova.stop":
+                if let manager = novaActManager {
+                    let _ = try await manager.stop()
+                    novaActManager = nil
+                }
+                resultText = encodeJSONString(BridgeNovaStopResult(stopped: true))
 
             default:
                 throw BridgeCoreError.unsupportedTool(payload.name)

@@ -448,6 +448,46 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
       required: ["prompt"],
     },
   },
+  {
+    name: "bridge.nova.start",
+    description:
+      "Start a persistent Nova Act browser session on a paired Mac. Opens Chrome at the given URL. Session persists across subsequent bridge.nova.act calls.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        url: { type: "string", description: "The URL to open Chrome at." },
+        headless: { type: "boolean", description: "Run Chrome headless (default true)." },
+        userDataDir: { type: "string", description: "Optional Chrome user data directory for persistent profiles." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "bridge.nova.act",
+    description:
+      "Execute a natural-language browser instruction in the active Nova Act session. Optionally extract structured data with a JSON schema.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+        instruction: { type: "string", description: "Natural-language instruction for the browser (e.g. 'Click the Sign In button')." },
+        schema: { type: "string", description: "Optional JSON schema string for structured data extraction from the page." },
+      },
+      required: ["instruction"],
+    },
+  },
+  {
+    name: "bridge.nova.stop",
+    description:
+      "Close the active Nova Act browser session.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+      },
+    },
+  },
 ];
 
 const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
@@ -2013,6 +2053,45 @@ export class ConductorService {
             toolName,
             args: resolvedArgs,
             timeoutMs: claudeTimeoutMs,
+          }, emit);
+        }
+
+        case "bridge.nova.start": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 60_000,
+          }, emit);
+        }
+
+        case "bridge.nova.act": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 120_000,
+          }, emit);
+        }
+
+        case "bridge.nova.stop": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          return await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 15_000,
           }, emit);
         }
 

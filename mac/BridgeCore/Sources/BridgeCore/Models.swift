@@ -13,19 +13,22 @@ public struct BridgePermissions: Codable, Equatable, Sendable {
     public var allowGitPush: Bool
     public var requireGitPushConfirmation: Bool
     public var allowClaudeRun: Bool
+    public var allowNovaAct: Bool
 
     public init(
         allowExecRun: Bool = true,
         allowWritesApplyPatch: Bool = true,
         allowGitPush: Bool = false,
         requireGitPushConfirmation: Bool = true,
-        allowClaudeRun: Bool = false
+        allowClaudeRun: Bool = false,
+        allowNovaAct: Bool = false
     ) {
         self.allowExecRun = allowExecRun
         self.allowWritesApplyPatch = allowWritesApplyPatch
         self.allowGitPush = allowGitPush
         self.requireGitPushConfirmation = requireGitPushConfirmation
         self.allowClaudeRun = allowClaudeRun
+        self.allowNovaAct = allowNovaAct
     }
 }
 
