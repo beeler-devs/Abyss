@@ -369,6 +369,7 @@ final class ConversationViewModel: ObservableObject {
         canvasCardManager = ConversationCanvasManager(eventBus: eventBus)
 
         eventCoordinator = ConversationEventCoordinator(
+            conversationStore: conversationStore,
             eventBus: eventBus,
             toolRouter: toolRouter,
             audioPipeline: audioPipeline,

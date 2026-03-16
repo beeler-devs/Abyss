@@ -18,6 +18,7 @@ final class ConversationEventCoordinator: ObservableObject {
     @Published private(set) var bridgePairingMessage: String?
     @Published private(set) var assistantPartialSpeech: String = ""
 
+    private let conversationStore: ConversationStore
     private let eventBus: EventBus
     private let toolRouter: ToolRouter
     private let audioPipeline: ConversationAudioPipeline
@@ -28,6 +29,7 @@ final class ConversationEventCoordinator: ObservableObject {
     private static let pairedBridgeDevicesKey = "pairedBridgeDevices"
 
     init(
+        conversationStore: ConversationStore,
         eventBus: EventBus,
         toolRouter: ToolRouter,
         audioPipeline: ConversationAudioPipeline,
@@ -35,6 +37,7 @@ final class ConversationEventCoordinator: ObservableObject {
         sessionId: String,
         sendConductorEvent: @escaping @MainActor @Sendable (Event, Bool) async -> Void
     ) {
+        self.conversationStore = conversationStore
         self.eventBus = eventBus
         self.toolRouter = toolRouter
         self.audioPipeline = audioPipeline
@@ -80,12 +83,28 @@ final class ConversationEventCoordinator: ObservableObject {
 
         switch event.kind {
         case .assistantSpeechPartial(let partial):
-            guard assistantPartialSpeech != partial.text else { return }
-            assistantPartialSpeech = partial.text
+            guard audioPipeline.isHandsFreeLiveConversationMode else {
+                assistantPartialSpeech = partial.text
+                eventBus.emit(event)
+                return
+            }
+            let merged = mergeAssistantPartialText(with: partial.text)
+            guard !merged.isEmpty else { return }
+            assistantPartialSpeech = merged
+            conversationStore.upsertStreamingMessage(role: .assistant, text: merged)
             eventBus.emit(event)
 
-        case .assistantSpeechFinal:
-            assistantPartialSpeech = ""
+        case .assistantSpeechFinal(let final):
+            guard audioPipeline.isHandsFreeLiveConversationMode else {
+                assistantPartialSpeech = ""
+                eventBus.emit(event)
+                return
+            }
+            let merged = mergeAssistantPartialText(with: final.text)
+            if !merged.isEmpty {
+                assistantPartialSpeech = merged
+                conversationStore.upsertStreamingMessage(role: .assistant, text: merged)
+            }
             eventBus.emit(event)
 
         case .assistantAudioChunk(let chunk):
@@ -99,6 +118,9 @@ final class ConversationEventCoordinator: ObservableObject {
         case .assistantAudioInterrupted:
             eventBus.emit(event)
             await audioPipeline.handleAssistantAudioInterrupted()
+            if audioPipeline.isHandsFreeLiveConversationMode {
+                finalizeAssistantMessageIfNeeded()
+            }
 
         case .toolCall(let toolCall):
             eventBus.emit(event)
@@ -113,6 +135,10 @@ final class ConversationEventCoordinator: ObservableObject {
                let requested = decode(ConvoSetStateTool.Arguments.self, from: toolCall.arguments),
                let requestedState = AppState(rawValue: requested.state) {
                 await audioPipeline.applyRemoteState(requestedState)
+                if audioPipeline.isHandsFreeLiveConversationMode,
+                   requestedState == .idle || requestedState == .listening {
+                    finalizeAssistantMessageIfNeeded()
+                }
             }
 
         case .bridgePairPending(let pending):
@@ -220,5 +246,46 @@ final class ConversationEventCoordinator: ObservableObject {
     private func decode<T: Decodable>(_ type: T.Type, from json: String?) -> T? {
         guard let json else { return nil }
         return try? JSONDecoder().decode(type, from: Data(json.utf8))
+    }
+
+    private func finalizeAssistantMessageIfNeeded() {
+        let finalText = assistantPartialSpeech.trimmingCharacters(in: .whitespacesAndNewlines)
+        if conversationStore.hasPartialMessage(role: .assistant) {
+            conversationStore.finalizeLastPartialMessage(
+                role: .assistant,
+                finalText: finalText.isEmpty ? nil : finalText
+            )
+        } else if !finalText.isEmpty {
+            conversationStore.append(ConversationMessage(role: .assistant, text: finalText))
+        }
+        assistantPartialSpeech = ""
+    }
+
+    private func mergeAssistantPartialText(with incoming: String) -> String {
+        let next = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !next.isEmpty else { return assistantPartialSpeech }
+
+        let current = assistantPartialSpeech.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !current.isEmpty else { return next }
+        guard current != next else { return current }
+
+        if next.hasPrefix(current) {
+            return next
+        }
+
+        if current.hasPrefix(next) {
+            return current
+        }
+
+        let maxOverlap = min(current.count, next.count)
+        if maxOverlap > 0 {
+            for overlap in stride(from: maxOverlap, through: 1, by: -1) {
+                if current.suffix(overlap) == next.prefix(overlap) {
+                    return current + next.dropFirst(overlap)
+                }
+            }
+        }
+
+        return current + " " + next
     }
 }

@@ -9,6 +9,10 @@ final class ConversationAudioPipeline: ObservableObject {
     @Published private(set) var appState: AppState = .idle
     @Published private(set) var partialTranscript: String = ""
 
+    var isHandsFreeLiveConversationMode: Bool {
+        recordingMode == .vadAuto
+    }
+
     private let transcriber: SpeechTranscriber
     private let tts: TextToSpeech
     private let transcriptFormatter: FastTranscriptFormatter

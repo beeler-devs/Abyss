@@ -96,7 +96,7 @@ struct TranscriptView: View {
                     }
 
                     // Live AI response building up
-                    if !assistantPartialSpeech.isEmpty {
+                    if !assistantPartialSpeech.isEmpty && !hasPersistedAssistantPartial {
                         MessageBubble(message: ConversationMessage(
                             role: .assistant,
                             text: assistantPartialSpeech,
@@ -129,11 +129,10 @@ struct TranscriptView: View {
                 .padding(.vertical, 12)
             }
             .scrollDismissesKeyboard(.interactively)
-            .onChange(of: messages.count) { _, _ in
-                if let last = messages.last {
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo(TranscriptItem.message(last).id, anchor: .bottom)
-                    }
+            .onChange(of: lastMessageSnapshot) { _, newValue in
+                guard let snapshot = newValue else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(TranscriptItem.messageID(snapshot.id), anchor: .bottom)
                 }
             }
             .onChange(of: agentProgressCards.map(\.id)) { oldValue, newValue in
@@ -249,6 +248,15 @@ struct TranscriptView: View {
 
         return items
     }
+
+    private var hasPersistedAssistantPartial: Bool {
+        messages.contains { $0.role == .assistant && $0.isPartial }
+    }
+
+    private var lastMessageSnapshot: MessageSnapshot? {
+        guard let last = messages.last else { return nil }
+        return MessageSnapshot(id: last.id, text: last.text, isPartial: last.isPartial)
+    }
 }
 
 private enum TranscriptItem: Identifiable {
@@ -263,7 +271,7 @@ private enum TranscriptItem: Identifiable {
     var id: String {
         switch self {
         case .message(let message):
-            return "message-\(message.id.uuidString)"
+            return Self.messageID(message.id)
         case .agentCard(let card):
             return Self.agentCardID(card.id)
         case .emailCard(let card):
@@ -282,6 +290,16 @@ private enum TranscriptItem: Identifiable {
     static func agentCardID(_ id: UUID) -> String {
         "agent-card-\(id.uuidString)"
     }
+
+    static func messageID(_ id: UUID) -> String {
+        "message-\(id.uuidString)"
+    }
+}
+
+private struct MessageSnapshot: Equatable {
+    let id: UUID
+    let text: String
+    let isPartial: Bool
 }
 
 struct MessageBubble: View {

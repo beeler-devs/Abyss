@@ -67,7 +67,84 @@ final class ConversationStore: Sendable {
         messages.append(message)
     }
 
+    func hasPartialMessage(role: ConversationMessage.Role) -> Bool {
+        messages.contains { $0.role == role && $0.isPartial }
+    }
+
+    func upsertStreamingMessage(role: ConversationMessage.Role, text: String) {
+        guard let normalized = normalizedText(text) else { return }
+
+        if let idx = messages.lastIndex(where: { $0.role == role && $0.isPartial }) {
+            var updated = messages[idx]
+            updated.text = mergeStreamingText(existing: updated.text, incoming: normalized)
+            messages[idx] = updated
+            return
+        }
+
+        messages.append(ConversationMessage(role: role, text: normalized, isPartial: true))
+    }
+
+    func finalizeLastPartialMessage(role: ConversationMessage.Role, finalText: String? = nil) {
+        guard let idx = messages.lastIndex(where: { $0.role == role && $0.isPartial }) else {
+            return
+        }
+
+        var updated = messages[idx]
+        if let normalizedFinalText = normalizedText(finalText) {
+            updated.text = normalizedFinalText
+        }
+        updated.isPartial = false
+        messages[idx] = updated
+    }
+
     func clear() {
         messages.removeAll()
+    }
+
+    private func normalizedText(_ text: String?) -> String? {
+        guard let text else { return nil }
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized
+    }
+
+    private func mergeStreamingText(existing: String, incoming: String) -> String {
+        let current = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !current.isEmpty else { return next }
+        guard !next.isEmpty else { return current }
+        guard current != next else { return current }
+
+        if next.hasPrefix(current) {
+            return next
+        }
+
+        if current.hasPrefix(next) {
+            return current
+        }
+
+        let overlap = overlapLength(betweenSuffixOf: current, andPrefixOf: next)
+        if overlap > 0 {
+            return current + next.dropFirst(overlap)
+        }
+
+        if current.hasSuffix(" ") || next.hasPrefix(" ") {
+            return current + next
+        }
+
+        return current + " " + next
+    }
+
+    private func overlapLength(betweenSuffixOf existing: String, andPrefixOf incoming: String) -> Int {
+        let maxOverlap = min(existing.count, incoming.count)
+        guard maxOverlap > 0 else { return 0 }
+
+        for count in stride(from: maxOverlap, through: 1, by: -1) {
+            if existing.suffix(count) == incoming.prefix(count) {
+                return count
+            }
+        }
+
+        return 0
     }
 }
