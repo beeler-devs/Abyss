@@ -1433,6 +1433,104 @@ test("nova-sonic can close and start a fresh session cleanly", async (t) => {
   assert.equal(sessionStarts.length, 2);
 });
 
+test("speculative contentEnd emits convo.appendMessage ahead of audio", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  // Emit SPECULATIVE text content
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "spec-1",
+      completionId: "comp-spec-1",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "SPECULATIVE" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "spec-1", content: "Hello world" } });
+  harness.client.emitEvent({ contentEnd: { contentId: "spec-1", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  // SPECULATIVE contentEnd should have emitted convo.appendMessage(isPartial: true)
+  const specAppends = findToolCalls(harness.emitted, "convo.appendMessage");
+  assert.ok(specAppends.length >= 1, "expected at least one convo.appendMessage from speculative text");
+  assertAssistantAppend(specAppends[0], { text: "Hello world", isPartial: true });
+  const specLiveId = JSON.parse(String(specAppends[0].payload.arguments)).liveResponseId;
+
+  // Now emit FINAL text content
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "final-1",
+      completionId: "comp-spec-1",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "final-1", content: "Hello world" } });
+  harness.client.emitEvent({ contentEnd: { contentId: "final-1", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  // FINAL should also emit convo.appendMessage with the same liveResponseId
+  const allAppends = findToolCalls(harness.emitted, "convo.appendMessage");
+  const finalAppend = allAppends[allAppends.length - 1];
+  assertAssistantAppend(finalAppend, { text: "Hello world", isPartial: true });
+  const finalLiveId = JSON.parse(String(finalAppend.payload.arguments)).liveResponseId;
+  assert.equal(finalLiveId, specLiveId, "FINAL and SPECULATIVE should share the same liveResponseId");
+});
+
+test("speculative preview includes accumulated text from prior FINAL sentences", async (t) => {
+  const harness = createHarness();
+  t.after(async () => {
+    harness.client.closeResponse();
+    await harness.provider.closeSession("session-1");
+  });
+
+  await harness.provider.startStream("session-1", harness.context);
+
+  // Emit FINAL "First." to build up accumulatedAssistantText
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "final-first",
+      completionId: "comp-accumulated",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "FINAL" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "final-first", content: "First." } });
+  harness.client.emitEvent({ contentEnd: { contentId: "final-first", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  // Emit SPECULATIVE "Second preview."
+  harness.client.emitEvent({
+    contentStart: {
+      contentId: "spec-second",
+      completionId: "comp-accumulated",
+      role: "ASSISTANT",
+      type: "TEXT",
+      additionalModelFields: JSON.stringify({ generationStage: "SPECULATIVE" }),
+    },
+  });
+  harness.client.emitEvent({ textOutput: { contentId: "spec-second", content: "Second preview." } });
+  harness.client.emitEvent({ contentEnd: { contentId: "spec-second", type: "TEXT", stopReason: "END_TURN" } });
+
+  await waitForTicks();
+
+  // The speculative append should combine accumulated text + speculative text
+  const allAppends = findToolCalls(harness.emitted, "convo.appendMessage");
+  const lastAppend = allAppends[allAppends.length - 1];
+  assertAssistantAppend(lastAppend, { text: "First. Second preview.", isPartial: true });
+});
+
 function createHarness(options?: {
   tools?: ToolDefinition[];
   assistantTurnFinalizeDelayMs?: number;

@@ -743,6 +743,32 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }));
       }
 
+      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "SPECULATIVE" && info.text.trim().length > 0 && !session.bargedIn) {
+        const text = info.text.trim();
+
+        // Skip Nova Sonic metadata responses (same guard as FINAL)
+        if (text.startsWith("{") && text.endsWith("}")) {
+          try { JSON.parse(text); return; } catch { /* treat as speech */ }
+        }
+
+        // Preview = confirmed text so far + speculative upcoming text
+        const previewText = session.accumulatedAssistantText
+          ? session.accumulatedAssistantText + " " + text
+          : text;
+
+        // Create/update the grey transcript bubble BEFORE audio plays
+        session.context.emit(makeEvent("tool.call", session.sessionId, {
+          callId: crypto.randomUUID(),
+          name: "convo.appendMessage",
+          arguments: JSON.stringify({
+            role: "assistant",
+            text: previewText,
+            isPartial: true,
+            liveResponseId: this.ensureLiveResponseId(session),
+          }),
+        }));
+      }
+
       if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0 && !session.bargedIn) {
         const text = info.text.trim();
 
