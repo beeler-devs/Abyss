@@ -63,7 +63,8 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 3. LLM responds with tool calls → conductor emits `tool.call` events
 4. Tools execute locally (iOS handles `audio.*`, `ui.*`) or are routed to the bridge (`bridge.exec.run`, `bridge.fs.*`)
 5. Tool results are sent back as `tool.result` events → conductor resumes LLM
-6. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
+6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`) execute directly on the server and return results to the LLM
+7. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows a draft card with Send/Cancel → user confirms → server sends the email
 
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
@@ -115,7 +116,7 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 - `ios/.../ViewModels/ConversationAgentManager.swift` — Agent lifecycle: progress cards, polling/webhook updates, conversation messages
 - `ios/.../ViewModels/ConversationAudioPipeline.swift` — Audio state machine: VAD, mic lifecycle, PTT, transcription
 - `ios/.../Models/ChatSession.swift` — `ChatSession` + `ChatListViewModel`; multi-chat with UserDefaults persistence
-- `ios/.../Models/Event.swift` — `Event` struct with 26 event kinds + `EventBus` (append-only log with Combine publisher)
+- `ios/.../Models/Event.swift` — `Event` struct with 27 event kinds + `EventBus` (append-only log with Combine publisher)
 - `ios/.../Views/ContentView.swift` — Root view with sidebar, chat content, sheet presentations
 - `ios/.../Views/InAppBrowserView.swift` — WKWebView in-app browser + `InAppBrowserCoordinator`
 - `ios/.../Views/SettingsView.swift` — Appearance, recording mode, Cursor API key, Connections (Gmail/Canvas/coming-soon integrations), bridge pairing
@@ -130,11 +131,11 @@ macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `device
 
 **Repository Selection:** `RepositorySelectionManager` presents an interactive modal for user to pick a repo during tool execution. Uses `CheckedContinuation` to suspend tool execution until selection. UI: `RepositorySelectionCardView`.
 
-**Email Draft Confirmation:** When the LLM calls `gmail.send` or `gmail.reply`, the server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS. `EmailDraftManager` (using `CheckedContinuation` suspension like `RepositorySelectionManager`) presents an `EmailDraftCardView` with Send/Cancel buttons. The tool execution suspends until the user acts, then returns the confirmation to the server which completes the actual send.
-
 **Google Calendar Integration:** Reuses the same Google OAuth tokens as Gmail (calendar scope added to `GmailAuthManager`). Server-side `CalendarClient` (`server/src/integrations/calendarClient.ts`) provides 5 tools: `calendar.list`, `calendar.get`, `calendar.create`, `calendar.update`, `calendar.delete`. Mutations use the same confirmation card pattern as email — `CalendarDraftManager` with `CheckedContinuation` suspension, `CalendarDraftCardView` with Confirm/Cancel buttons. Read results render as `CalendarEventCardView` cards in the transcript via `ConversationCalendarManager`.
 
-**Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`. Canvas tool results render as `CanvasCardView` cards in the transcript via `ConversationCanvasManager` (same pattern as Calendar). Cards use a unified `CanvasCard` model with variant enum (`.course`, `.assignment`, `.todo`, `.grade`, `.announcement`). At session start, the server pre-fetches courses via `canvasClient.courses()` and stores a summary in `session.canvasCourseContext`, which is injected into the system prompt for ambient awareness. System prompt instructions in both providers guide the LLM to use Canvas tools proactively.
+**Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`. Canvas tool results render as `CanvasCardView` cards in the transcript via `ConversationCanvasManager` (same pattern as Calendar). Cards use a unified `CanvasCard` model with variant enum (`.course`, `.assignment`, `.todo`, `.grade`, `.announcement`). At session start, the server pre-fetches courses via `canvasClient.courses()` and stores a summary in `session.canvasCourseContext`, which is injected into the system prompt for ambient awareness.
+
+**Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use iOS confirmation card pattern via `EmailDraftManager`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in.
 
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
@@ -181,7 +182,7 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 |---|---|---|
 | `PORT` | 8080 | WebSocket server port |
 | `MODEL_PROVIDER` | `bedrock` | `bedrock` or `anthropic` |
-| `VOICE_PROVIDER` | `local` | `local` or `nova-sonic` |
+| `VOICE_PROVIDER` | `nova-sonic` | `local` or `nova-sonic` |
 | `BEDROCK_TEXT_MODEL_ID` | `us.amazon.nova-2-lite-v1:0` | Primary LLM |
 | `ANTHROPIC_API_KEY` | — | Required if using `anthropic` provider |
 | `AWS_REGION` | `us-east-1` | Required for Bedrock |
