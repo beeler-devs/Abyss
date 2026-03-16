@@ -306,6 +306,7 @@ public actor BridgeCore {
         capabilities.gitCommit = capabilities.gitCommit && config.permissions.allowWritesApplyPatch
         capabilities.gitPush = capabilities.gitPush && config.permissions.allowGitPush
         capabilities.claudeRun = capabilities.claudeRun && config.permissions.allowClaudeRun
+        capabilities.novaAct = capabilities.novaAct && config.permissions.allowNovaAct
         return capabilities
     }
 
