@@ -222,7 +222,14 @@ final class ConversationAudioPipeline: ObservableObject {
         case .idle:
             await refreshLiveConversationState()
         case .thinking, .speaking:
-            voiceActivityDetector.stopMonitoring()
+            // vadAuto: keep VAD monitoring so it can trigger bargeIn() when
+            // the user speaks during assistant playback. Nova Sonic native
+            // barge-in is unreliable when echo cancellation doesn't fully
+            // suppress the assistant audio, so the iOS VAD is the primary
+            // barge-in trigger.
+            if recordingMode != .vadAuto {
+                voiceActivityDetector.stopMonitoring()
+            }
             if recordingMode == .pushToTalk && transcriber.isListening && !isStoppingRecording {
                 await stopListeningSilently()
             }
