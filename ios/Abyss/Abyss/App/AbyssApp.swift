@@ -6,6 +6,7 @@ struct AbyssApp: App {
     @StateObject private var chatList = ChatListViewModel()
     @StateObject private var authManager = GitHubAuthManager()
     @StateObject private var gmailAuthManager = GmailAuthManager()
+    @StateObject private var canvasManager = CanvasManager()
     @StateObject private var browserCoordinator = InAppBrowserCoordinator()
 
     private var appearance: AppAppearance {
@@ -17,6 +18,7 @@ struct AbyssApp: App {
             ContentView(chatList: chatList)
                 .environmentObject(authManager)
                 .environmentObject(gmailAuthManager)
+                .environmentObject(canvasManager)
                 .environmentObject(browserCoordinator)
                 .preferredColorScheme(appearance.colorScheme)
         }

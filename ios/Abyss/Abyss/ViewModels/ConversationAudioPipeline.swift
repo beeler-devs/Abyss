@@ -65,25 +65,37 @@ final class ConversationAudioPipeline: ObservableObject {
 
     deinit {
         voiceActivityDetector.stopMonitoring()
+        transcriber.tearDown()
         if let whisperTranscriber = transcriber as? WhisperKitSpeechTranscriber {
             whisperTranscriber.onAudioLevel = nil
         }
     }
 
     func preloadTranscriber() {
-        guard recordingMode == .pushToTalk else { return }
+        guard recordingMode == .pushToTalk, isChatActive else { return }
         let transcriber = self.transcriber
         Task {
             await transcriber.preload()
+            try? await transcriber.warmUp()
+            AppLogger.audio.debug("[PTT] Transcriber preloaded and engine warmed up")
         }
+    }
+
+    func tearDownTranscriber() {
+        transcriber.tearDown()
+        AppLogger.audio.debug("[PTT] Transcriber torn down for inactive chat")
     }
 
     func updateRecordingMode(_ mode: RecordingMode) {
         guard recordingMode != mode else { return }
+        let oldMode = recordingMode
         recordingMode = mode
         voiceActivityDetector.stopMonitoring()
         if mode == .pushToTalk {
             preloadTranscriber()
+        } else if oldMode == .pushToTalk {
+            // Switching away from PTT — tear down the warm engine
+            transcriber.tearDown()
         }
         Task { await refreshLiveConversationState() }
     }

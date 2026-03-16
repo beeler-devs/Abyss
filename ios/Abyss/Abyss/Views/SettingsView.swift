@@ -6,6 +6,7 @@ struct SettingsView: View {
     let bridgePairingMessage: String?
     let onPairComputer: ((String, String?) -> Void)?
     @EnvironmentObject private var gmailAuthManager: GmailAuthManager
+    @EnvironmentObject private var canvasManager: CanvasManager
     @Environment(\.dismiss) private var dismiss
 
     @AppStorage("recordingMode") private var recordingModeRaw = RecordingMode.vadAuto.rawValue
@@ -21,6 +22,14 @@ struct SettingsView: View {
     @State private var showCursorAPIKeyModal = false
     @State private var cursorAPIKeyInput = ""
     @State private var showPairComputerSheet = false
+    enum CanvasConnectStep: Identifiable {
+        case instructions
+        case pastePAT
+        var id: String { String(describing: self) }
+    }
+    @State private var canvasConnectStep: CanvasConnectStep? = nil
+    @State private var canvasBrowserURL: URL? = nil
+    @State private var shouldOpenCanvasBrowser = false
 
     var body: some View {
         NavigationStack {
@@ -113,13 +122,18 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Gmail") {
+                Section("Connections") {
+                    // Gmail
                     if gmailAuthManager.isAuthenticated {
                         HStack {
-                            Label("Connected", systemImage: "checkmark.circle.fill")
+                            Label("Gmail", systemImage: "envelope")
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                            Text("Connected")
                                 .font(.caption)
                                 .foregroundStyle(.green)
-                            Spacer()
                             Button("Sign out") {
                                 gmailAuthManager.signOut()
                             }
@@ -131,10 +145,13 @@ struct SettingsView: View {
                             Task { await gmailAuthManager.authenticate() }
                         } label: {
                             HStack {
-                                Label("Connect Gmail", systemImage: "envelope")
+                                Label("Gmail", systemImage: "envelope")
+                                Spacer()
                                 if gmailAuthManager.isAuthenticating {
-                                    Spacer()
                                     ProgressView().scaleEffect(0.8)
+                                } else {
+                                    Text("Connect")
+                                        .font(.caption)
                                 }
                             }
                         }
@@ -147,9 +164,60 @@ struct SettingsView: View {
                             .foregroundStyle(.orange)
                     }
 
-                    Text("Allows Abyss to read, search, and send emails on your behalf.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // Canvas
+                    if canvasManager.isConnected {
+                        HStack {
+                            Label("Canvas", systemImage: "graduationcap")
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                            Text("Connected")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                            Button("Sign out") {
+                                canvasManager.disconnect()
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                        }
+                    } else {
+                        Button {
+                            canvasConnectStep = .instructions
+                        } label: {
+                            HStack {
+                                Label("Canvas", systemImage: "graduationcap")
+                                Spacer()
+                                Text("Connect")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+
+                    // Coming soon integrations
+                    HStack {
+                        Label("Notion", systemImage: "doc.text")
+                        Spacer()
+                        Text("Coming soon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Apple Health", systemImage: "heart.fill")
+                        Spacer()
+                        Text("Coming soon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    HStack {
+                        Label("Obsidian", systemImage: "cube")
+                        Spacer()
+                        Text("Coming soon")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
 
                 Section("Bridge") {
@@ -217,6 +285,42 @@ struct SettingsView: View {
                     showPairComputerSheet = false
                 }
             }
+            .sheet(item: $canvasConnectStep, onDismiss: handleCanvasSheetDismiss) { step in
+                switch step {
+                case .instructions:
+                    CanvasInstructionsView(
+                        onOpenCanvas: {
+                            shouldOpenCanvasBrowser = true
+                            canvasConnectStep = nil
+                        },
+                        onCancel: {
+                            canvasConnectStep = nil
+                        }
+                    )
+                case .pastePAT:
+                    CanvasTokenPasteView(
+                        onSave: { token in
+                            canvasManager.connect(token: token, baseURL: CanvasManager.defaultBaseURL)
+                            canvasConnectStep = nil
+                        },
+                        onCancel: {
+                            canvasConnectStep = nil
+                        }
+                    )
+                }
+            }
+            .sheet(item: $canvasBrowserURL, onDismiss: {
+                canvasConnectStep = .pastePAT
+            }) { url in
+                InAppBrowserView(url: url)
+            }
+        }
+    }
+
+    private func handleCanvasSheetDismiss() {
+        if shouldOpenCanvasBrowser {
+            shouldOpenCanvasBrowser = false
+            canvasBrowserURL = URL(string: "https://canvas.cmu.edu/profile/settings")!
         }
     }
 
@@ -279,6 +383,96 @@ private struct PairComputerSheet: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Canvas Connect Flow
+
+private struct CanvasInstructionsView: View {
+    let onOpenCanvas: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("To connect your Canvas account, you'll need a Personal Access Token. Here's how:")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        instructionRow(number: 1, text: "Tap **Open Canvas** below \u{2014} this will open your Canvas profile settings.")
+                        instructionRow(number: 2, text: "Scroll to **Approved Integrations** and tap **+ New Access Token**.")
+                        instructionRow(number: 3, text: "Enter a purpose (e.g. \u{201C}Abyss\u{201D}) and tap **Generate Token**.")
+                        instructionRow(number: 4, text: "**Copy the token** \u{2014} you won\u{2019}t be able to see it again.")
+                        instructionRow(number: 5, text: "Come back here and paste it in.")
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Connect Canvas LMS")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                Button(action: onOpenCanvas) {
+                    Label("Open Canvas", systemImage: "safari")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .padding()
+            }
+        }
+    }
+
+    private func instructionRow(number: Int, text: LocalizedStringKey) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("\(number)")
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+                .frame(width: 24, height: 24)
+                .background(Circle().fill(.blue))
+            Text(text)
+                .font(.subheadline)
+        }
+    }
+}
+
+private struct CanvasTokenPasteView: View {
+    @State private var token: String = ""
+    let onSave: (String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Paste your Canvas access token")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                SecureField("Access Token", text: $token)
+                    .font(.system(.body, design: .monospaced))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding()
+            .navigationTitle("Canvas Token")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { onCancel() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(token) }
+                        .disabled(token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.height(200)])
     }
 }
 

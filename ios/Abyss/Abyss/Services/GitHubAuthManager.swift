@@ -194,7 +194,7 @@ final class GitHubAuthManager: NSObject, ObservableObject {
 
 extension GitHubAuthManager: ASWebAuthenticationPresentationContextProviding {
     nonisolated func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        let findWindow = {
+        let findWindow = { @MainActor in
             UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .compactMap { $0.keyWindow }
@@ -203,8 +203,8 @@ extension GitHubAuthManager: ASWebAuthenticationPresentationContextProviding {
         // ASWebAuthenticationSession calls this on the main thread; sync-ing onto
         // main from main deadlocks, so branch on the current thread.
         if Thread.isMainThread {
-            return findWindow()
+            return MainActor.assumeIsolated { findWindow() }
         }
-        return DispatchQueue.main.sync { findWindow() }
+        return DispatchQueue.main.sync { MainActor.assumeIsolated { findWindow() } }
     }
 }

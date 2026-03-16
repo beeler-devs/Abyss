@@ -225,6 +225,9 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
     private var currentGmailAccessToken: String?
     private var currentGmailRefreshToken: String?
     private var currentGmailTokenExpiresAt: Double?
+    private var currentCanvasAccessToken: String?
+    private var currentCanvasBaseURL: String?
+    private var currentPreferences: [String: String]?
 
     private var seenInboundEventIDs: BoundedEventIDCache
 
@@ -295,13 +298,19 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
         githubToken: String? = nil,
         gmailAccessToken: String? = nil,
         gmailRefreshToken: String? = nil,
-        gmailTokenExpiresAt: Double? = nil
+        gmailTokenExpiresAt: Double? = nil,
+        canvasAccessToken: String? = nil,
+        canvasBaseURL: String? = nil,
+        preferences: [String: String]? = nil
     ) async throws {
         currentSessionId = sessionId
         currentGithubToken = githubToken
         currentGmailAccessToken = gmailAccessToken
         currentGmailRefreshToken = gmailRefreshToken
         currentGmailTokenExpiresAt = gmailTokenExpiresAt
+        currentCanvasAccessToken = canvasAccessToken
+        currentCanvasBaseURL = canvasBaseURL
+        currentPreferences = preferences
         shouldReconnect = true
 
         try await openSocketAndStartListening()
@@ -310,7 +319,10 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
             githubToken: githubToken,
             gmailAccessToken: gmailAccessToken,
             gmailRefreshToken: gmailRefreshToken,
-            gmailTokenExpiresAt: gmailTokenExpiresAt
+            gmailTokenExpiresAt: gmailTokenExpiresAt,
+            canvasAccessToken: canvasAccessToken,
+            canvasBaseURL: canvasBaseURL,
+            preferences: preferences
         ))
     }
 
@@ -427,7 +439,10 @@ final class WebSocketConductorClient: ConductorClient, @unchecked Sendable {
                     githubToken: self.currentGithubToken,
                     gmailAccessToken: self.currentGmailAccessToken,
                     gmailRefreshToken: self.currentGmailRefreshToken,
-                    gmailTokenExpiresAt: self.currentGmailTokenExpiresAt
+                    gmailTokenExpiresAt: self.currentGmailTokenExpiresAt,
+                    canvasAccessToken: self.currentCanvasAccessToken,
+                    canvasBaseURL: self.currentCanvasBaseURL,
+                    preferences: self.currentPreferences
                 ))
             } catch {
                 await self.scheduleReconnect()

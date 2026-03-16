@@ -14,14 +14,22 @@ final class ConversationViewModel: ObservableObject {
     @Published var showError: Bool = false
     @Published var agentProgressCards: [AgentProgressCard] = []
     @Published var emailCards: [EmailCard] = []
+    @Published var emailDraftCards: [EmailDraftCard] = []
+    @Published var calendarEventCards: [CalendarEventCard] = []
+    @Published var calendarDraftCards: [CalendarDraftCard] = []
+    @Published var canvasCards: [CanvasCard] = []
     @Published var pairedBridgeDevices: [PairedBridgeDevice] = []
     @Published var bridgePairingMessage: String?
     @Published var isMuted: Bool = false
+    @Published var isTTSMuted: Bool = UserDefaults.standard.bool(forKey: "isTTSMuted") {
+        didSet { UserDefaults.standard.set(isTTSMuted, forKey: "isTTSMuted") }
+    }
     @Published var isPTTHeld: Bool = false
     @Published var isTTSSpeaking: Bool = false
     @Published private(set) var useServerConductor: Bool = false
     @Published private(set) var repositorySelectionManager = RepositorySelectionManager()
     private weak var gmailAuthManager: GmailAuthManager?
+    private weak var canvasManager: CanvasManager?
     @AppStorage("agentStatusWebhookUpdatesEnabled") private var agentStatusWebhookUpdatesEnabled: Bool = true
     @AppStorage("recordingMode") private var recordingModeRaw: String = RecordingMode.vadAuto.rawValue
 
@@ -48,6 +56,11 @@ final class ConversationViewModel: ObservableObject {
     private var eventCoordinator: ConversationEventCoordinator!
     private var agentManager: ConversationAgentManager!
     private var emailManager: ConversationEmailManager!
+    private var calendarManager: ConversationCalendarManager!
+    private var canvasCardManager: ConversationCanvasManager!
+    private let emailDraftManager = EmailDraftManager()
+    private let calendarDraftManager = CalendarDraftManager()
+    let preferencesStore = UserPreferencesStore()
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -80,7 +93,6 @@ final class ConversationViewModel: ObservableObject {
         setupToolSystem()
         setupConversationComponents()
         observeStores()
-        audioPipeline.preloadTranscriber()
         startSession()
     }
 
@@ -147,6 +159,15 @@ final class ConversationViewModel: ObservableObject {
     func setChatActive(_ isActive: Bool) {
         syncRecordingMode()
         audioPipeline.setChatActive(isActive)
+        if isActive {
+            audioPipeline.preloadTranscriber()
+        } else {
+            audioPipeline.tearDownTranscriber()
+        }
+    }
+
+    func toggleTTSMute() {
+        isTTSMuted.toggle()
     }
 
     func toggleMute() {
@@ -226,8 +247,44 @@ final class ConversationViewModel: ObservableObject {
         ))
     }
 
+    func setCanvasManager(_ manager: CanvasManager) {
+        guard canvasManager == nil else { return }
+        canvasManager = manager
+        toolRegistry.register(CanvasAuthenticateTool(
+            canvasManager: manager,
+            onAuthenticated: { [weak self] in
+                guard let self else { return }
+                await self.configureConductorClient(forceReconnect: true)
+            }
+        ))
+    }
+
     func toggleEmailCardExpanded(cardID: UUID) {
         emailManager.toggleExpanded(cardId: cardID)
+    }
+
+    func confirmEmailDraft(callId: String) {
+        emailDraftManager.confirmSend(callId: callId)
+    }
+
+    func cancelEmailDraft(callId: String) {
+        emailDraftManager.cancelDraft(callId: callId)
+    }
+
+    func toggleCalendarEventExpanded(cardID: UUID) {
+        calendarManager.toggleExpanded(cardId: cardID)
+    }
+
+    func confirmCalendarAction(callId: String) {
+        calendarDraftManager.confirm(callId: callId)
+    }
+
+    func cancelCalendarAction(callId: String) {
+        calendarDraftManager.cancel(callId: callId)
+    }
+
+    func toggleCanvasCardExpanded(cardID: UUID) {
+        canvasCardManager.toggleExpanded(cardId: cardID)
     }
 
     func requestBridgePairing(pairingCode: String, deviceName: String?) {
@@ -244,7 +301,9 @@ final class ConversationViewModel: ObservableObject {
             self?.audioPipeline?.handlePartialTranscript(partial)
         }))
         registry.register(STTStopTool(transcriber: sttImpl))
-        registry.register(TTSSpeakTool(tts: ttsImpl))
+        registry.register(TTSSpeakTool(tts: ttsImpl, isMuted: { [weak self] in
+            self?.isTTSMuted ?? false
+        }))
         registry.register(TTSStopTool(tts: ttsImpl))
         registry.register(ConvoAppendMessageTool(store: conversationStore))
         registry.register(ConvoSetStateTool(stateStore: appStateStore))
@@ -255,6 +314,16 @@ final class ConversationViewModel: ObservableObject {
         registry.register(AgentListTool(client: cursorClient))
         registry.register(RepositoriesListTool(client: cursorClient))
         registry.register(RepositoriesSelectTool(client: cursorClient, selectionManager: repositorySelectionManager))
+        registry.register(GmailSendConfirmTool(draftManager: emailDraftManager))
+        registry.register(GmailReplyConfirmTool(draftManager: emailDraftManager))
+        registry.register(CalendarCreateConfirmTool(draftManager: calendarDraftManager))
+        registry.register(CalendarUpdateConfirmTool(draftManager: calendarDraftManager))
+        registry.register(CalendarDeleteConfirmTool(draftManager: calendarDraftManager))
+        registry.register(PreferencesSetTool(store: preferencesStore, onUpdate: { [weak self] prefs in
+            guard let self else { return }
+            self.sendPreferencesUpdate(prefs)
+        }))
+        registry.register(PreferencesGetTool(store: preferencesStore))
 
         toolRegistry = registry
         toolRouter = ToolRouter(registry: registry, eventBus: eventBus)
@@ -296,6 +365,8 @@ final class ConversationViewModel: ObservableObject {
         )
 
         emailManager = ConversationEmailManager(eventBus: eventBus)
+        calendarManager = ConversationCalendarManager(eventBus: eventBus)
+        canvasCardManager = ConversationCanvasManager(eventBus: eventBus)
 
         eventCoordinator = ConversationEventCoordinator(
             eventBus: eventBus,
@@ -325,6 +396,8 @@ final class ConversationViewModel: ObservableObject {
             .sink { [weak self] event in
                 self?.eventCoordinator.handleEventStream(event)
                 self?.emailManager.handleEventStream(event)
+                self?.calendarManager.handleEventStream(event)
+                self?.canvasCardManager.handleEventStream(event)
             }
             .store(in: &cancellables)
 
@@ -359,6 +432,22 @@ final class ConversationViewModel: ObservableObject {
         emailManager.$emailCards
             .receive(on: RunLoop.main)
             .assign(to: &$emailCards)
+
+        emailDraftManager.$activeDrafts
+            .receive(on: RunLoop.main)
+            .assign(to: &$emailDraftCards)
+
+        calendarManager.$calendarCards
+            .receive(on: RunLoop.main)
+            .assign(to: &$calendarEventCards)
+
+        calendarDraftManager.$activeDrafts
+            .receive(on: RunLoop.main)
+            .assign(to: &$calendarDraftCards)
+
+        canvasCardManager.$canvasCards
+            .receive(on: RunLoop.main)
+            .assign(to: &$canvasCards)
 
         NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
             .receive(on: RunLoop.main)
@@ -482,12 +571,18 @@ final class ConversationViewModel: ObservableObject {
         let gmailAccessToken = GmailAuthManager.loadAccessToken()
         let gmailRefreshToken = GmailAuthManager.loadRefreshToken()
         let gmailTokenExpiresAt = GmailAuthManager.loadExpiresAt()
+        let canvasAccessToken = CanvasManager.loadAccessToken()
+        let canvasBaseURL = CanvasManager.loadBaseURL()
+        let prefs = preferencesStore.getAll()
         try await client.connect(
             sessionId: sessionId,
             githubToken: githubToken,
             gmailAccessToken: gmailAccessToken,
             gmailRefreshToken: gmailRefreshToken,
-            gmailTokenExpiresAt: gmailTokenExpiresAt
+            gmailTokenExpiresAt: gmailTokenExpiresAt,
+            canvasAccessToken: canvasAccessToken,
+            canvasBaseURL: canvasBaseURL,
+            preferences: prefs.isEmpty ? nil : prefs
         )
 
         inboundEventsTask?.cancel()
@@ -636,6 +731,13 @@ final class ConversationViewModel: ObservableObject {
         eventBus.emit(Event.error(code: "tool_error", message: message, sessionId: sessionId))
         errorMessage = message
         showError = true
+    }
+
+    private func sendPreferencesUpdate(_ preferences: [String: String]) {
+        Task {
+            let event = Event.preferencesSync(preferences: preferences, sessionId: sessionId)
+            await sendEventToConductor(event, surfaceErrors: false)
+        }
     }
 
     private func encode<T: Encodable>(_ value: T) -> String {

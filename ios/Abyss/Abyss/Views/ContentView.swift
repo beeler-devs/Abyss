@@ -4,6 +4,7 @@ struct ContentView: View {
     @ObservedObject var chatList: ChatListViewModel
     @EnvironmentObject private var browserCoordinator: InAppBrowserCoordinator
     @EnvironmentObject private var gmailAuthManager: GmailAuthManager
+    @EnvironmentObject private var canvasManager: CanvasManager
     @Environment(\.colorScheme) private var colorScheme
     @State private var showSettings = false
     @State private var showEventTimeline = false
@@ -33,9 +34,13 @@ struct ContentView: View {
                             isTypingMode: $isTypingMode,
                             typedMessage: $typedMessage
                         )
-                        .onAppear { vm.setGmailAuthManager(gmailAuthManager) }
+                        .onAppear {
+                            vm.setGmailAuthManager(gmailAuthManager)
+                            vm.setCanvasManager(canvasManager)
+                        }
                         .onChange(of: chatList.selectedChatId) { _, _ in
                             viewModel?.setGmailAuthManager(gmailAuthManager)
+                            viewModel?.setCanvasManager(canvasManager)
                         }
                     } else {
                         emptyState
@@ -45,6 +50,7 @@ struct ContentView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
+                            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                                 showSidebar = true
                             }
@@ -59,12 +65,23 @@ struct ContentView: View {
                         }
                     }
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            chatList.createChat()
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                                .offset(y: -1)
-                                .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                        HStack(spacing: 16) {
+                            if let vm = viewModel {
+                                Button {
+                                    vm.toggleTTSMute()
+                                } label: {
+                                    Image(systemName: vm.isTTSMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                        .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                                }
+                            }
+                            Button {
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                                chatList.createChat()
+                            } label: {
+                                Image(systemName: "square.and.pencil")
+                                    .offset(y: -1)
+                                    .foregroundStyle(AppTheme.actionBarIconTint(for: colorScheme))
+                            }
                         }
                     }
                 }
@@ -355,7 +372,19 @@ private struct ChatContentView: View {
                     }
                 },
                 onToggleAgentConversation: { viewModel.toggleConversationExpanded(cardID: $0) },
-                onToggleAgentExpanded: { viewModel.toggleAgentCardExpanded(cardID: $0) }
+                onToggleAgentExpanded: { viewModel.toggleAgentCardExpanded(cardID: $0) },
+                emailCards: viewModel.emailCards,
+                onToggleEmailExpanded: { viewModel.toggleEmailCardExpanded(cardID: $0) },
+                emailDraftCards: viewModel.emailDraftCards,
+                onSendDraft: { viewModel.confirmEmailDraft(callId: $0) },
+                onCancelDraft: { viewModel.cancelEmailDraft(callId: $0) },
+                calendarEventCards: viewModel.calendarEventCards,
+                onToggleCalendarExpanded: { viewModel.toggleCalendarEventExpanded(cardID: $0) },
+                calendarDraftCards: viewModel.calendarDraftCards,
+                onConfirmCalendar: { viewModel.confirmCalendarAction(callId: $0) },
+                onCancelCalendar: { viewModel.cancelCalendarAction(callId: $0) },
+                canvasCards: viewModel.canvasCards,
+                onToggleCanvasExpanded: { viewModel.toggleCanvasCardExpanded(cardID: $0) }
             )
 
             // Repository selection card (takes priority)
