@@ -156,14 +156,16 @@ Three bridge tools (`bridge.nova.start`, `bridge.nova.act`, `bridge.nova.stop`) 
 
 **Flow:** LLM calls `bridge.nova.start` with a URL → bridge spawns Python process → NovaAct opens Chrome. LLM calls `bridge.nova.act` with a natural-language instruction → bridge writes JSON to Python stdin → NovaAct executes → JSON result on stdout. LLM calls `bridge.nova.stop` → Python exits, Chrome closes.
 
-**Permission:** Gated by `BridgePermissions.allowNovaAct` (default false). Toggle in AbyssBridge GUI. `BridgeCapabilities.novaAct` field controls server-side tool availability.
+**Permission:** Gated by `BridgePermissions.allowNovaAct` (default false). Toggle in AbyssBridge GUI shows `NovaActSetupSheet` requiring an API key before enabling. `BridgeCapabilities.novaAct` field controls server-side tool availability.
+
+**API Key Storage:** Toggling Nova Act ON presents a setup sheet with a `SecureField` for the API key. The key is stored in macOS Keychain (service `app.abyss.bridge`, account `nova_act_api_key`) and injected into the Python subprocess env via `NovaActSessionManager.start(apiKey:)`. App-provided key takes precedence over the `NOVA_ACT_API_KEY` env var (which still works as fallback). The Enable button is disabled until a key is available. `BridgeConfiguration.novaActApiKey` threads the key through to `BridgeCore`.
 
 **Files:**
 - `mac/BridgeCore/Sources/BridgeCore/Resources/nova_act_bridge.py` — Python wrapper script
 - `mac/BridgeCore/Sources/BridgeCore/NovaActSessionManager.swift` — Swift actor managing Python process lifecycle
 - `server/src/core/conductorService.ts` — Tool definitions + dispatch (timeouts: start 60s, act 120s, stop 15s)
 
-**Prerequisites on Mac:** `python3 -m pip install nova-act`, `NOVA_ACT_API_KEY` env var set, Chrome installed.
+**Prerequisites on Mac:** `python3 -m pip install nova-act`, Nova Act API key (entered in setup sheet → Keychain, or `NOVA_ACT_API_KEY` env var as fallback), Chrome installed.
 
 ### Workspace Overrides in session.start
 When the iOS app connects or reconnects, `connectConductorClient` gathers any workspace overrides from `eventCoordinator.pairedBridgeDevices` and includes them as `bridgeWorkspaceOverrides` in the `session.start` payload. The server iterates these and forwards each as `bridge.workspace.set` to the paired bridge device, ensuring workspace state survives iOS app restarts.
