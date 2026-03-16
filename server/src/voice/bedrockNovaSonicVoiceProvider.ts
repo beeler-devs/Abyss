@@ -69,6 +69,8 @@ interface SonicSession {
   turnFinalized: boolean;
   /** Tracks consecutive failures per tool name for circuit-breaking. */
   toolFailureCounts: Map<string, number>;
+  /** Number of background (long-running) tools currently executing. */
+  backgroundToolCount: number;
 }
 
 interface SonicEventEnvelope {
@@ -101,6 +103,7 @@ function parseAdditionalModelFields(value: unknown): Record<string, unknown> {
 const VOICE_PIPELINE_TOOL_PREFIXES = ["stt.", "tts.", "convo."] as const;
 const DEFAULT_ASSISTANT_TURN_FINALIZE_DELAY_MS = 500;
 const MAX_BUFFERED_AUDIO_CHUNKS = 64;
+const LONG_RUNNING_BRIDGE_TOOLS = new Set(["bridge.claude.run"]);
 
 /** Sanitize tool name for Nova Sonic — only [a-zA-Z0-9_] allowed. */
 function sanitizeToolName(name: string): string {
@@ -203,6 +206,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       bargedIn: false,
       turnFinalized: false,
       toolFailureCounts: new Map(),
+      backgroundToolCount: 0,
     };
     this.sessions.set(sessionId, session);
     await this.openModelStream(session);
@@ -1077,6 +1081,11 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
+    if (LONG_RUNNING_BRIDGE_TOOLS.has(toolCall.name)) {
+      this.handleLongRunningToolUse(session, toolCall, circuitKey, priorFailures);
+      return;
+    }
+
     session.toolExecutionInFlight = true;
     try {
       const result = await session.context.executeTool(session.sessionId, toolCall, session.context.emit);
@@ -1113,6 +1122,96 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     } finally {
       session.toolExecutionInFlight = false;
     }
+  }
+
+  private injectUserText(session: SonicSession, text: string): void {
+    const contentName = `injected-${crypto.randomUUID()}`;
+    this.sendEvent(session, {
+      contentStart: {
+        promptName: session.promptName,
+        contentName,
+        type: "TEXT",
+        interactive: false,
+        role: "USER",
+        textInputConfiguration: {
+          mediaType: "text/plain",
+        },
+      },
+    });
+    this.sendEvent(session, {
+      textInput: {
+        promptName: session.promptName,
+        contentName,
+        content: text,
+      },
+    });
+    this.sendEvent(session, {
+      contentEnd: {
+        promptName: session.promptName,
+        contentName,
+      },
+    });
+  }
+
+  private handleLongRunningToolUse(
+    session: SonicSession,
+    toolCall: ToolCallRequest,
+    circuitKey: string,
+    priorFailures: number,
+  ): void {
+    if (!session.context.executeTool) {
+      return;
+    }
+
+    // Immediate ack — Nova Sonic gets its tool result instantly, no parse error.
+    this.sendToolResult(session, toolCall.id, JSON.stringify({
+      status: "started_in_background",
+      message: "Claude Code has been started. The result will be provided when the task completes. Continue the conversation normally in the meantime.",
+    }));
+
+    // Do NOT set toolExecutionInFlight — audio must keep flowing.
+    session.backgroundToolCount += 1;
+    logger.info(`[LONG_RUNNING] started ${toolCall.name} in background (count=${session.backgroundToolCount})`, { sessionId: session.sessionId });
+
+    const executeTool = session.context.executeTool;
+    const emit = session.context.emit;
+
+    // Fire-and-forget async execution
+    (async () => {
+      try {
+        const result = await executeTool(session.sessionId, toolCall, emit);
+
+        if (session.closed) {
+          logger.info(`[LONG_RUNNING] session closed during ${toolCall.name}, dropping result`, { sessionId: session.sessionId });
+          return;
+        }
+
+        // Track consecutive failures for circuit breaking
+        if (result.error) {
+          session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+        } else {
+          session.toolFailureCounts.delete(circuitKey);
+        }
+
+        const summary = result.error
+          ? `Background tool ${toolCall.name} failed: ${result.error}`
+          : `Background tool ${toolCall.name} completed. Result: ${result.result ?? "success"}`;
+
+        logger.info(`[LONG_RUNNING] ${toolCall.name} finished, injecting result (${summary.length} chars)`, { sessionId: session.sessionId });
+        this.injectUserText(session, `[SYSTEM: ${summary}]\nSummarize this result to the user.`);
+      } catch (error) {
+        if (session.closed) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[LONG_RUNNING] ${toolCall.name} threw: ${message}`, { sessionId: session.sessionId });
+        session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+        this.injectUserText(session, `[SYSTEM: Background tool ${toolCall.name} failed with error: ${message}]\nTell the user what went wrong.`);
+      } finally {
+        session.backgroundToolCount = Math.max(0, session.backgroundToolCount - 1);
+        logger.info(`[LONG_RUNNING] ${toolCall.name} cleanup (remaining=${session.backgroundToolCount})`, { sessionId: session.sessionId });
+      }
+    })();
   }
 
   private sendToolResult(session: SonicSession, toolUseId: string, content: string): void {
