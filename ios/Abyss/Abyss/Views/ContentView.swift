@@ -373,7 +373,7 @@ private struct ChatContentView: View {
                 emailCards: viewModel.emailCards,
                 onToggleEmailExpanded: { viewModel.toggleEmailCardExpanded(cardID: $0) },
                 emailDraftCards: viewModel.emailDraftCards,
-                onSendDraft: { viewModel.confirmEmailDraft(callId: $0) },
+                onSendDraft: { callId, to, subject, body in viewModel.confirmEmailDraft(callId: callId, to: to, subject: subject, body: body) },
                 onCancelDraft: { viewModel.cancelEmailDraft(callId: $0) },
                 calendarEventCards: viewModel.calendarEventCards,
                 onToggleCalendarExpanded: { viewModel.toggleCalendarEventExpanded(cardID: $0) },

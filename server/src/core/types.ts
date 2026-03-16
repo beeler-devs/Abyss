@@ -60,6 +60,17 @@ export interface PendingCursorWebhookRecord {
   expiresAtMs: number;
 }
 
+export interface PendingGmailSend {
+  callId: string;
+  originalToolCallId: string;
+  type: "send" | "reply";
+  to: string;
+  cc?: string;
+  subject: string;
+  body: string;
+  messageId?: string;
+}
+
 export interface SessionState {
   sessionId: string;
   githubToken?: string;
@@ -77,6 +88,7 @@ export interface SessionState {
     string,
     (result: string | null, error: string | null) => void
   >;
+  pendingGmailSends: Map<string, PendingGmailSend>;
   recentTranscriptTrace: string[];
   transcriptCount: number;
   activeBridgeCommandId?: string;

@@ -60,7 +60,7 @@ final class ConversationCanvasManager: ObservableObject {
                 name: item.name,
                 courseCode: item.course_code,
                 enrollmentTerm: item.enrollment_term_id.map { String($0) }
-            ), serverCardId: item.cardId))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -75,7 +75,7 @@ final class ConversationCanvasManager: ObservableObject {
                 pointsPossible: item.points_possible,
                 submissionStatus: item.submission?.workflow_state,
                 htmlUrl: item.html_url
-            ), serverCardId: item.cardId))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -87,7 +87,7 @@ final class ConversationCanvasManager: ObservableObject {
                 courseName: item.context_name,
                 dueAt: item.assignment?.due_at,
                 type: item.type
-            ), serverCardId: item.cardId))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -100,7 +100,7 @@ final class ConversationCanvasManager: ObservableObject {
                 currentGrade: item.grades?.current_grade,
                 finalScore: item.grades?.final_score,
                 finalGrade: item.grades?.final_grade
-            ), serverCardId: item.cardId))
+            )), serverCardId: item.cardId))
         }
     }
 
@@ -113,7 +113,7 @@ final class ConversationCanvasManager: ObservableObject {
                 message: item.message,
                 postedAt: item.posted_at,
                 authorName: item.author?.display_name
-            ), serverCardId: item.cardId))
+            )), serverCardId: item.cardId))
         }
     }
 }

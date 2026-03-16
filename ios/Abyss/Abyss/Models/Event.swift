@@ -45,6 +45,8 @@ struct Event: Identifiable, Codable, Sendable {
         case bridgeExecFinished(BridgeExecFinished)
         case preferencesSync(PreferencesSync)
         case bridgeWorkspaceSet(BridgeWorkspaceSet)
+        case gmailSendExecute(GmailSendExecute)
+        case gmailSendResult(GmailSendResult)
     }
 
     // MARK: - Payloads
@@ -270,6 +272,21 @@ struct Event: Identifiable, Codable, Sendable {
         let deviceId: String
         let workspacePath: String
     }
+
+    struct GmailSendExecute: Codable, Sendable {
+        let callId: String
+        let confirmed: Bool
+        let to: String?
+        let subject: String?
+        let body: String?
+        let cc: String?
+    }
+
+    struct GmailSendResult: Codable, Sendable {
+        let callId: String
+        let status: String
+        let error: String?
+    }
 }
 
 // MARK: - Convenience Factories
@@ -463,6 +480,25 @@ extension Event {
     static func bridgeWorkspaceSet(deviceId: String, workspacePath: String, sessionId: String? = nil) -> Event {
         Event(sessionId: sessionId, kind: .bridgeWorkspaceSet(BridgeWorkspaceSet(deviceId: deviceId, workspacePath: workspacePath)))
     }
+
+    static func gmailSendExecute(
+        callId: String,
+        confirmed: Bool,
+        to: String? = nil,
+        subject: String? = nil,
+        body: String? = nil,
+        cc: String? = nil,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .gmailSendExecute(GmailSendExecute(
+            callId: callId,
+            confirmed: confirmed,
+            to: to,
+            subject: subject,
+            body: body,
+            cc: cc
+        )))
+    }
 }
 
 // MARK: - Display Helpers
@@ -498,6 +534,8 @@ extension Event.Kind {
         case .bridgeExecFinished(let payload): return "bridge.exec.finished: \(payload.commandId.prefix(8))"
         case .preferencesSync: return "preferences.sync"
         case .bridgeWorkspaceSet(let payload): return "bridge.workspace.set: \(payload.deviceId)"
+        case .gmailSendExecute(let payload): return "gmail.send.execute: \(payload.callId.prefix(8))"
+        case .gmailSendResult(let payload): return "gmail.send.result: \(payload.status)"
         }
     }
 }

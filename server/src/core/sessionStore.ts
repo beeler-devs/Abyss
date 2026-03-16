@@ -36,6 +36,7 @@ export class SessionStore {
       history: [],
       pendingToolCalls: new Map(),
       toolResultResolvers: new Map(),
+      pendingGmailSends: new Map(),
       recentTranscriptTrace: [],
       transcriptCount: 0,
     };

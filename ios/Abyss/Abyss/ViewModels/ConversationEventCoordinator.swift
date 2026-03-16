@@ -26,6 +26,7 @@ final class ConversationEventCoordinator: ObservableObject {
     private let toolRouter: ToolRouter
     private let audioPipeline: ConversationAudioPipeline
     private let agentManager: ConversationAgentManager
+    private let emailDraftManager: EmailDraftManager
     private let sessionId: String
     private let sendConductorEvent: @MainActor @Sendable (Event, Bool) async -> Void
     private var cancellables: Set<AnyCancellable> = []
@@ -50,6 +51,7 @@ final class ConversationEventCoordinator: ObservableObject {
         toolRouter: ToolRouter,
         audioPipeline: ConversationAudioPipeline,
         agentManager: ConversationAgentManager,
+        emailDraftManager: EmailDraftManager,
         sessionId: String,
         sendConductorEvent: @escaping @MainActor @Sendable (Event, Bool) async -> Void
     ) {
@@ -58,6 +60,7 @@ final class ConversationEventCoordinator: ObservableObject {
         self.toolRouter = toolRouter
         self.audioPipeline = audioPipeline
         self.agentManager = agentManager
+        self.emailDraftManager = emailDraftManager
         self.sessionId = sessionId
         self.sendConductorEvent = sendConductorEvent
 
@@ -303,6 +306,20 @@ final class ConversationEventCoordinator: ObservableObject {
                handlePendingInterruptTranscript(transcript) {
                 return
             }
+            eventBus.emit(event)
+
+        case .gmailSendResult(let result):
+            if result.status == "sent" {
+                emailDraftManager.markSent(callId: result.callId)
+            } else if result.status == "failed" {
+                emailDraftManager.markFailed(callId: result.callId, error: result.error ?? "Send failed")
+            } else if result.status == "cancelled" {
+                emailDraftManager.cancelDraft(callId: result.callId)
+            }
+            eventBus.emit(event)
+
+        case .gmailSendExecute:
+            // Outbound-only event — pass through to eventBus for logging
             eventBus.emit(event)
 
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult,
