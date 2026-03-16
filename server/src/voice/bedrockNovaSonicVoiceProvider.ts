@@ -403,6 +403,26 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
   }
 
+  private finalizeAccumulatedAssistantText(session: SonicSession): void {
+    if (!session.accumulatedAssistantText) {
+      return;
+    }
+
+    session.context.emit(makeEvent("assistant.speech.final", session.sessionId, {
+      text: session.accumulatedAssistantText,
+    }));
+    session.context.emit(makeEvent("tool.call", session.sessionId, {
+      callId: crypto.randomUUID(),
+      name: "convo.appendMessage",
+      arguments: JSON.stringify({
+        role: "assistant",
+        text: session.accumulatedAssistantText,
+        isPartial: false,
+      }),
+    }));
+    session.accumulatedAssistantText = "";
+  }
+
   private handleOutputEvent(session: SonicSession, raw: string): void {
     const parsed = this.tryParseEnvelope(raw);
     if (!parsed?.event) {
@@ -594,22 +614,8 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (info.role === "ASSISTANT" && info.type === "AUDIO") {
         session.context.emit(makeEvent("assistant.audio.end", session.sessionId, {}));
 
-        // Finalize the accumulated message as a single non-partial bubble.
-        if (session.accumulatedAssistantText) {
-          session.context.emit(makeEvent("assistant.speech.final", session.sessionId, {
-            text: session.accumulatedAssistantText,
-          }));
-          session.context.emit(makeEvent("tool.call", session.sessionId, {
-            callId: crypto.randomUUID(),
-            name: "convo.appendMessage",
-            arguments: JSON.stringify({
-              role: "assistant",
-              text: session.accumulatedAssistantText,
-              isPartial: false,
-            }),
-          }));
-          session.accumulatedAssistantText = "";
-        }
+        // Audio completion still marks playback completion, but text can be finalized earlier.
+        this.finalizeAccumulatedAssistantText(session);
 
         session.context.emit(makeEvent("tool.call", session.sessionId, {
           callId: crypto.randomUUID(),
@@ -634,6 +640,11 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           name: "convo.setState",
           arguments: JSON.stringify({ state: "listening" }),
         }));
+        return;
+      }
+
+      if (stopReason === "END_TURN") {
+        this.finalizeAccumulatedAssistantText(session);
       }
     }
   }
