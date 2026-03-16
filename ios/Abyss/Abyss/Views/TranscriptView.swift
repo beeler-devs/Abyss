@@ -118,11 +118,12 @@ struct TranscriptView: View {
                         ))
                         .id("partial_assistant")
                     } else if showsTypingIndicator {
-                        MessageBubble(message: ConversationMessage(
-                            role: .assistant,
-                            text: "Typing...",
-                            isPartial: true
-                        ))
+                        HStack {
+                            ThinkingIndicatorView(font: .body, baseColor: .secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 2)
                         .id("typing_assistant")
                     }
 
