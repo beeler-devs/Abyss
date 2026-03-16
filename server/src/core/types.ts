@@ -81,6 +81,15 @@ export interface SessionState {
   transcriptCount: number;
   activeBridgeCommandId?: string;
   activeBridgeDeviceId?: string;
+  memoryUserKey?: string;
+  memoryHydrated?: boolean;
+  workingContext?: {
+    repo?: string;
+    branch?: string;
+    prUrl?: string;
+    lastGoal?: string;
+    activeExecutor?: string;
+  };
 }
 
 export interface BridgeToolExecutionRequest {

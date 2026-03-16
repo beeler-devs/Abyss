@@ -15,6 +15,7 @@ import {
 } from "../integrations/cursorPayload.js";
 import { asString, makeDeterministicEventId, makeEvent } from "./events.js";
 import { logger } from "./logger.js";
+import { MemoryService } from "./memory/memoryService.js";
 import { SessionStore } from "./sessionStore.js";
 import { summarizeIfNeeded, SummarizationConfig, DEFAULT_SUMMARIZATION_CONFIG } from "./contextSummarizer.js";
 import { asRecord, stringFromRecord, summarizeValueForLog } from "./utils.js";
@@ -48,6 +49,7 @@ export interface ConductorServiceDependencies {
   bridgeToolExecutor?: BridgeToolExecutor;
   bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   verboseToolRoutingLogs?: boolean;
+  memoryService?: MemoryService;
   summarizationConfig?: SummarizationConfig;
 }
 
@@ -826,6 +828,7 @@ export class ConductorService {
   private static readonly CONVERSATION_POLL_INTERVAL_MS = 3_000;
   private readonly bridgeToolAvailability?: (sessionId: string, toolName: string) => boolean;
   private readonly verboseToolRoutingLogs: boolean;
+  private readonly memoryService?: MemoryService;
   private readonly summarizationConfig: SummarizationConfig;
 
   constructor(provider: ModelProvider, config: ConductorServiceConfig, dependencies: ConductorServiceDependencies = {}) {
@@ -845,6 +848,7 @@ export class ConductorService {
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
     this.bridgeToolAvailability = dependencies.bridgeToolAvailability;
     this.verboseToolRoutingLogs = dependencies.verboseToolRoutingLogs ?? false;
+    this.memoryService = dependencies.memoryService;
     this.summarizationConfig = dependencies.summarizationConfig ?? DEFAULT_SUMMARIZATION_CONFIG;
   }
 
@@ -965,6 +969,9 @@ export class ConductorService {
         if (typeof event.payload.gmailTokenExpiresAt === "number") {
           session.gmailTokenExpiresAt = event.payload.gmailTokenExpiresAt;
         }
+        if (typeof event.payload.memoryUserKey === "string" && event.payload.memoryUserKey) {
+          session.memoryUserKey = event.payload.memoryUserKey;
+        }
         if (typeof event.payload.canvasAccessToken === "string" && event.payload.canvasAccessToken) {
           session.canvasAccessToken = event.payload.canvasAccessToken;
         }
@@ -989,6 +996,7 @@ export class ConductorService {
           });
         }
 
+
         emit(makeEvent("session.started", event.sessionId, { sessionId: event.sessionId }));
         logger.info("session started", { sessionId: event.sessionId, eventId: event.id });
         return;
@@ -1002,6 +1010,26 @@ export class ConductorService {
             message: "user.audio.transcript.final must include payload.text",
           }));
           return;
+        }
+
+        // Hydrate memory on first turn of session
+        if (!session.memoryHydrated && session.memoryUserKey && this.memoryService) {
+          session.memoryHydrated = true;
+          try {
+            const context = await this.memoryService.retrieveContext({
+              memoryUserKey: session.memoryUserKey,
+              transcript: text,
+            });
+            if (context) {
+              this.sessions.appendTurn(session, { role: "user", content: `[Prior context from previous sessions]\n${context}` });
+              emit(makeEvent("session.memory.loaded", event.sessionId, {
+                memoryUserKey: session.memoryUserKey,
+                contextLength: context.length,
+              }));
+            }
+          } catch {
+            // Memory retrieval failure is non-fatal
+          }
         }
 
         await this.runConductorLoop(session, text, emit, event.id);
@@ -1124,6 +1152,25 @@ export class ConductorService {
           eventId: event.id,
         });
         return;
+    }
+  }
+
+  async finalizeSession(sessionId: string): Promise<void> {
+    if (!this.memoryService) return;
+    const session = this.sessions.get(sessionId);
+    if (!session || !session.memoryUserKey) return;
+    try {
+      const historyToSummarize = session.history.filter(
+        (t) => !(t.role === "user" && typeof t.content === "string" && t.content.startsWith("[Prior context from previous sessions]")),
+      );
+      await this.memoryService.summarizeAndStore(
+        session.memoryUserKey,
+        sessionId,
+        historyToSummarize,
+        session.workingContext,
+      );
+    } catch {
+      // Finalization failures are non-fatal
     }
   }
 
@@ -1308,6 +1355,12 @@ export class ConductorService {
       role: "user",
       content: transcript,
     });
+
+    if (session.workingContext !== undefined) {
+      session.workingContext.lastGoal = transcript;
+    } else {
+      session.workingContext = { lastGoal: transcript };
+    }
 
     emitToolCall("convo.setState", { state: "thinking" });
     if (!options.suppressUserMessage) {
