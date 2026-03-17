@@ -22,7 +22,6 @@ final class ConversationBridgeExecManager: ObservableObject {
             let command = parseCommand(from: toolCall)
             var card = BridgeExecCard(
                 callId: toolCall.callId,
-                anchorMessageID: nil,
                 command: command,
                 status: .running
             )
@@ -86,9 +85,7 @@ final class ConversationBridgeExecManager: ObservableObject {
     }
 
     func anchorUnanchoredCards(to messageID: UUID) {
-        for index in cards.indices where cards[index].anchorMessageID == nil {
-            cards[index].anchorMessageID = messageID
-        }
+        // No-op: BridgeExecCards use inline card references via serverCardId
     }
 
     func toggleExpanded(cardID: UUID) {

@@ -524,11 +524,7 @@ final class ConversationViewModel: ObservableObject {
                 guard let self else { return }
                 self.messages = self.conversationStore.messages
                 if let lastAssistant = self.messages.last(where: { $0.role == .assistant }) {
-                    self.bridgeExecManager.updateLastAssistantMessageID(lastAssistant.id)
                     self.bridgeExecManager.anchorUnanchoredCards(to: lastAssistant.id)
-                    self.emailManager.updateLastAssistantMessageID(lastAssistant.id)
-                    self.calendarManager.updateLastAssistantMessageID(lastAssistant.id)
-                    self.canvasCardManager.updateLastAssistantMessageID(lastAssistant.id)
                 }
                 let finalized = self.conversationStore.messages.filter { !$0.isPartial && $0.role != .system }
                 if finalized.count != self.lastPersistedCount {

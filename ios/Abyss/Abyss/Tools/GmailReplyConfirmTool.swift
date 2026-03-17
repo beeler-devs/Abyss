@@ -33,7 +33,8 @@ struct GmailReplyConfirmTool: Tool, @unchecked Sendable {
             cc: arguments.cc,
             subject: "Re:",
             body: arguments.body,
-            messageId: arguments.messageId
+            messageId: arguments.messageId,
+            anchorMessageID: nil
         )
         return Result(confirmed: true, message: "Draft reply card shown to user for review. Awaiting their confirmation before sending.")
     }
