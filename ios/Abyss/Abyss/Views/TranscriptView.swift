@@ -43,15 +43,6 @@ struct TranscriptView: View {
                             MessageBubble(message: message, cardResolver: resolveCard, cardResolverVersion: cardResolverVersion)
                                 .id(item.id)
 
-                        case .calendarDraftCard(let card):
-                            CalendarDraftCardView(
-                                card: card,
-                                onConfirm: { onConfirmCalendar(card.callId) },
-                                onCancel: { onCancelCalendar(card.callId) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
-
                         case .messageActions(let message):
                             MessageActionsView(message: message)
                                 .id(item.id)
@@ -131,40 +122,23 @@ struct TranscriptView: View {
     private var cardResolverVersion: Int {
         emailCards.count + calendarEventCards.count + canvasCards.count
         + agentProgressCards.count + bridgeExecCards.count
-        + emailDraftCards.count
+        + emailDraftCards.count + calendarDraftCards.count
         + emailCards.compactMap(\.serverCardId).count
         + calendarEventCards.compactMap(\.serverCardId).count
         + canvasCards.compactMap(\.serverCardId).count
         + agentProgressCards.compactMap(\.serverCardId).count
         + bridgeExecCards.compactMap(\.serverCardId).count
         + emailDraftCards.compactMap(\.serverCardId).count
+        + calendarDraftCards.compactMap(\.serverCardId).count
     }
 
     private var transcriptItems: [TranscriptItem] {
-        let messageIDs = Set(messages.map(\.id))
-
-        // Calendar drafts still use anchor-based rendering (deferred from inline conversion)
-        let anchoredCalDraftCards = Dictionary(grouping: calendarDraftCards.compactMap { card -> (UUID, CalendarDraftCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
         var items: [TranscriptItem] = []
         for message in messages {
             items.append(.message(message))
-            // Calendar drafts only: minimal anchor fallback (deferred from inline conversion)
-            if let calDraftCards = anchoredCalDraftCards[message.id] {
-                for entry in calDraftCards {
-                    items.append(.calendarDraftCard(entry.1))
-                }
-            }
             if message.role == .assistant && !message.isPartial && !message.text.isEmpty {
                 items.append(.messageActions(message))
             }
-        }
-        // Unanchored calendar drafts at bottom
-        for card in calendarDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            items.append(.calendarDraftCard(card))
         }
 
         return items
@@ -234,6 +208,16 @@ struct TranscriptView: View {
                 )
                 .padding(.horizontal, 12)
             )
+        case "calendarDraft":
+            guard let card = calendarDraftCards.first(where: { $0.serverCardId == id }) else { return nil }
+            return AnyView(
+                CalendarDraftCardView(
+                    card: card,
+                    onConfirm: { onConfirmCalendar(card.callId) },
+                    onCancel: { onCancelCalendar(card.callId) }
+                )
+                .padding(.horizontal, 12)
+            )
         default:
             return nil
         }
@@ -242,15 +226,12 @@ struct TranscriptView: View {
 
 private enum TranscriptItem: Identifiable {
     case message(ConversationMessage)
-    case calendarDraftCard(CalendarDraftCard)
     case messageActions(ConversationMessage)
 
     var id: String {
         switch self {
         case .message(let message):
             return Self.messageID(message.id)
-        case .calendarDraftCard(let card):
-            return "cal-draft-\(card.id.uuidString)"
         case .messageActions(let message):
             return "actions-\(message.id.uuidString)"
         }

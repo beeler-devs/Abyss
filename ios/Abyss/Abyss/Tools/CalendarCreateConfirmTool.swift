@@ -4,6 +4,7 @@ struct CalendarCreateConfirmTool: Tool, @unchecked Sendable {
     static let name = "calendar.create.confirm"
 
     struct Arguments: Codable, Sendable {
+        let callId: String?
         let summary: String
         let startTime: String
         let endTime: String
@@ -25,24 +26,22 @@ struct CalendarCreateConfirmTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
-        let callId = UUID().uuidString
+        let resolvedCallId = arguments.callId ?? UUID().uuidString
         let attendeeList = arguments.attendees?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } ?? []
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                action: .create,
-                summary: arguments.summary,
-                startTime: arguments.startTime,
-                endTime: arguments.endTime,
-                location: arguments.location,
-                description: arguments.description,
-                attendees: attendeeList,
-                eventId: nil,
-                anchorMessageID: nil
-            )
-            return Result(confirmed: confirmed, message: "User confirmed. Event created.")
-        } catch is CalendarDraftManager.DraftError {
-            return Result(confirmed: false, message: "User cancelled event creation.")
-        }
+
+        draftManager.addDraft(
+            callId: resolvedCallId,
+            action: .create,
+            summary: arguments.summary,
+            startTime: arguments.startTime,
+            endTime: arguments.endTime,
+            location: arguments.location,
+            description: arguments.description,
+            attendees: attendeeList,
+            eventId: nil,
+            serverCardId: resolvedCallId
+        )
+
+        return Result(confirmed: true, message: "Draft shown to user for confirmation.")
     }
 }

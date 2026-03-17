@@ -14,6 +14,10 @@ Abyss makes the phone the primary interface, not a companion app. You speak to a
 
 ![Abyss data flow](assets/abyss-data-flow.png)
 
+**Infrastructure and deployment**
+
+![Abyss infrastructure](assets/abyss-infrastructure.png)
+
 ## Features
 
 - Voice-first, iPhone-native assistant experience.

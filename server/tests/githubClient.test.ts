@@ -12,6 +12,7 @@ function makeSession(githubToken?: string): SessionState {
     pendingToolCalls: new Map(),
     toolResultResolvers: new Map(),
     pendingGmailSends: new Map(),
+    pendingCalendarMutations: new Map(),
     recentTranscriptTrace: [],
     transcriptCount: 0,
   };

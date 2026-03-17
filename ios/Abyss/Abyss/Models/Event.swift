@@ -48,6 +48,8 @@ struct Event: Identifiable, Codable, Sendable {
         case gmailSendExecute(GmailSendExecute)
         case gmailSendResult(GmailSendResult)
         case sessionTitle(SessionTitle)
+        case calendarMutationExecute(CalendarMutationExecute)
+        case calendarMutationResult(CalendarMutationResult)
     }
 
     // MARK: - Payloads
@@ -293,6 +295,18 @@ struct Event: Identifiable, Codable, Sendable {
     struct SessionTitle: Codable, Sendable {
         let title: String
     }
+
+    struct CalendarMutationExecute: Codable, Sendable {
+        let callId: String
+        let confirmed: Bool
+    }
+
+    struct CalendarMutationResult: Codable, Sendable {
+        let callId: String
+        let status: String
+        let mutationType: String?
+        let error: String?
+    }
 }
 
 // MARK: - Convenience Factories
@@ -507,6 +521,17 @@ extension Event {
             messageId: messageId
         )))
     }
+
+    static func calendarMutationExecute(
+        callId: String,
+        confirmed: Bool,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .calendarMutationExecute(CalendarMutationExecute(
+            callId: callId,
+            confirmed: confirmed
+        )))
+    }
 }
 
 // MARK: - Display Helpers
@@ -545,6 +570,8 @@ extension Event.Kind {
         case .gmailSendExecute(let payload): return "gmail.send.execute: \(payload.callId.prefix(8))"
         case .gmailSendResult(let payload): return "gmail.send.result: \(payload.success ? "ok" : "failed")"
         case .sessionTitle(let payload): return "session.title: \(payload.title)"
+        case .calendarMutationExecute(let payload): return "calendar.mutation.execute: \(payload.callId.prefix(8))"
+        case .calendarMutationResult(let payload): return "calendar.mutation.result: \(payload.status)"
         }
     }
 }

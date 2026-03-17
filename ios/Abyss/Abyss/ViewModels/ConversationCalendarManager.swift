@@ -22,6 +22,8 @@ final class ConversationCalendarManager: ObservableObject {
         case .toolResult(let toolResult):
             guard let toolCall = pendingToolCalls.removeValue(forKey: toolResult.callId) else { return }
             handleCalendarResult(toolResult, for: toolCall)
+        case .calendarMutationResult(let result):
+            handleMutationResult(result)
         default:
             break
         }
@@ -30,6 +32,13 @@ final class ConversationCalendarManager: ObservableObject {
     func toggleExpanded(cardId: UUID) {
         guard let index = calendarCards.firstIndex(where: { $0.id == cardId }) else { return }
         calendarCards[index].isExpanded.toggle()
+    }
+
+    private func handleMutationResult(_ result: Event.CalendarMutationResult) {
+        // If status is confirmed and it was a create or update, we could parse event data
+        // but the server sends the event as a nested object which we can't easily decode here.
+        // The calendar draft card state is already managed by CalendarDraftManager.
+        // This handler is for future enrichment if needed.
     }
 
     private func handleCalendarResult(_ result: Event.ToolResult, for toolCall: Event.ToolCall) {

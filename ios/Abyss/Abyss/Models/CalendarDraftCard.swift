@@ -26,7 +26,7 @@ struct CalendarDraftCard: Identifiable, Equatable, Sendable {
     let attendees: [String]
     let eventId: String?
     var state: CalendarDraftState
-    var anchorMessageID: UUID?
+    var serverCardId: String?
 
     init(
         id: UUID = UUID(),
@@ -40,7 +40,7 @@ struct CalendarDraftCard: Identifiable, Equatable, Sendable {
         attendees: [String] = [],
         eventId: String? = nil,
         state: CalendarDraftState = .pending,
-        anchorMessageID: UUID? = nil
+        serverCardId: String? = nil
     ) {
         self.id = id
         self.callId = callId
@@ -53,6 +53,6 @@ struct CalendarDraftCard: Identifiable, Equatable, Sendable {
         self.attendees = attendees
         self.eventId = eventId
         self.state = state
-        self.anchorMessageID = anchorMessageID
+        self.serverCardId = serverCardId
     }
 }

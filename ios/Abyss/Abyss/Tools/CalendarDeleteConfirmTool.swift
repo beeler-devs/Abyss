@@ -4,6 +4,7 @@ struct CalendarDeleteConfirmTool: Tool, @unchecked Sendable {
     static let name = "calendar.delete.confirm"
 
     struct Arguments: Codable, Sendable {
+        let callId: String?
         let eventId: String
         let summary: String?
     }
@@ -21,23 +22,21 @@ struct CalendarDeleteConfirmTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
-        let callId = UUID().uuidString
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                action: .delete,
-                summary: arguments.summary ?? "Event",
-                startTime: nil,
-                endTime: nil,
-                location: nil,
-                description: nil,
-                attendees: [],
-                eventId: arguments.eventId,
-                anchorMessageID: nil
-            )
-            return Result(confirmed: confirmed, message: "User confirmed. Event deleted.")
-        } catch is CalendarDraftManager.DraftError {
-            return Result(confirmed: false, message: "User cancelled event deletion.")
-        }
+        let resolvedCallId = arguments.callId ?? UUID().uuidString
+
+        draftManager.addDraft(
+            callId: resolvedCallId,
+            action: .delete,
+            summary: arguments.summary ?? "Event",
+            startTime: nil,
+            endTime: nil,
+            location: nil,
+            description: nil,
+            attendees: [],
+            eventId: arguments.eventId,
+            serverCardId: resolvedCallId
+        )
+
+        return Result(confirmed: true, message: "Draft shown to user for confirmation.")
     }
 }

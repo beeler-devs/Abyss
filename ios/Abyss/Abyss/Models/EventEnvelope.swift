@@ -265,6 +265,21 @@ struct EventEnvelope: Codable, Sendable {
         case .sessionTitle(let value):
             type = "session.title"
             payload = ["title": .string(value.title)]
+        case .calendarMutationExecute(let value):
+            type = "calendar.mutation.execute"
+            payload = [
+                "callId": .string(value.callId),
+                "confirmed": .bool(value.confirmed),
+            ]
+        case .calendarMutationResult(let value):
+            type = "calendar.mutation.result"
+            var p: [String: JSONValue] = [
+                "callId": .string(value.callId),
+                "status": .string(value.status),
+            ]
+            if let mutationType = value.mutationType { p["mutationType"] = .string(mutationType) }
+            if let error = value.error { p["error"] = .string(error) }
+            payload = p
         }
     }
 
@@ -458,6 +473,18 @@ struct EventEnvelope: Codable, Sendable {
             ))
         case "session.title":
             kind = .sessionTitle(Event.SessionTitle(title: try requireString("title")))
+        case "calendar.mutation.execute":
+            kind = .calendarMutationExecute(Event.CalendarMutationExecute(
+                callId: try requireString("callId"),
+                confirmed: payload["confirmed"]?.boolValue ?? false
+            ))
+        case "calendar.mutation.result":
+            kind = .calendarMutationResult(Event.CalendarMutationResult(
+                callId: try requireString("callId"),
+                status: payload["status"]?.stringValue ?? "unknown",
+                mutationType: payload["mutationType"]?.stringValue,
+                error: payload["error"]?.stringValue
+            ))
         default:
             throw ConversionError.unsupportedType(type)
         }

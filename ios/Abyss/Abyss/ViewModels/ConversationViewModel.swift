@@ -357,10 +357,24 @@ final class ConversationViewModel: ObservableObject {
 
     func confirmCalendarAction(callId: String) {
         calendarDraftManager.confirm(callId: callId)
+        let event = Event.calendarMutationExecute(
+            callId: callId,
+            confirmed: true,
+            sessionId: sessionId
+        )
+        eventBus.emit(event)
+        Task { await sendEventToConductor(event) }
     }
 
     func cancelCalendarAction(callId: String) {
         calendarDraftManager.cancel(callId: callId)
+        let event = Event.calendarMutationExecute(
+            callId: callId,
+            confirmed: false,
+            sessionId: sessionId
+        )
+        eventBus.emit(event)
+        Task { await sendEventToConductor(event) }
     }
 
     func toggleCanvasCardExpanded(cardID: UUID) {

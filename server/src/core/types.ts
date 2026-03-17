@@ -71,6 +71,19 @@ export interface PendingGmailSend {
   messageId?: string;
 }
 
+export interface PendingCalendarMutation {
+  callId: string;
+  originalToolCallId: string;
+  type: "create" | "update" | "delete";
+  summary: string;
+  startTime?: string;
+  endTime?: string;
+  description?: string;
+  location?: string;
+  attendees?: string[];
+  eventId?: string;
+}
+
 export interface SessionState {
   sessionId: string;
   githubToken?: string;
@@ -89,6 +102,7 @@ export interface SessionState {
     (result: string | null, error: string | null) => void
   >;
   pendingGmailSends: Map<string, PendingGmailSend>;
+  pendingCalendarMutations: Map<string, PendingCalendarMutation>;
   recentTranscriptTrace: string[];
   transcriptCount: number;
   activeBridgeCommandId?: string;

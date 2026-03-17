@@ -324,7 +324,8 @@ final class ConversationEventCoordinator: ObservableObject {
         case .assistantUIPatch, .agentStatus, .agentConversation, .sessionStart, .toolResult,
                 .userAudioTranscriptPartial, .userAudioStreamStart,
                 .userAudioStreamChunk, .userAudioStreamEnd, .audioOutputInterrupted,
-                .agentCompleted, .bridgePairRequest, .preferencesSync, .gmailSendExecute:
+                .agentCompleted, .bridgePairRequest, .preferencesSync, .gmailSendExecute,
+                .calendarMutationExecute, .calendarMutationResult:
             eventBus.emit(event)
         }
     }

@@ -4,6 +4,7 @@ struct CalendarUpdateConfirmTool: Tool, @unchecked Sendable {
     static let name = "calendar.update.confirm"
 
     struct Arguments: Codable, Sendable {
+        let callId: String?
         let eventId: String
         let summary: String?
         let startTime: String?
@@ -26,24 +27,22 @@ struct CalendarUpdateConfirmTool: Tool, @unchecked Sendable {
 
     @MainActor
     func execute(_ arguments: Arguments) async throws -> Result {
-        let callId = UUID().uuidString
+        let resolvedCallId = arguments.callId ?? UUID().uuidString
         let attendeeList = arguments.attendees?.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) } ?? []
-        do {
-            let confirmed = try await draftManager.requestConfirmation(
-                callId: callId,
-                action: .update,
-                summary: arguments.summary ?? "Updated Event",
-                startTime: arguments.startTime,
-                endTime: arguments.endTime,
-                location: arguments.location,
-                description: arguments.description,
-                attendees: attendeeList,
-                eventId: arguments.eventId,
-                anchorMessageID: nil
-            )
-            return Result(confirmed: confirmed, message: "User confirmed. Event updated.")
-        } catch is CalendarDraftManager.DraftError {
-            return Result(confirmed: false, message: "User cancelled event update.")
-        }
+
+        draftManager.addDraft(
+            callId: resolvedCallId,
+            action: .update,
+            summary: arguments.summary ?? "Updated Event",
+            startTime: arguments.startTime,
+            endTime: arguments.endTime,
+            location: arguments.location,
+            description: arguments.description,
+            attendees: attendeeList,
+            eventId: arguments.eventId,
+            serverCardId: resolvedCallId
+        )
+
+        return Result(confirmed: true, message: "Draft shown to user for confirmation.")
     }
 }

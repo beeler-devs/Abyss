@@ -146,6 +146,10 @@ struct EventRow: View {
                 Image(systemName: "envelope.badge.fill").foregroundStyle(.green)
             case .sessionTitle:
                 Image(systemName: "text.badge.star").foregroundStyle(.teal)
+            case .calendarMutationExecute:
+                Image(systemName: "calendar.badge.checkmark").foregroundStyle(.blue)
+            case .calendarMutationResult:
+                Image(systemName: "calendar.badge.checkmark").foregroundStyle(.green)
             }
         }
     }
@@ -219,6 +223,10 @@ struct EventRow: View {
             return "gmail.send.result: \(payload.callId.prefix(8)) success=\(payload.success)"
         case .sessionTitle(let payload):
             return "session.title: \(payload.title)"
+        case .calendarMutationExecute(let payload):
+            return "calendar.mutation.execute: \(payload.callId.prefix(8)) confirmed=\(payload.confirmed)"
+        case .calendarMutationResult(let payload):
+            return "calendar.mutation.result: \(payload.callId.prefix(8)) [\(payload.status)]"
         }
     }
 

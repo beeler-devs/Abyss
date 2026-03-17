@@ -28,6 +28,7 @@ import {
   EventEnvelope,
   ModelProvider,
   ModelResponse,
+  PendingCalendarMutation,
   SessionState,
   ToolCallRequest,
   ToolDefinition,
@@ -1306,6 +1307,86 @@ export class ConductorService {
         return;
       }
 
+      case "calendar.mutation.execute": {
+        const execCallId = asString(event.payload.callId);
+        const confirmed = event.payload.confirmed === true;
+        if (!execCallId) {
+          logger.warn("calendar.mutation.execute missing callId", { sessionId: session.sessionId });
+          return;
+        }
+
+        const pending = session.pendingCalendarMutations.get(execCallId);
+        if (!pending) {
+          logger.warn(`calendar.mutation.execute no pending mutation for callId=${execCallId}`, { sessionId: session.sessionId });
+          return;
+        }
+        session.pendingCalendarMutations.delete(execCallId);
+
+        if (!confirmed) {
+          logger.info(`calendar.mutation.execute cancelled callId=${execCallId}`, { sessionId: session.sessionId });
+          emit(makeEvent("calendar.mutation.result", session.sessionId, {
+            callId: execCallId,
+            status: "cancelled",
+            message: "User cancelled the calendar action.",
+          }));
+          return;
+        }
+
+        try {
+          if (pending.type === "create") {
+            const createResult = await this.calendarClient!.createEvent(session, {
+              summary: pending.summary,
+              startTime: pending.startTime!,
+              endTime: pending.endTime!,
+              description: pending.description,
+              location: pending.location,
+              attendees: pending.attendees,
+            });
+            logger.info(`calendar.mutation.execute create done callId=${execCallId}`, { sessionId: session.sessionId });
+            emit(makeEvent("calendar.mutation.result", session.sessionId, {
+              callId: execCallId,
+              status: "confirmed",
+              mutationType: "create",
+              event: { ...createResult, cardId: execCallId },
+            }));
+          } else if (pending.type === "update") {
+            const updateResult = await this.calendarClient!.updateEvent(session, pending.eventId!, {
+              summary: pending.summary !== "Updated Event" ? pending.summary : undefined,
+              startTime: pending.startTime,
+              endTime: pending.endTime,
+              description: pending.description,
+              location: pending.location,
+              attendees: pending.attendees,
+            });
+            logger.info(`calendar.mutation.execute update done callId=${execCallId}`, { sessionId: session.sessionId });
+            emit(makeEvent("calendar.mutation.result", session.sessionId, {
+              callId: execCallId,
+              status: "confirmed",
+              mutationType: "update",
+              event: { ...updateResult, cardId: execCallId },
+            }));
+          } else if (pending.type === "delete") {
+            const deleteResult = await this.calendarClient!.deleteEvent(session, pending.eventId!);
+            logger.info(`calendar.mutation.execute delete done callId=${execCallId}`, { sessionId: session.sessionId });
+            emit(makeEvent("calendar.mutation.result", session.sessionId, {
+              callId: execCallId,
+              status: "confirmed",
+              mutationType: "delete",
+              result: deleteResult,
+            }));
+          }
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          logger.error(`calendar.mutation.execute failed callId=${execCallId}: ${errorMsg}`, { sessionId: session.sessionId });
+          emit(makeEvent("calendar.mutation.result", session.sessionId, {
+            callId: execCallId,
+            status: "failed",
+            error: errorMsg,
+          }));
+        }
+        return;
+      }
+
       case "preferences.sync": {
         if (event.payload.preferences && typeof event.payload.preferences === "object" && !Array.isArray(event.payload.preferences)) {
           session.userPreferences = event.payload.preferences as Record<string, string>;
@@ -1888,6 +1969,16 @@ export class ConductorService {
                 const parsed = JSON.parse(rawResult);
                 if (parsed.cardId) {
                   pendingCardRefs.push({ type: "bridge", id: parsed.cardId });
+                }
+              } catch { /* ignore */ }
+            }
+
+            // Track calendar draft card refs for calendar mutation pending_confirmation results
+            if ((toolCall.name === "calendar.create" || toolCall.name === "calendar.update" || toolCall.name === "calendar.delete") && !execution.error && rawResult) {
+              try {
+                const parsed = JSON.parse(rawResult);
+                if (parsed.confirmCallId) {
+                  pendingCardRefs.push({ type: "calendarDraft", id: parsed.confirmCallId });
                 }
               } catch { /* ignore */ }
             }
@@ -2741,7 +2832,7 @@ export class ConductorService {
           const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
             callId: confirmCallId,
             name: "calendar.create.confirm",
-            arguments: JSON.stringify({ summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
+            arguments: JSON.stringify({ callId: confirmCallId, summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
           });
           session.pendingToolCalls.set(confirmCallId, {
             callId: confirmCallId,
@@ -2749,21 +2840,25 @@ export class ConductorService {
             emittedAt: confirmEnvelope.timestamp,
             toolArguments: { summary, startTime, endTime, description, location, attendees },
           });
+          session.pendingCalendarMutations.set(confirmCallId, {
+            callId: confirmCallId,
+            originalToolCallId: callId,
+            type: "create",
+            summary,
+            startTime,
+            endTime,
+            description: description ?? undefined,
+            location: location ?? undefined,
+            attendees: attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined,
+          });
           emit(confirmEnvelope);
+          logger.info(`calendar.create pending confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            return { result: null, error: confirmError ?? "calendar_create_not_confirmed" };
-          }
-          let confirmed = false;
-          try { const parsed = JSON.parse(confirmResult); confirmed = parsed.confirmed === true; } catch { return { result: null, error: "calendar_create_invalid_confirmation" }; }
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to create the event." }), error: null };
-          }
-
-          const attendeeList = attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined;
-          const createResult = await this.calendarClient.createEvent(session, { summary, startTime, endTime, description: description ?? undefined, location: location ?? undefined, attendees: attendeeList });
-          return { result: stableJSONStringify(createResult), error: null };
+          return {
+            result: stableJSONStringify({ status: "pending_confirmation", confirmCallId, message: "Calendar event draft shown. Waiting for user confirmation." }) +
+              "\n\n[Calendar draft card rendered to user. Reference inline:\n```card:calendarDraft:" + confirmCallId + "\n```\n]",
+            error: null,
+          };
         }
 
         case "calendar.update": {
@@ -2785,7 +2880,7 @@ export class ConductorService {
           const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
             callId: confirmCallId,
             name: "calendar.update.confirm",
-            arguments: JSON.stringify({ eventId, summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
+            arguments: JSON.stringify({ callId: confirmCallId, eventId, summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendees ?? undefined }),
           });
           session.pendingToolCalls.set(confirmCallId, {
             callId: confirmCallId,
@@ -2793,21 +2888,26 @@ export class ConductorService {
             emittedAt: confirmEnvelope.timestamp,
             toolArguments: { eventId, summary, startTime, endTime, description, location, attendees },
           });
+          session.pendingCalendarMutations.set(confirmCallId, {
+            callId: confirmCallId,
+            originalToolCallId: callId,
+            type: "update",
+            summary: summary ?? "Updated Event",
+            startTime: startTime ?? undefined,
+            endTime: endTime ?? undefined,
+            description: description ?? undefined,
+            location: location ?? undefined,
+            attendees: attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined,
+            eventId,
+          });
           emit(confirmEnvelope);
+          logger.info(`calendar.update pending confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            return { result: null, error: confirmError ?? "calendar_update_not_confirmed" };
-          }
-          let confirmed = false;
-          try { const parsed = JSON.parse(confirmResult); confirmed = parsed.confirmed === true; } catch { return { result: null, error: "calendar_update_invalid_confirmation" }; }
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to update the event." }), error: null };
-          }
-
-          const attendeeList = attendees ? attendees.split(",").map(e => e.trim()).filter(Boolean) : undefined;
-          const updateResult = await this.calendarClient.updateEvent(session, eventId, { summary: summary ?? undefined, startTime: startTime ?? undefined, endTime: endTime ?? undefined, description: description ?? undefined, location: location ?? undefined, attendees: attendeeList });
-          return { result: stableJSONStringify(updateResult), error: null };
+          return {
+            result: stableJSONStringify({ status: "pending_confirmation", confirmCallId, message: "Calendar event update draft shown. Waiting for user confirmation." }) +
+              "\n\n[Calendar draft card rendered to user. Reference inline:\n```card:calendarDraft:" + confirmCallId + "\n```\n]",
+            error: null,
+          };
         }
 
         case "calendar.delete": {
@@ -2824,7 +2924,7 @@ export class ConductorService {
           const confirmEnvelope = makeEvent("tool.call", session.sessionId, {
             callId: confirmCallId,
             name: "calendar.delete.confirm",
-            arguments: JSON.stringify({ eventId, summary: summary ?? undefined }),
+            arguments: JSON.stringify({ callId: confirmCallId, eventId, summary: summary ?? undefined }),
           });
           session.pendingToolCalls.set(confirmCallId, {
             callId: confirmCallId,
@@ -2832,20 +2932,21 @@ export class ConductorService {
             emittedAt: confirmEnvelope.timestamp,
             toolArguments: { eventId, summary },
           });
+          session.pendingCalendarMutations.set(confirmCallId, {
+            callId: confirmCallId,
+            originalToolCallId: callId,
+            type: "delete",
+            summary: summary ?? "Event",
+            eventId,
+          });
           emit(confirmEnvelope);
+          logger.info(`calendar.delete pending confirmation callId=${confirmCallId}`, { sessionId: session.sessionId, callId: confirmCallId });
 
-          const { result: confirmResult, error: confirmError } = await waitForToolResult(session, confirmCallId, 120_000);
-          if (confirmError || !confirmResult) {
-            return { result: null, error: confirmError ?? "calendar_delete_not_confirmed" };
-          }
-          let confirmed = false;
-          try { const parsed = JSON.parse(confirmResult); confirmed = parsed.confirmed === true; } catch { return { result: null, error: "calendar_delete_invalid_confirmation" }; }
-          if (!confirmed) {
-            return { result: stableJSONStringify({ status: "cancelled", message: "User declined to delete the event." }), error: null };
-          }
-
-          const deleteResult = await this.calendarClient.deleteEvent(session, eventId);
-          return { result: stableJSONStringify(deleteResult), error: null };
+          return {
+            result: stableJSONStringify({ status: "pending_confirmation", confirmCallId, message: "Calendar event deletion draft shown. Waiting for user confirmation." }) +
+              "\n\n[Calendar draft card rendered to user. Reference inline:\n```card:calendarDraft:" + confirmCallId + "\n```\n]",
+            error: null,
+          };
         }
 
         case "github.repos.list": {
