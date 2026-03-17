@@ -17,6 +17,7 @@ export interface BridgeCapabilities {
   gitPush?: boolean;
   claudeRun?: boolean;
   novaAct?: boolean;
+  screenshot?: boolean;
 }
 
 export interface PairingRequest {
@@ -199,13 +200,14 @@ export class BridgeStateStore {
 
     if (requestedDeviceId) {
       const requested = this.devicesById.get(requestedDeviceId);
-      if (!requested) {
-        return { error: "bridge_device_not_paired" };
+      if (requested) {
+        if (requested.status !== "online") {
+          return { error: "bridge_device_offline" };
+        }
+        return { device: this.rebindDeviceToSession(requested, sessionId) };
       }
-      if (requested.status !== "online") {
-        return { error: "bridge_device_offline" };
-      }
-      return { device: this.rebindDeviceToSession(requested, sessionId) };
+      // Device ID not found — fall through to auto-resolve.
+      // LLMs frequently hallucinate placeholder device IDs like "bridge-device-id".
     }
 
     if (sessionOnlineDevices.length === 1) {

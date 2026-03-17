@@ -116,17 +116,8 @@ export interface SessionState {
     lastGoal?: string;
     activeExecutor?: string;
   };
-  pendingGmailSends?: Map<
-    string,
-    {
-      to: string;
-      cc?: string | null;
-      subject: string;
-      body: string;
-      messageId?: string | null;
-      isReply: boolean;
-    }
-  >;
+  /** True while Nova Sonic is actively streaming audio for this session. */
+  isLiveSession?: boolean;
 }
 
 export interface BridgeToolExecutionRequest {

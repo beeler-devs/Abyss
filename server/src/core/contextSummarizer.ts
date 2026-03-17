@@ -84,7 +84,17 @@ export async function summarizeIfNeeded(
     return { summarized: false };
   }
 
-  const splitIndex = history.length - config.recentToKeep;
+  let splitIndex = history.length - config.recentToKeep;
+  if (splitIndex <= 0) {
+    return { summarized: false };
+  }
+
+  // Ensure we don't split between an assistant toolUse turn and its toolResult turns.
+  // Walk the split point backward until the first kept turn is NOT a tool result,
+  // so we never orphan toolResult blocks from their preceding toolUse.
+  while (splitIndex > 0 && history[splitIndex].role === "tool") {
+    splitIndex--;
+  }
   if (splitIndex <= 0) {
     return { summarized: false };
   }

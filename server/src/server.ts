@@ -108,6 +108,7 @@ const bridgeRouter = new BridgeToolRouter({
   emitToIOS: (event) => {
     emitToSession(event);
   },
+  isLiveSession: (sessionId): boolean => conductor.isSessionLive(sessionId),
   verboseToolRoutingLogs: VERBOSE_TOOL_ROUTING_LOGS,
 });
 
@@ -392,10 +393,22 @@ wss.on("connection", (socket, request) => {
     }
 
     if (voiceProvider && event.type === "user.audio.stream.start") {
+      conductor.setLiveSession(event.sessionId, true);
       await voiceProvider.startStream(event.sessionId, {
         emit: (outbound) => emitToSession(outbound),
         listTools: (sessionId) => conductor.listAvailableTools(sessionId),
         executeTool: async (sessionId, toolCall, emit) => conductor.executeDirectToolCall(sessionId, toolCall, emit),
+        getSessionContext: (sessionId) => {
+          const devices = bridgeState.getSessionDevices(sessionId);
+          const onlineDevice = devices.find((d) => d.status === "online")
+            ?? bridgeState.getOnlineDevices()[0];
+          return {
+            bridgeDeviceName: onlineDevice?.deviceName,
+            bridgeWorkspaceRoot: onlineDevice?.workspaceRoot,
+            bridgeWorkspaceRoots: onlineDevice?.workspaceRoots,
+            userPreferences: conductor.getUserPreferences(sessionId),
+          };
+        },
       });
       return;
     }
@@ -415,6 +428,7 @@ wss.on("connection", (socket, request) => {
 
     if (voiceProvider && event.type === "user.audio.stream.end") {
       await voiceProvider.endStream(event.sessionId);
+      conductor.setLiveSession(event.sessionId, false);
       return;
     }
 
@@ -437,6 +451,7 @@ wss.on("connection", (socket, request) => {
         void conductor.finalizeSession(context.sessionId);
       }
       if (voiceProvider) {
+        conductor.setLiveSession(context.sessionId, false);
         void voiceProvider.closeSession(context.sessionId);
       }
     }
@@ -883,6 +898,7 @@ function readCapabilities(value: unknown): BridgeCapabilities | undefined {
     gitPush: optionalBoolean(raw.gitPush),
     claudeRun,
     novaAct: optionalBoolean(raw.novaAct),
+    screenshot: optionalBoolean(raw.screenshot),
   };
 }
 
@@ -946,6 +962,8 @@ function bridgeDeviceSupportsTool(capabilities: BridgeCapabilities, toolName: st
     case "bridge.nova.act":
     case "bridge.nova.stop":
       return capabilities.novaAct ?? false;
+    case "bridge.screenshot":
+      return capabilities.screenshot ?? false;
     default:
       return false;
   }

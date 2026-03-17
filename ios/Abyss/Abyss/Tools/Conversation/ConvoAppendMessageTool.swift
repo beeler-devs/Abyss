@@ -148,6 +148,10 @@ final class ConversationStore: Sendable {
         messages.remove(at: index)
     }
 
+    func restore(_ messages: [ConversationMessage]) {
+        self.messages = messages
+    }
+
     func clear() {
         messages.removeAll()
     }

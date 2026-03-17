@@ -505,6 +505,17 @@ const SERVER_BRIDGE_TOOLS: ToolDefinition[] = [
       },
     },
   },
+  {
+    name: "bridge.screenshot",
+    description:
+      "Take a screenshot of the paired Mac's screen and send it to the iOS app for display. Use when the user asks to 'show me', 'take a screenshot', 'what does it look like', or similar. The image will appear in the conversation automatically.",
+    input_schema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string", description: "Optional bridge device ID. Omit when only one bridge is paired." },
+      },
+    },
+  },
 ];
 
 const SERVER_GMAIL_TOOLS: ToolDefinition[] = [
@@ -977,8 +988,21 @@ export class ConductorService {
     return this.sessions.getAgentIdForSpawnCall(spawnCallId);
   }
 
+  isSessionLive(sessionId: string): boolean {
+    return this.sessions.get(sessionId)?.isLiveSession ?? false;
+  }
+
   listAvailableTools(sessionId: string): ToolDefinition[] {
     return this.availableTools(sessionId);
+  }
+
+  getUserPreferences(sessionId: string): Record<string, string> | undefined {
+    return this.sessions.get(sessionId)?.userPreferences;
+  }
+
+  setLiveSession(sessionId: string, live: boolean): void {
+    const session = this.sessions.getOrCreate(sessionId);
+    session.isLiveSession = live;
   }
 
   async executeDirectToolCall(
@@ -1402,10 +1426,30 @@ export class ConductorService {
         const name = asString(event.payload.name);
         const prompt = asString(event.payload.prompt);
 
+        logger.info(`agent.completed received (live=${!!session.isLiveSession})`, {
+          sessionId: session.sessionId,
+          eventId: event.id,
+          agentId,
+          status,
+        });
+
+        if (session.isLiveSession) {
+          // During live conversations, Nova Sonic handles agent updates via
+          // cursor_agent_status tool calls. Emit agent.status to iOS so the
+          // card updates, but skip the text-based conductor loop — it would
+          // produce rogue tts.speak calls that destroy the audio session.
+          emit(makeEvent("agent.status", session.sessionId, {
+            agentId, status, summary, name, prompt,
+          }));
+          return;
+        }
+
         const outcome = status === "FINISHED" ? "finished successfully" : "failed";
         const agentRef = name ? `"${name}"` : `agent ${agentId}`;
         const taskDesc = prompt ? `Task: "${prompt}". ` : "";
-        const summaryDesc = summary ? `Summary: ${summary}` : "No summary was provided.";
+        const summaryDesc = summary && summary !== `Agent status updated: ${status}`
+          ? `Summary: ${summary}`
+          : "No detailed summary was provided.";
 
         const contextText = [
           `[Agent Update] Cursor agent ${agentRef} just ${outcome}.`,
@@ -1414,13 +1458,6 @@ export class ConductorService {
           "Tell the user what the agent accomplished (or what went wrong if it failed),",
           "in a concise, natural sentence or two. Do not repeat the raw summary verbatim.",
         ].join(" ").trim();
-
-        logger.info("agent.completed received", {
-          sessionId: session.sessionId,
-          eventId: event.id,
-          agentId,
-          status,
-        });
 
         await this.runConductorLoop(session, contextText, emit, event.id, {
           suppressUserMessage: true,
@@ -1499,7 +1536,12 @@ export class ConductorService {
       tools.push(...SERVER_CURSOR_TOOLS);
     }
     if (this.bridgeToolExecutor) {
-      const bridgeTools = this.bridgeToolAvailability
+      const session = this.sessions.get(sessionId);
+      // For live (Nova Sonic) sessions, always include all bridge tools — the bridge
+      // typically connects a few seconds after the iOS app, but tool config is baked
+      // into the stream at startup and can't be updated mid-session.
+      const skipAvailabilityCheck = session?.isLiveSession;
+      const bridgeTools = (this.bridgeToolAvailability && !skipAvailabilityCheck)
         ? SERVER_BRIDGE_TOOLS.filter((tool) => this.bridgeToolAvailability!(sessionId, tool.name))
         : SERVER_BRIDGE_TOOLS;
       tools.push(...bridgeTools);
@@ -2087,9 +2129,14 @@ export class ConductorService {
         text: responseText,
         isPartial: false,
       });
-      emitToolCall("convo.setState", { state: "speaking" });
-      emitToolCall("tts.speak", { text: responseText });
-      emitToolCall("convo.setState", { state: "idle" });
+      if (!session.isLiveSession) {
+        // In PTT mode, iOS handles TTS playback. In live (Nova Sonic) mode,
+        // the bidirectional audio stream handles speech — emitting tts.speak
+        // would conflict with the hands-free audio engine.
+        emitToolCall("convo.setState", { state: "speaking" });
+        emitToolCall("tts.speak", { text: responseText });
+        emitToolCall("convo.setState", { state: "idle" });
+      }
 
       emittedFinalResponse = true;
       break;
@@ -2507,24 +2554,13 @@ export class ConductorService {
             return { result: null, error: "bridge_not_configured" };
           }
 
-          // Resolve allowedTools: explicit arg > user preference > prompt user
+          // Resolve allowedTools: explicit arg > user preference > default (all tools)
+          const DEFAULT_ALLOWED_TOOLS = "Bash,Read,Edit,Write,MultiEdit,Glob,Grep,LS,Agent,WebFetch,WebSearch,NotebookEdit,TodoRead,TodoWrite";
           const explicitTools = typeof args.allowedTools === "string" ? args.allowedTools : undefined;
           const prefTools = session.userPreferences?.["bridge.claude.allowedTools"];
-          if (!explicitTools && !prefTools) {
-            return {
-              result: "The user has not configured their Claude Code tool permissions yet. "
-                + "Before running this task, ask the user which Claude Code tools they want to allow. "
-                + "Available tools: Bash (shell commands), Read (read files), Edit (edit files), "
-                + "Write (create files), LS (list directories), Glob (find files by pattern), "
-                + "Grep (search file contents), MultiEdit (batch edits). "
-                + "Explain what each tool does in plain language and ask which ones to enable. "
-                + "Once they decide, save their choice with preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...') "
-                + "and then retry this bridge.claude.run call.",
-              error: null,
-            };
-          }
+          const resolvedAllowedTools = explicitTools ?? prefTools ?? DEFAULT_ALLOWED_TOOLS;
 
-          const resolvedArgs = { ...args, allowedTools: explicitTools ?? prefTools };
+          const resolvedArgs = { ...args, allowedTools: resolvedAllowedTools };
 
           const claudeTimeoutRaw = typeof args.timeoutSec === "number" ? args.timeoutSec : undefined;
           const claudeTimeoutMs = Math.max(1, Math.min(660, Math.trunc(claudeTimeoutRaw ?? 660))) * 1_000;
@@ -2588,6 +2624,39 @@ export class ConductorService {
             args,
             timeoutMs: 15_000,
           }, emit);
+        }
+
+        case "bridge.screenshot": {
+          if (!this.bridgeToolExecutor) {
+            return { result: null, error: "bridge_not_configured" };
+          }
+          const screenshotResult = await this.bridgeToolExecutor({
+            callId,
+            sessionId: session.sessionId,
+            toolName,
+            args,
+            timeoutMs: 30_000,
+          }, emit);
+
+          // Intercept base64 blob: emit image to iOS, give LLM a clean text result
+          if (screenshotResult.result) {
+            try {
+              const parsed = JSON.parse(screenshotResult.result) as Record<string, unknown>;
+              if (typeof parsed.imageBase64 === "string") {
+                emit(makeEvent("assistant.image", session.sessionId, {
+                  imageBase64: parsed.imageBase64,
+                  mimeType: typeof parsed.mimeType === "string" ? parsed.mimeType : "image/png",
+                }));
+                return {
+                  result: JSON.stringify({ success: true, message: "Screenshot captured and displayed in the iOS app." }),
+                  error: null,
+                };
+              }
+            } catch {
+              // If parsing fails, pass through as-is
+            }
+          }
+          return screenshotResult;
         }
 
         case "gmail.inbox": {

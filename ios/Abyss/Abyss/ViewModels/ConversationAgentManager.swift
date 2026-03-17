@@ -47,7 +47,7 @@ final class ConversationAgentManager: ObservableObject {
         switch event.kind {
         case .toolCall(let toolCall):
             pendingToolCalls[toolCall.callId] = toolCall
-            if toolCall.name == AgentSpawnTool.name {
+            if toolCall.name == AgentSpawnTool.name || toolCall.name == "cursor.agent.spawn" {
                 registerPendingCard(from: toolCall)
             }
         case .toolResult(let toolResult):
@@ -118,7 +118,7 @@ final class ConversationAgentManager: ObservableObject {
 
     private func handleToolResult(_ toolResult: Event.ToolResult, for toolCall: Event.ToolCall) {
         switch toolCall.name {
-        case AgentSpawnTool.name:
+        case AgentSpawnTool.name, "cursor.agent.spawn":
             handleAgentSpawnResult(toolResult, for: toolCall)
         case AgentStatusTool.name:
             handleAgentStatusResult(toolResult, for: toolCall)

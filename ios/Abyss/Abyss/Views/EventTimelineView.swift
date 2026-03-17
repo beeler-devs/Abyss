@@ -150,6 +150,8 @@ struct EventRow: View {
                 Image(systemName: "calendar.badge.checkmark").foregroundStyle(.blue)
             case .calendarMutationResult:
                 Image(systemName: "calendar.badge.checkmark").foregroundStyle(.green)
+            case .assistantImage:
+                Image(systemName: "photo").foregroundStyle(.cyan)
             }
         }
     }
@@ -227,6 +229,8 @@ struct EventRow: View {
             return "calendar.mutation.execute: \(payload.callId.prefix(8)) confirmed=\(payload.confirmed)"
         case .calendarMutationResult(let payload):
             return "calendar.mutation.result: \(payload.callId.prefix(8)) [\(payload.status)]"
+        case .assistantImage:
+            return "assistant.image"
         }
     }
 

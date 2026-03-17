@@ -94,6 +94,7 @@
 		A10000000000000100000059 /* BridgeExecCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000100000059 /* BridgeExecCardView.swift */; };
 		A1000000000000010000005A /* ThinkingIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000005A /* ThinkingIndicatorView.swift */; };
 		A1000000000000010000005B /* CardPlaceholderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000005B /* CardPlaceholderView.swift */; };
+		A1000000000000010000005C /* ChatHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000010000005C /* ChatHistoryStore.swift */; };
 		AB10000000000000100000001 /* Helpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000001 /* Helpers.swift */; };
 		AB10000000000000100000002 /* ConversationAudioPipelineNovaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000002 /* ConversationAudioPipelineNovaTests.swift */; };
 		AB10000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB20000000000000100000003 /* ConversationEventCoordinatorInterruptTests.swift */; };
@@ -199,6 +200,7 @@
 		A20000000000000100000059 /* BridgeExecCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BridgeExecCardView.swift; sourceTree = "<group>"; };
 		A2000000000000010000005A /* ThinkingIndicatorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThinkingIndicatorView.swift; sourceTree = "<group>"; };
 		A2000000000000010000005B /* CardPlaceholderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CardPlaceholderView.swift; sourceTree = "<group>"; };
+		A2000000000000010000005C /* ChatHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatHistoryStore.swift; sourceTree = "<group>"; };
 		A20000000000000200000001 /* Abyss.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Abyss.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB20000000000000100000001 /* Helpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Helpers.swift; sourceTree = "<group>"; };
 		AB20000000000000100000002 /* ConversationAudioPipelineNovaTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConversationAudioPipelineNovaTests.swift; sourceTree = "<group>"; };
@@ -294,6 +296,7 @@
 				A2000000000000010000004F /* UserPreferencesStore.swift */,
 				A20000000000000100000052 /* CanvasCard.swift */,
 				A20000000000000100000057 /* BridgeExecCard.swift */,
+				A2000000000000010000005C /* ChatHistoryStore.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -649,6 +652,7 @@
 				A10000000000000100000059 /* BridgeExecCardView.swift in Sources */,
 				A1000000000000010000005A /* ThinkingIndicatorView.swift in Sources */,
 				A1000000000000010000005B /* CardPlaceholderView.swift in Sources */,
+				A1000000000000010000005C /* ChatHistoryStore.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

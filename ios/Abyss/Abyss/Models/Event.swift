@@ -50,6 +50,7 @@ struct Event: Identifiable, Codable, Sendable {
         case sessionTitle(SessionTitle)
         case calendarMutationExecute(CalendarMutationExecute)
         case calendarMutationResult(CalendarMutationResult)
+        case assistantImage(AssistantImage)
     }
 
     // MARK: - Payloads
@@ -306,6 +307,11 @@ struct Event: Identifiable, Codable, Sendable {
         let status: String
         let mutationType: String?
         let error: String?
+    }
+
+    struct AssistantImage: Codable, Sendable {
+        let imageBase64: String
+        let mimeType: String
     }
 }
 
@@ -572,6 +578,7 @@ extension Event.Kind {
         case .sessionTitle(let payload): return "session.title: \(payload.title)"
         case .calendarMutationExecute(let payload): return "calendar.mutation.execute: \(payload.callId.prefix(8))"
         case .calendarMutationResult(let payload): return "calendar.mutation.result: \(payload.status)"
+        case .assistantImage: return "assistant.image"
         }
     }
 }

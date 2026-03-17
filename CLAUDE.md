@@ -124,9 +124,9 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 
 **Dynamic system prompt:** Both providers (`bedrockNovaProvider.ts`, `anthropicProvider.ts`) accept `userPreferences` in `generateResponse()` and append them to the system prompt as `"User preferences (apply throughout): - key: value"`.
 
-**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `bridge.claude.allowedTools` (comma-separated Claude Code tools: Bash, Read, Edit, Write, LS, Glob, Grep, MultiEdit), `custom.*` for free-form.
+**Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `bridge.claude.allowedTools` (comma-separated Claude Code tools: Bash, Read, Edit, Write, MultiEdit, Glob, Grep, LS, Agent, WebFetch, WebSearch, NotebookEdit, TodoRead, TodoWrite), `custom.*` for free-form.
 
-**First-run gate for Claude Code:** When `bridge.claude.run` is called and no `bridge.claude.allowedTools` preference exists, the tool returns a prompt instructing the LLM to ask the user which tools to allow before proceeding. The user's choice is saved via `preferences.set` and persists across sessions.
+**Default Claude Code tools:** When `bridge.claude.run` is called and no `bridge.claude.allowedTools` preference exists, all built-in tools are allowed by default. The user can override via `preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...')` to restrict the set.
 
 **Files:**
 - `ios/.../Models/UserPreferencesStore.swift` — `@MainActor ObservableObject`, UserDefaults-backed `[String: String]`
@@ -207,7 +207,7 @@ When the iOS app connects or reconnects, `connectConductorClient` gathers any wo
 
 #### iOS Feature Systems
 
-**Multi-Chat Management:** `ChatListViewModel` manages multiple `ChatSession`s with sidebar navigation. Each session has its own `ConversationViewModel`. Persisted via UserDefaults.
+**Multi-Chat Management:** `ChatListViewModel` manages multiple `ChatSession`s with sidebar navigation. Each session has its own `ConversationViewModel`. Chat metadata persisted via UserDefaults. Message history persisted per-session via `ChatHistoryStore` to `Documents/chat-history/{sessionId}.json` — only finalized user/assistant messages are stored (no partials, system, or tool calls). Chats auto-name from the first 5 words of the first user message via `onFirstMessage` callback.
 
 **GitHub OAuth:** `GitHubAuthManager` implements full OAuth 2.0 via `ASWebAuthenticationSession`. Token stored in Keychain. Scopes: `repo`, `read:org`, `read:user`. Client ID from `GITHUB_CLIENT_ID` in Secrets.plist. Login UI in `GitHubLoginView`.
 

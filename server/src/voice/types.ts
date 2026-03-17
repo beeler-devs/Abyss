@@ -5,6 +5,13 @@ export interface VoiceToolExecutorResult {
   error: string | null;
 }
 
+export interface VoiceSessionContext {
+  bridgeDeviceName?: string;
+  bridgeWorkspaceRoot?: string;
+  bridgeWorkspaceRoots?: string[];
+  userPreferences?: Record<string, string>;
+}
+
 export interface VoiceProviderContext {
   emit: (event: EventEnvelope) => void;
   listTools: (sessionId: string) => ToolDefinition[];
@@ -13,6 +20,7 @@ export interface VoiceProviderContext {
     toolCall: ToolCallRequest,
     emit: (event: EventEnvelope) => void,
   ) => Promise<VoiceToolExecutorResult>;
+  getSessionContext?: (sessionId: string) => VoiceSessionContext;
 }
 
 export interface VoiceProvider {

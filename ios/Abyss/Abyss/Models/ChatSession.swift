@@ -63,6 +63,9 @@ final class ChatListViewModel: ObservableObject {
     func createChat() {
         let sessionId = UUID().uuidString
         let vm = viewModelFactory(sessionId)
+        vm.onFirstMessage = { [weak self] title in
+            self?.updateTitle(for: sessionId, title: title)
+        }
         let session = ChatSession(sessionId: sessionId, viewModel: vm)
         chats.insert(session, at: 0)
         selectedChatId = session.id
@@ -77,10 +80,20 @@ final class ChatListViewModel: ObservableObject {
 
     /// Deletes a chat. If it was selected, selects another.
     func deleteChat(id: UUID) {
+        if let chat = chats.first(where: { $0.id == id }) {
+            ChatHistoryStore().delete(sessionId: chat.sessionId)
+        }
         chats.removeAll { $0.id == id }
         if selectedChatId == id {
             selectedChatId = chats.first?.id
         }
+        persistChats()
+    }
+
+    /// Updates the title for a chat identified by sessionId.
+    func updateTitle(for sessionId: String, title: String) {
+        guard let index = chats.firstIndex(where: { $0.sessionId == sessionId }) else { return }
+        chats[index].title = title
         persistChats()
     }
 
@@ -101,10 +114,14 @@ final class ChatListViewModel: ObservableObject {
         }
 
         chats = decoded.map { persisted in
-            ChatSession(
+            let vm = viewModelFactory(persisted.sessionId)
+            vm.onFirstMessage = { [weak self] title in
+                self?.updateTitle(for: persisted.sessionId, title: title)
+            }
+            return ChatSession(
                 id: persisted.id,
                 sessionId: persisted.sessionId,
-                viewModel: viewModelFactory(persisted.sessionId),
+                viewModel: vm,
                 title: persisted.title,
                 createdAt: persisted.createdAt
             )

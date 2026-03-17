@@ -69,6 +69,8 @@ interface SonicSession {
   turnFinalized: boolean;
   /** Tracks consecutive failures per tool name for circuit-breaking. */
   toolFailureCounts: Map<string, number>;
+  /** Number of background (long-running) tools currently executing. */
+  backgroundToolCount: number;
 }
 
 interface SonicEventEnvelope {
@@ -101,6 +103,7 @@ function parseAdditionalModelFields(value: unknown): Record<string, unknown> {
 const VOICE_PIPELINE_TOOL_PREFIXES = ["stt.", "tts.", "convo."] as const;
 const DEFAULT_ASSISTANT_TURN_FINALIZE_DELAY_MS = 500;
 const MAX_BUFFERED_AUDIO_CHUNKS = 64;
+const LONG_RUNNING_BRIDGE_TOOLS = new Set(["bridge.claude.run"]);
 
 /** Sanitize tool name for Nova Sonic — only [a-zA-Z0-9_] allowed. */
 function sanitizeToolName(name: string): string {
@@ -203,6 +206,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       bargedIn: false,
       turnFinalized: false,
       toolFailureCounts: new Map(),
+      backgroundToolCount: 0,
     };
     this.sessions.set(sessionId, session);
     await this.openModelStream(session);
@@ -319,10 +323,49 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
     this.sendEvent(session, { promptStart: promptStartPayload });
 
-    const toolsLine = toolCount > 0
-      ? ` You have access to ${toolCount} tools including code execution, file operations, git, and agent spawning. Call them one at a time.`
-      : "";
-    const systemPrompt = `You are the Abyss voice-first coding assistant.${toolsLine} VOICE OUTPUT RULES: Lead with the answer. Be concise and direct. Never say URLs, code, file paths, JSON, UUIDs, or commit hashes aloud — summarize them instead. Convert timestamps to natural language. Say names instead of email addresses. For long lists, state the top items and summarize the rest. Summarize errors to the root cause. Do not narrate what the UI already shows. Do not use markdown formatting.`;
+    const sessionCtx = session.context.getSessionContext?.(session.sessionId);
+
+    const promptParts: string[] = [
+      "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
+    ];
+
+    if (toolCount > 0) {
+      promptParts.push(`You have access to ${toolCount} tools. Call them one at a time.`);
+    }
+
+    // Bridge context
+    if (sessionCtx?.bridgeDeviceName || sessionCtx?.bridgeWorkspaceRoot) {
+      const bridgeLines: string[] = [];
+      if (sessionCtx.bridgeDeviceName) {
+        bridgeLines.push(`A macOS bridge named "${sessionCtx.bridgeDeviceName}" is connected.`);
+      }
+      if (sessionCtx.bridgeWorkspaceRoot) {
+        bridgeLines.push(`Primary workspace: ${sessionCtx.bridgeWorkspaceRoot}`);
+      }
+      if (sessionCtx.bridgeWorkspaceRoots?.length) {
+        bridgeLines.push(`All workspace roots: ${sessionCtx.bridgeWorkspaceRoots.join(", ")}`);
+      }
+      promptParts.push(`BRIDGE: ${bridgeLines.join(" ")}`);
+    }
+
+    // Tool guidance
+    promptParts.push(
+      "TOOL GUIDANCE: For complex coding or editing tasks on the Mac, use bridge_claude_run with a prompt describing the task. For simple shell commands, use bridge_exec_run with a command string. For file operations use bridge_fs_readFile, bridge_fs_search, bridge_fs_readRange, bridge_fs_applyPatch. For git use bridge_git_status, bridge_git_diff, bridge_git_stage, bridge_git_commit. Do NOT pass deviceId to bridge tools — it is resolved automatically. Use the cwd parameter to specify working directory when needed.",
+    );
+
+    // User preferences
+    if (sessionCtx?.userPreferences && Object.keys(sessionCtx.userPreferences).length > 0) {
+      const prefLines = Object.entries(sessionCtx.userPreferences)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(", ");
+      promptParts.push(`User preferences: ${prefLines}`);
+    }
+
+    promptParts.push(
+      "VOICE OUTPUT RULES: Lead with the answer. Be concise and direct. Never say URLs, code, file paths, JSON, UUIDs, or commit hashes aloud — summarize them instead. Convert timestamps to natural language. Say names instead of email addresses. For long lists, state the top items and summarize the rest. Summarize errors to the root cause. Do not narrate what the UI already shows. Do not use markdown formatting.",
+    );
+
+    const systemPrompt = promptParts.join(" ");
 
     const systemContentName = `system-${crypto.randomUUID()}`;
     this.sendEvent(session, {
@@ -1077,6 +1120,11 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
+    if (LONG_RUNNING_BRIDGE_TOOLS.has(toolCall.name)) {
+      this.handleLongRunningToolUse(session, toolCall, circuitKey, priorFailures);
+      return;
+    }
+
     session.toolExecutionInFlight = true;
     try {
       const result = await session.context.executeTool(session.sessionId, toolCall, session.context.emit);
@@ -1091,12 +1139,155 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         session.toolFailureCounts.delete(circuitKey);
       }
 
-      this.sendToolResult(session, toolCall.id, result.error
+      let resultStr = result.error
         ? JSON.stringify({ error: result.error })
-        : (result.result ?? "{}"));
+        : (result.result ?? "{}");
+
+      // Strip URL fields from tool results so Nova Sonic doesn't read them aloud.
+      // URLs are already shown in the iOS card UI via agent.status events.
+      if (!result.error && resultStr.includes("Url")) {
+        try {
+          const parsed = JSON.parse(resultStr);
+          for (const key of Object.keys(parsed)) {
+            if (key.toLowerCase().includes("url") && typeof parsed[key] === "string") {
+              parsed[key] = "(available in the UI card)";
+            }
+          }
+          resultStr = JSON.stringify(parsed);
+        } catch { /* keep original */ }
+      }
+
+      this.sendToolResult(session, toolCall.id, resultStr);
     } finally {
       session.toolExecutionInFlight = false;
     }
+  }
+
+  private injectUserText(session: SonicSession, text: string): void {
+    const contentName = `injected-${crypto.randomUUID()}`;
+    this.sendEvent(session, {
+      contentStart: {
+        promptName: session.promptName,
+        contentName,
+        type: "TEXT",
+        interactive: false,
+        role: "USER",
+        textInputConfiguration: {
+          mediaType: "text/plain",
+        },
+      },
+    });
+    this.sendEvent(session, {
+      textInput: {
+        promptName: session.promptName,
+        contentName,
+        content: text,
+      },
+    });
+    this.sendEvent(session, {
+      contentEnd: {
+        promptName: session.promptName,
+        contentName,
+      },
+    });
+  }
+
+  private handleLongRunningToolUse(
+    session: SonicSession,
+    toolCall: ToolCallRequest,
+    circuitKey: string,
+    priorFailures: number,
+  ): void {
+    if (!session.context.executeTool) {
+      return;
+    }
+
+    const executeTool = session.context.executeTool;
+    const emit = session.context.emit;
+
+    // Race the tool execution against a short delay. If the tool resolves
+    // quickly (e.g. config error, missing permissions), return it as a normal
+    // tool result so Nova Sonic can tell the user what happened. Only if the
+    // tool is still running after the grace period do we send the "started in
+    // background" ack and let it continue asynchronously.
+    const GRACE_MS = 2_000;
+    const toolPromise = executeTool(session.sessionId, toolCall, emit);
+    const graceTimeout = new Promise<"timeout">((resolve) =>
+      setTimeout(() => resolve("timeout"), GRACE_MS),
+    );
+
+    // Prevent the assistant turn finalize timer from firing while we wait.
+    session.toolExecutionInFlight = true;
+
+    (async () => {
+      const raceResult = await Promise.race([toolPromise, graceTimeout]);
+
+      if (raceResult !== "timeout") {
+        // Tool resolved within the grace period — treat as a normal
+        // (synchronous) tool result so Nova Sonic speaks the outcome directly.
+        if (session.closed) { return; }
+
+        if (raceResult.error) {
+          session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+        } else {
+          session.toolFailureCounts.delete(circuitKey);
+        }
+
+        const resultStr = raceResult.error
+          ? JSON.stringify({ error: raceResult.error })
+          : (raceResult.result ?? "{}");
+
+        logger.info(`[LONG_RUNNING] ${toolCall.name} resolved within grace period (${resultStr.length} chars), returning as normal tool result`, { sessionId: session.sessionId });
+        this.sendToolResult(session, toolCall.id, resultStr);
+        session.toolExecutionInFlight = false;
+        return;
+      }
+
+      // Tool is still running — send immediate ack so Nova Sonic doesn't block.
+      logger.info(`[LONG_RUNNING] ${toolCall.name} still running after ${GRACE_MS}ms, sending background ack`, { sessionId: session.sessionId });
+      this.sendToolResult(session, toolCall.id, JSON.stringify({
+        status: "started_in_background",
+        message: "Claude Code has been started on the Mac. The result will be provided when the task completes. Tell the user you've kicked it off and they can continue talking in the meantime.",
+      }));
+      session.toolExecutionInFlight = false;
+
+      session.backgroundToolCount += 1;
+      logger.info(`[LONG_RUNNING] started ${toolCall.name} in background (count=${session.backgroundToolCount})`, { sessionId: session.sessionId });
+
+      try {
+        const result = await toolPromise;
+
+        if (session.closed) {
+          logger.info(`[LONG_RUNNING] session closed during ${toolCall.name}, dropping result`, { sessionId: session.sessionId });
+          return;
+        }
+
+        // Track consecutive failures for circuit breaking
+        if (result.error) {
+          session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+        } else {
+          session.toolFailureCounts.delete(circuitKey);
+        }
+
+        const summary = result.error
+          ? `Background tool ${toolCall.name} failed: ${result.error}`
+          : `Background tool ${toolCall.name} completed. Result: ${result.result ?? "success"}`;
+
+        logger.info(`[LONG_RUNNING] ${toolCall.name} finished, injecting result (${summary.length} chars)`, { sessionId: session.sessionId });
+        this.injectUserText(session, `[SYSTEM: ${summary}]\nSummarize this result to the user concisely.`);
+      } catch (error) {
+        if (session.closed) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[LONG_RUNNING] ${toolCall.name} threw: ${message}`, { sessionId: session.sessionId });
+        session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+        this.injectUserText(session, `[SYSTEM: Background tool ${toolCall.name} failed with error: ${message}]\nTell the user what went wrong.`);
+      } finally {
+        session.backgroundToolCount = Math.max(0, session.backgroundToolCount - 1);
+        logger.info(`[LONG_RUNNING] ${toolCall.name} cleanup (remaining=${session.backgroundToolCount})`, { sessionId: session.sessionId });
+      }
+    })();
   }
 
   private sendToolResult(session: SonicSession, toolUseId: string, content: string): void {

@@ -280,6 +280,12 @@ struct EventEnvelope: Codable, Sendable {
             if let mutationType = value.mutationType { p["mutationType"] = .string(mutationType) }
             if let error = value.error { p["error"] = .string(error) }
             payload = p
+        case .assistantImage(let value):
+            type = "assistant.image"
+            payload = [
+                "imageBase64": .string(value.imageBase64),
+                "mimeType": .string(value.mimeType),
+            ]
         }
     }
 
@@ -484,6 +490,11 @@ struct EventEnvelope: Codable, Sendable {
                 status: payload["status"]?.stringValue ?? "unknown",
                 mutationType: payload["mutationType"]?.stringValue,
                 error: payload["error"]?.stringValue
+            ))
+        case "assistant.image":
+            kind = .assistantImage(Event.AssistantImage(
+                imageBase64: try requireString("imageBase64"),
+                mimeType: payload["mimeType"]?.stringValue ?? "image/png"
             ))
         default:
             throw ConversionError.unsupportedType(type)
