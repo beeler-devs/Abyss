@@ -5,6 +5,7 @@ import { ConductorService } from "../src/core/conductorService.js";
 import { makeEvent } from "../src/core/events.js";
 import { logger } from "../src/core/logger.js";
 import { GitHubClient } from "../src/integrations/githubClient.js";
+import { SearchClient } from "../src/integrations/searchClient.js";
 import { ModelProvider, ConversationTurn, ModelResponse, ToolCallRequest } from "../src/core/types.js";
 
 type CapturedInfoLog = {
@@ -531,4 +532,79 @@ test("server tool lifecycle logs are emitted for bridge.claude.run", async () =>
   assert.equal(typeof dispatch?.context?.sessionId, "string");
   assert.equal(typeof dispatch?.context?.eventId, "string");
   assert.equal(typeof dispatch?.context?.callId, "string");
+});
+
+test("web.search NOT in available tools when searchClient not injected", async () => {
+  const provider = new ToolCaptureProvider();
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  });
+
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-no-search", {
+    text: "hello",
+  }), () => undefined);
+
+  assert.equal(provider.toolNames.includes("web.search"), false);
+});
+
+test("web.search IS in available tools when configured SearchClient injected", async () => {
+  const provider = new ToolCaptureProvider();
+  const service = new ConductorService(provider, {
+    maxTurns: 20,
+    rateLimitPerMinute: 100,
+  }, {
+    searchClient: new SearchClient({ apiKey: "BSA_test_key" }),
+  });
+
+  await service.handleEvent(makeEvent("user.audio.transcript.final", "session-with-search", {
+    text: "hello",
+  }), () => undefined);
+
+  assert.equal(provider.toolNames.includes("web.search"), true);
+});
+
+test("web.search tool call dispatched server-side, returns search result JSON", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async () => {
+    return new Response(JSON.stringify({
+      web: {
+        results: [
+          { title: "Test Result", url: "https://example.com", description: "A test snippet" },
+        ],
+      },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    const provider = new SequenceProvider([
+      {
+        toolCalls: [{
+          id: "tc-search-1",
+          name: "web.search",
+          input: { query: "TypeScript generics", maxResults: 3 },
+        }],
+      },
+      { text: "Here are the results." },
+    ]);
+
+    const service = new ConductorService(provider, {
+      maxTurns: 20,
+      rateLimitPerMinute: 100,
+    }, {
+      searchClient: new SearchClient({ apiKey: "BSA_test_key" }),
+    });
+
+    const emitted = [] as ReturnType<typeof makeEvent>[];
+    await service.handleEvent(makeEvent("user.audio.transcript.final", "session-search-exec", {
+      text: "search for TypeScript generics",
+    }), (event) => emitted.push(event));
+
+    assert.equal(emitted.some((event) => event.type === "assistant.speech.final"), true);
+  } finally {
+    globalThis.fetch = original;
+  }
 });

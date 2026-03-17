@@ -40,67 +40,14 @@ struct TranscriptView: View {
                     ForEach(transcriptItems) { item in
                         switch item {
                         case .message(let message):
-                            MessageBubble(message: message, cardResolver: resolveCard)
+                            MessageBubble(message: message, cardResolver: resolveCard, cardResolverVersion: cardResolverVersion)
                                 .id(item.id)
-                        case .agentCard(let card):
-                            AgentProgressCardView(
-                                card: card,
-                                onRefresh: { onRefreshAgent(card.id) },
-                                onCancel: { onCancelAgent(card.id) },
-                                onDismiss: { onDismissAgent(card.id) },
-                                onToggleConversation: { onToggleAgentConversation(card.id) },
-                                onToggleExpanded: { onToggleAgentExpanded(card.id) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
-
-                        case .emailCard(let card):
-                            EmailCardView(
-                                card: card,
-                                onToggleExpanded: { onToggleEmailExpanded(card.id) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
-
-                        case .emailDraftCard(let card):
-                            EmailDraftCardView(
-                                card: card,
-                                onSend: { to, subject, body in onSendDraft(card.callId, to, subject, body) },
-                                onCancel: { onCancelDraft(card.callId) },
-                                onFieldEdit: { to, subject, body in onEditDraft(card.callId, to, subject, body) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
-
-                        case .calendarEventCard(let card):
-                            CalendarEventCardView(
-                                card: card,
-                                onToggleExpanded: { onToggleCalendarExpanded(card.id) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
 
                         case .calendarDraftCard(let card):
                             CalendarDraftCardView(
                                 card: card,
                                 onConfirm: { onConfirmCalendar(card.callId) },
                                 onCancel: { onCancelCalendar(card.callId) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
-
-                        case .canvasCard(let card):
-                            CanvasCardView(
-                                card: card,
-                                onToggleExpanded: { onToggleCanvasExpanded(card.id) }
-                            )
-                            .padding(.horizontal, 12)
-                            .id(item.id)
-
-                        case .bridgeExecCard(let card):
-                            BridgeExecCardView(
-                                card: card,
-                                onToggleExpanded: { onToggleBridgeExecExpanded(card.id) }
                             )
                             .padding(.horizontal, 12)
                             .id(item.id)
@@ -119,7 +66,8 @@ struct TranscriptView: View {
                                 text: assistantPartialSpeech,
                                 isPartial: true
                             ),
-                            cardResolver: resolveCard
+                            cardResolver: resolveCard,
+                            cardResolverVersion: cardResolverVersion
                         )
                         .id("partial_assistant")
                     } else if showsTypingIndicator {
@@ -162,15 +110,8 @@ struct TranscriptView: View {
                     proxy.scrollTo(TranscriptItem.messageID(snapshot.id), anchor: .bottom)
                 }
             }
-            .onChange(of: agentProgressCards.map(\.id)) { oldValue, newValue in
-                guard newValue.count > oldValue.count,
-                      let insertedID = newValue.first(where: { !oldValue.contains($0) }) else {
-                    return
-                }
-
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(TranscriptItem.agentCardID(insertedID), anchor: .center)
-                }
+            .onChange(of: agentProgressCards.count) { _, _ in
+                // Agent cards now render inline via card resolver — scroll handled by message changes
             }
             .onChange(of: assistantPartialSpeech) { _, newValue in
                 guard !newValue.isEmpty else { return }
@@ -185,58 +126,25 @@ struct TranscriptView: View {
         }
     }
 
+    /// Changes whenever any card array is mutated, forcing MessageBubble/MarkdownTextView
+    /// to re-evaluate cardResolver so inline card placeholders resolve once data arrives.
+    private var cardResolverVersion: Int {
+        emailCards.count + calendarEventCards.count + canvasCards.count
+        + agentProgressCards.count + bridgeExecCards.count
+        + emailDraftCards.count
+        + emailCards.compactMap(\.serverCardId).count
+        + calendarEventCards.compactMap(\.serverCardId).count
+        + canvasCards.compactMap(\.serverCardId).count
+        + agentProgressCards.compactMap(\.serverCardId).count
+        + bridgeExecCards.compactMap(\.serverCardId).count
+        + emailDraftCards.compactMap(\.serverCardId).count
+    }
+
     private var transcriptItems: [TranscriptItem] {
         let messageIDs = Set(messages.map(\.id))
 
-        // Build exclusion set of card IDs that are inline-referenced in message text
-        var inlineCardIds = Set<String>()
-        for message in messages where message.role == .assistant {
-            for block in MarkdownTextView.parse(message.text) {
-                if case .cardReference(_, let id) = block {
-                    inlineCardIds.insert(id)
-                }
-            }
-        }
-        // Also check partial speech for inline references
-        if !assistantPartialSpeech.isEmpty {
-            for block in MarkdownTextView.parse(assistantPartialSpeech) {
-                if case .cardReference(_, let id) = block {
-                    inlineCardIds.insert(id)
-                }
-            }
-        }
-
-        let anchoredAgentCards = Dictionary(grouping: agentProgressCards.compactMap { card -> (UUID, AgentProgressCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
-        let anchoredEmailCards = Dictionary(grouping: emailCards.compactMap { card -> (UUID, EmailCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
-        let anchoredDraftCards = Dictionary(grouping: emailDraftCards.compactMap { card -> (UUID, EmailDraftCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
-        let anchoredCalEventCards = Dictionary(grouping: calendarEventCards.compactMap { card -> (UUID, CalendarEventCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
+        // Calendar drafts still use anchor-based rendering (deferred from inline conversion)
         let anchoredCalDraftCards = Dictionary(grouping: calendarDraftCards.compactMap { card -> (UUID, CalendarDraftCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
-        let anchoredCanvasCards = Dictionary(grouping: canvasCards.compactMap { card -> (UUID, CanvasCard)? in
-            guard let anchor = card.anchorMessageID else { return nil }
-            return (anchor, card)
-        }, by: \.0)
-
-        let anchoredBridgeExecCards = Dictionary(grouping: bridgeExecCards.compactMap { card -> (UUID, BridgeExecCard)? in
             guard let anchor = card.anchorMessageID else { return nil }
             return (anchor, card)
         }, by: \.0)
@@ -244,77 +152,19 @@ struct TranscriptView: View {
         var items: [TranscriptItem] = []
         for message in messages {
             items.append(.message(message))
-            if let agentCards = anchoredAgentCards[message.id] {
-                for entry in agentCards {
-                    if let sid = entry.1.serverCardId, inlineCardIds.contains(sid) { continue }
-                    items.append(.agentCard(entry.1))
-                }
-            }
-            if let emailCardsForMsg = anchoredEmailCards[message.id] {
-                for entry in emailCardsForMsg {
-                    if let sid = entry.1.serverCardId, inlineCardIds.contains(sid) { continue }
-                    items.append(.emailCard(entry.1))
-                }
-            }
-            if let draftCardsForMsg = anchoredDraftCards[message.id] {
-                for entry in draftCardsForMsg {
-                    items.append(.emailDraftCard(entry.1))
-                }
-            }
-            if let calEventCards = anchoredCalEventCards[message.id] {
-                for entry in calEventCards {
-                    if let sid = entry.1.serverCardId, inlineCardIds.contains(sid) { continue }
-                    items.append(.calendarEventCard(entry.1))
-                }
-            }
+            // Calendar drafts only: minimal anchor fallback (deferred from inline conversion)
             if let calDraftCards = anchoredCalDraftCards[message.id] {
                 for entry in calDraftCards {
                     items.append(.calendarDraftCard(entry.1))
                 }
             }
-            if let canvasCardsForMsg = anchoredCanvasCards[message.id] {
-                for entry in canvasCardsForMsg {
-                    if let sid = entry.1.serverCardId, inlineCardIds.contains(sid) { continue }
-                    items.append(.canvasCard(entry.1))
-                }
-            }
-            if let bridgeExecCardsForMsg = anchoredBridgeExecCards[message.id] {
-                for entry in bridgeExecCardsForMsg {
-                    if let sid = entry.1.serverCardId, inlineCardIds.contains(sid) { continue }
-                    items.append(.bridgeExecCard(entry.1))
-                }
-            }
-            // Emit action buttons after any anchored cards for assistant messages
             if message.role == .assistant && !message.isPartial && !message.text.isEmpty {
                 items.append(.messageActions(message))
             }
         }
-
-        for card in agentProgressCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            if let sid = card.serverCardId, inlineCardIds.contains(sid) { continue }
-            items.append(.agentCard(card))
-        }
-        for card in emailCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            if let sid = card.serverCardId, inlineCardIds.contains(sid) { continue }
-            items.append(.emailCard(card))
-        }
-        for card in emailDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            items.append(.emailDraftCard(card))
-        }
-        for card in calendarEventCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            if let sid = card.serverCardId, inlineCardIds.contains(sid) { continue }
-            items.append(.calendarEventCard(card))
-        }
+        // Unanchored calendar drafts at bottom
         for card in calendarDraftCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
             items.append(.calendarDraftCard(card))
-        }
-        for card in canvasCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            if let sid = card.serverCardId, inlineCardIds.contains(sid) { continue }
-            items.append(.canvasCard(card))
-        }
-        for card in bridgeExecCards where card.anchorMessageID == nil || !messageIDs.contains(card.anchorMessageID!) {
-            if let sid = card.serverCardId, inlineCardIds.contains(sid) { continue }
-            items.append(.bridgeExecCard(card))
         }
 
         return items
@@ -373,6 +223,17 @@ struct TranscriptView: View {
                 BridgeExecCardView(card: card, onToggleExpanded: { onToggleBridgeExecExpanded(card.id) })
                     .padding(.horizontal, 12)
             )
+        case "draft":
+            guard let card = emailDraftCards.first(where: { $0.serverCardId == id }) else { return nil }
+            return AnyView(
+                EmailDraftCardView(
+                    card: card,
+                    onSend: { to, subject, body in onSendDraft(card.callId, to, subject, body) },
+                    onCancel: { onCancelDraft(card.callId) },
+                    onFieldEdit: { to, subject, body in onEditDraft(card.callId, to, subject, body) }
+                )
+                .padding(.horizontal, 12)
+            )
         default:
             return nil
         }
@@ -381,40 +242,18 @@ struct TranscriptView: View {
 
 private enum TranscriptItem: Identifiable {
     case message(ConversationMessage)
-    case agentCard(AgentProgressCard)
-    case emailCard(EmailCard)
-    case emailDraftCard(EmailDraftCard)
-    case calendarEventCard(CalendarEventCard)
     case calendarDraftCard(CalendarDraftCard)
-    case canvasCard(CanvasCard)
-    case bridgeExecCard(BridgeExecCard)
     case messageActions(ConversationMessage)
 
     var id: String {
         switch self {
         case .message(let message):
             return Self.messageID(message.id)
-        case .agentCard(let card):
-            return Self.agentCardID(card.id)
-        case .emailCard(let card):
-            return "email-\(card.id.uuidString)"
-        case .emailDraftCard(let card):
-            return "draft-\(card.id.uuidString)"
-        case .calendarEventCard(let card):
-            return "cal-\(card.id.uuidString)"
         case .calendarDraftCard(let card):
             return "cal-draft-\(card.id.uuidString)"
-        case .canvasCard(let card):
-            return "canvas-\(card.id.uuidString)"
-        case .bridgeExecCard(let card):
-            return "bridge-exec-\(card.id.uuidString)"
         case .messageActions(let message):
             return "actions-\(message.id.uuidString)"
         }
-    }
-
-    static func agentCardID(_ id: UUID) -> String {
-        "agent-card-\(id.uuidString)"
     }
 
     static func messageID(_ id: UUID) -> String {
@@ -431,6 +270,7 @@ private struct MessageSnapshot: Equatable {
 struct MessageBubble: View {
     let message: ConversationMessage
     var cardResolver: ((String, String) -> AnyView?)?
+    var cardResolverVersion: Int = 0
     @Environment(\.colorScheme) private var colorScheme
 
     private var isUser: Bool { message.role == .user }
@@ -445,7 +285,7 @@ struct MessageBubble: View {
                         .font(.body)
                         .foregroundStyle(textColor)
                 } else {
-                    MarkdownTextView(text: message.text, foregroundColor: textColor, cardResolver: cardResolver)
+                    MarkdownTextView(text: message.text, foregroundColor: textColor, cardResolver: cardResolver, cardResolverVersion: cardResolverVersion)
                 }
             }
             .padding(.horizontal, isUser ? 14 : 0)

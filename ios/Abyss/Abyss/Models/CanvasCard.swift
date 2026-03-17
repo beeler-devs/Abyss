@@ -4,7 +4,6 @@ struct CanvasCard: Identifiable, Equatable, Sendable {
     let id: UUID
     let variant: Variant
     var isExpanded: Bool
-    var anchorMessageID: UUID?
     var serverCardId: String?
 
     enum Variant: Equatable, Sendable {
@@ -59,13 +58,11 @@ struct CanvasCard: Identifiable, Equatable, Sendable {
         id: UUID = UUID(),
         variant: Variant,
         isExpanded: Bool = false,
-        anchorMessageID: UUID? = nil,
         serverCardId: String? = nil
     ) {
         self.id = id
         self.variant = variant
         self.isExpanded = isExpanded
-        self.anchorMessageID = anchorMessageID
         self.serverCardId = serverCardId
     }
 }

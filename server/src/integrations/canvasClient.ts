@@ -26,11 +26,21 @@ export class CanvasClient {
   async assignments(
     session: SessionState,
     courseId: string,
+    options?: { afterDate?: string; beforeDate?: string },
   ): Promise<Record<string, unknown>[]> {
-    return this.paginatedGet(
+    const results = await this.paginatedGet(
       session,
       `/api/v1/courses/${encodeURIComponent(courseId)}/assignments?per_page=${DEFAULT_PER_PAGE}&order_by=due_at`,
     );
+    if (!options?.afterDate && !options?.beforeDate) return results;
+    return results.filter((a) => {
+      const dueAt = a.due_at as string | null;
+      if (!dueAt) return false; // exclude undated when filtering by date
+      const due = new Date(dueAt).getTime();
+      if (options.afterDate && due < new Date(options.afterDate).getTime()) return false;
+      if (options.beforeDate && due > new Date(options.beforeDate).getTime()) return false;
+      return true;
+    });
   }
 
   async todo(session: SessionState): Promise<Record<string, unknown>[]> {
@@ -56,11 +66,19 @@ export class CanvasClient {
   async announcements(
     session: SessionState,
     courseId: string,
+    options?: { afterDate?: string },
   ): Promise<Record<string, unknown>[]> {
-    return this.paginatedGet(
+    const results = await this.paginatedGet(
       session,
       `/api/v1/courses/${encodeURIComponent(courseId)}/discussion_topics?only_announcements=true&per_page=${DEFAULT_PER_PAGE}`,
     );
+    if (!options?.afterDate) return results;
+    const afterMs = new Date(options.afterDate).getTime();
+    return results.filter((a) => {
+      const postedAt = a.posted_at as string | null;
+      if (!postedAt) return false;
+      return new Date(postedAt).getTime() >= afterMs;
+    });
   }
 
   // ---------- Internal ----------

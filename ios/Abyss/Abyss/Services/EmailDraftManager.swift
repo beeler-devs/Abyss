@@ -22,7 +22,7 @@ final class EmailDraftManager: ObservableObject {
             subject: subject,
             body: body,
             messageId: messageId,
-            anchorMessageID: anchorMessageID
+            serverCardId: callId
         )
         activeDrafts.append(card)
     }

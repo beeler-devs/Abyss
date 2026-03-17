@@ -8,11 +8,14 @@ struct MarkdownTextView: View {
     let text: String
     var foregroundColor: Color = .primary
     var cardResolver: ((String, String) -> AnyView?)?
+    /// Incrementing version that forces re-evaluation of cardResolver when card data changes.
+    var cardResolverVersion: Int = 0
 
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         let blocks = Self.parse(text)
+        let _ = cardResolverVersion // force SwiftUI re-evaluation when cards update
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
                 switch block {

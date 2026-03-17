@@ -21,7 +21,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
 
-        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
+        if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "icns"),
            let icon = NSImage(contentsOf: url) {
             NSApplication.shared.applicationIconImage = icon
         }
@@ -117,6 +117,8 @@ final class BridgeAppModel: ObservableObject {
     @Published var requireGitPushConfirmation = true
     @Published var allowClaudeRun = false
     @Published var allowNovaAct = false
+    @Published var showNovaActSetup = false
+    @Published var novaActApiKey: String = ""
 
     @Published var showNovaActSetup = false
     @Published var novaActPrerequisites: [NovaActPrerequisite] = []
@@ -885,7 +887,17 @@ struct BridgeStatusView: View {
                                isOn: $model.allowClaudeRun)
                             .onChange(of: model.allowClaudeRun) { model.applyPermissions() }
 
-                        Toggle(isOn: $model.allowNovaAct) {
+                        Toggle(isOn: Binding(
+                            get: { model.allowNovaAct },
+                            set: { newValue in
+                                if newValue {
+                                    model.showNovaActSetup = true
+                                } else {
+                                    model.allowNovaAct = false
+                                    model.applyPermissions()
+                                }
+                            }
+                        )) {
                             Label {
                                 HStack(spacing: 6) {
                                     Text("Allow Nova Act (browser automation)")

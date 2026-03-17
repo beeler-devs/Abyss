@@ -98,6 +98,8 @@ struct CardPlaceholderView: View {
         case "canvas": return "book.fill"
         case "agent": return "terminal.fill"
         case "bridge": return "desktopcomputer"
+        case "draft": return "envelope.badge.fill"
+        case "calendarDraft": return "calendar.badge.plus"
         default: return "rectangle.on.rectangle"
         }
     }
@@ -109,6 +111,8 @@ struct CardPlaceholderView: View {
         case "canvas": return .indigo
         case "agent": return .green
         case "bridge": return .purple
+        case "draft": return .blue
+        case "calendarDraft": return .orange
         default: return .secondary
         }
     }

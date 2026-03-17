@@ -98,8 +98,9 @@ export class BedrockNovaProvider implements ModelProvider {
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
     canvasCourseContext?: string,
+    modelOverride?: string,
   ): Promise<ModelResponse> {
-    const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences, canvasCourseContext);
+    const { fullText, toolCalls } = await this.fetchResponse(conversation, tools, userPreferences, canvasCourseContext, modelOverride);
     const chunks = chunkText(fullText, 30, 80);
 
     const response: ModelResponse = {
@@ -117,9 +118,19 @@ export class BedrockNovaProvider implements ModelProvider {
   private buildSystemPrompt(userPreferences?: Record<string, string>, canvasCourseContext?: string): SystemContentBlock[] {
     const parts: string[] = [
       "You are the Abyss voice-first AI assistant — a personal assistant that can help with coding, email, scheduling, and more.",
-      "Keep spoken responses concise, practical, and voice-friendly.",
+      "VOICE OUTPUT RULES (all responses are spoken aloud via TTS):",
+      "Lead with the answer. Be concise and direct — no filler, no hedging.",
+      "Never say URLs, links, or web addresses aloud. Say 'I found an article about X' instead.",
+      "Never read code aloud. Summarize what the code does instead.",
+      "Never say file paths aloud. Refer to files by purpose (e.g. 'the conductor service' not '/server/src/core/conductorService.ts').",
+      "Never say JSON, structured data, UUIDs, commit hashes, or ARNs aloud. Refer to them contextually.",
+      "Convert ISO timestamps to natural language ('tomorrow at 3' not '2026-03-17T15:00:00Z').",
+      "Say people's names instead of email addresses unless disambiguation is needed.",
+      "For lists longer than 3-4 items, state the top items and summarize the rest ('and 8 more').",
+      "Summarize errors and stack traces to the root cause — never read them out.",
+      "Do not narrate what the UI is already showing. If a card displays the details, keep the spoken response brief.",
+      "Do not use markdown formatting (bold, headers, backticks, bullets) — it will be spoken literally.",
       "Do not ask for speech-to-text tools. The user triggers listening manually.",
-      "Avoid markdown tables and avoid long formatting.",
       "If webqa.cursor.run is available and the user asks to validate behavior in a browser, call webqa.cursor.run.",
       "If cursor.agent.spawn is available and the user asks to spawn an agent, run coding tasks, PR work, or repo analysis, prefer cursor.agent.spawn.",
       "When using cursor.agent.spawn or webqa.cursor.run, avoid aggressive polling; rely on webhook-driven updates unless explicitly asked to refresh.",
@@ -143,13 +154,14 @@ export class BedrockNovaProvider implements ModelProvider {
       "The preference bridge.claude.allowedTools controls which tools Claude Code can use on the paired Mac. Available tools: Bash (run shell commands), Read (read files), Edit (modify existing files), Write (create new files), LS (list directories), Glob (find files by name pattern), Grep (search file contents), MultiEdit (batch file edits). If the user wants to change these permissions, call preferences.set('bridge.claude.allowedTools', 'Tool1,Tool2,...').",
       "If canvas.courses, canvas.assignments, canvas.todo, canvas.upcoming, canvas.grades, or canvas.announcements tools are available, use them when the user asks about their classes, coursework, assignments, grades, or academic schedule. These tools are available because the user has connected their Canvas LMS account.",
       "When the user asks about their classes or courses, call canvas.courses first to discover course IDs, then use those IDs for canvas.assignments, canvas.grades, or canvas.announcements.",
+      "For canvas.assignments, always provide afterDate (default to current ISO timestamp) to exclude past assignments. When the user asks generally about assignments, set beforeDate to ~2 weeks from now. Only omit date filters when the user explicitly asks for all or past assignments. For canvas.announcements, set afterDate to ~2 weeks ago by default to show only recent announcements.",
       "If canvas tools are NOT available but canvas.authenticate IS available, call canvas.authenticate when the user asks about coursework — this opens the settings screen on their device.",
       "Never use cursor.agent.spawn or agent.spawn for email, calendar, or Canvas tasks. These are handled exclusively by their dedicated tools (gmail.*, calendar.*, canvas.*).",
       "Never call gmail.authenticate or canvas.authenticate more than once per conversation turn. If the tool returns that the user needs to authenticate, tell the user and stop — do not retry.",
       "If bridge.nova.start, bridge.nova.act, and bridge.nova.stop tools are available, use them when the user asks to browse the web, open a website, interact with a web page, automate browser tasks, or mentions 'Nova Act'. These tools control a real Chrome browser on the user's paired Mac via natural-language instructions. Flow: 1) call bridge.nova.start with the URL to open, 2) call bridge.nova.act with step-by-step instructions (e.g. 'Click Sign In', 'Type hello in the search box', 'Scroll down'), 3) call bridge.nova.stop when done. Each bridge.nova.act call executes one instruction — chain multiple calls for multi-step workflows. You CAN open any website including Figma, Google Docs, social media, etc.",
       "If bridge.exec.run or bridge.exec.start tools are available, use them when the user asks to run shell commands, check files, or perform terminal operations on their paired Mac. IMPORTANT: Extract only the raw shell command from the user's request — never include conversational phrases like 'on mac', 'on the bridge', 'on my computer' in the command argument. Example: 'run ls -la on mac' → command is 'ls -la'. If bridge.claude.run is available, use it for complex coding/editing tasks on the Mac.",
       "You have cross-session memory. When you see a message starting with '[Prior context from previous sessions]', that is a summary of earlier conversations with this user. Use it naturally — reference prior topics, remember what the user told you, and build on previous discussions. Never say you don't have memory of past conversations.",
-      "INLINE CARD RENDERING — CRITICAL: When tool results contain cardId fields, you MUST reference each card inline using EXACTLY this fenced block syntax on its own line: ```card:TYPE:CARD_ID\\n``` where TYPE is email/calendar/canvas and CARD_ID is the UUID from the tool result. DO NOT describe or summarize card data in prose — the card UI already displays all details to the user. DO NOT list names, titles, dates, subjects, or other card fields in your text. Instead, place card reference blocks where relevant and add only brief contextual connectors (e.g. 'Here are your courses:'). Every cardId MUST appear exactly once as a card reference.",
+      "INLINE CARD RENDERING: When tool results contain cardId fields or card reference instructions, you MUST reference each card inline in your response using fenced code block syntax: ```card:TYPE:CARD_ID\\n``` on its own line, where TYPE is email/calendar/canvas/agent/bridge/draft and CARD_ID is the exact UUID from the tool result. Place cards at the natural point in your narrative where they are contextually relevant. NEVER describe card data in prose when a card reference exists — the card already shows it. Every cardId from a tool result MUST appear exactly once as a card reference. Multiple cards can appear in sequence or separated by prose.",
     ];
 
     if (userPreferences && Object.keys(userPreferences).length > 0) {
@@ -304,16 +316,18 @@ export class BedrockNovaProvider implements ModelProvider {
     tools?: ToolDefinition[],
     userPreferences?: Record<string, string>,
     canvasCourseContext?: string,
+    modelOverride?: string,
   ): Promise<FetchResult> {
     const messages = this.buildMessages(conversation);
     const { toolConfig, toolNameToOriginal } = this.buildTools(tools);
 
     const maxTokens = toolConfig ? Math.min(this.config.maxTokens * 4, 8192) : this.config.maxTokens;
 
+    const resolvedModelId = modelOverride ?? this.config.modelId;
     const systemPrompt = this.buildSystemPrompt(userPreferences, canvasCourseContext);
     const contentBlocks: ResponseContentBlock[] = this.bearerToken
-      ? await this.fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt)
-      : await this.fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt);
+      ? await this.fetchWithBearer(messages, toolConfig, maxTokens, systemPrompt, resolvedModelId)
+      : await this.fetchWithSdk(messages, toolConfig, maxTokens, systemPrompt, resolvedModelId);
 
     const textParts: string[] = [];
     const toolCalls: ToolCallRequest[] = [];
@@ -346,9 +360,10 @@ export class BedrockNovaProvider implements ModelProvider {
     toolConfig: ToolConfiguration | undefined,
     maxTokens: number,
     systemPrompt: SystemContentBlock[],
+    modelId?: string,
   ): Promise<ResponseContentBlock[]> {
     const response = await this.client.send(new ConverseCommand({
-      modelId: this.config.modelId,
+      modelId: modelId ?? this.config.modelId,
       system: systemPrompt,
       messages,
       inferenceConfig: { maxTokens, temperature: 0.3 },
@@ -362,8 +377,10 @@ export class BedrockNovaProvider implements ModelProvider {
     toolConfig: ToolConfiguration | undefined,
     maxTokens: number,
     systemPrompt: SystemContentBlock[],
+    modelId?: string,
   ): Promise<ResponseContentBlock[]> {
-    const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(this.config.modelId)}/converse`;
+    const resolvedModelId = modelId ?? this.config.modelId;
+    const url = `https://bedrock-runtime.${this.config.region}.amazonaws.com/model/${encodeURIComponent(resolvedModelId)}/converse`;
 
     const body: Record<string, unknown> = {
       system: systemPrompt.map((b) => ({ text: b.text })),

@@ -47,6 +47,8 @@ final class ConversationAudioPipeline: ObservableObject {
     private var remoteCaptureTransitionInFlight = false
     private var pendingRemoteCaptureReconcile = false
     private var handsFreeBargeInInFlight = false
+    private var currentPlayingLiveResponseId: String?
+    private var rejectedLiveResponseId: String?
     private let remoteVoiceCapture: RemoteVoiceCapturing
 
     init(
@@ -223,7 +225,14 @@ final class ConversationAudioPipeline: ObservableObject {
         case .idle:
             await refreshLiveConversationState()
         case .thinking, .speaking:
-            voiceActivityDetector.stopMonitoring()
+            // vadAuto: keep VAD monitoring so it can trigger bargeIn() when
+            // the user speaks during assistant playback. Nova Sonic native
+            // barge-in is unreliable when echo cancellation doesn't fully
+            // suppress the assistant audio, so the iOS VAD is the primary
+            // barge-in trigger.
+            if recordingMode != .vadAuto {
+                voiceActivityDetector.stopMonitoring()
+            }
             if recordingMode == .pushToTalk && transcriber.isListening && !isStoppingRecording {
                 await stopListeningSilently()
             }
@@ -266,8 +275,18 @@ final class ConversationAudioPipeline: ObservableObject {
             guard let self else { return }
             guard self.canRunLiveConversation else { return }
 
-            if self.recordingMode == .vadAuto, self.appState == .speaking {
-                guard !self.handsFreeBargeInInFlight else { return }
+            // Trigger bargeIn when assistant audio is active — either the state
+            // is .speaking (audio still being generated) OR the state went to
+            // .idle but buffered audio is still playing from the queue.
+            let shouldBargeIn = self.recordingMode == .vadAuto
+                && (self.appState == .speaking
+                    || (self.appState == .idle && self.remoteVoiceCapture.isAssistantAudioPlaying))
+            if shouldBargeIn {
+                guard !self.handsFreeBargeInInFlight else {
+                    AppLogger.audio.debug("[BARGE-IN] VAD speech detected but bargeIn already in flight")
+                    return
+                }
+                AppLogger.audio.debug("[BARGE-IN] VAD speech detected during \(self.appState.rawValue, privacy: .public) — triggering bargeIn")
                 self.handsFreeBargeInInFlight = true
                 Task { @MainActor in
                     defer { self.handsFreeBargeInInFlight = false }
@@ -276,6 +295,7 @@ final class ConversationAudioPipeline: ObservableObject {
                 return
             }
 
+            AppLogger.audio.debug("[BARGE-IN] VAD speech detected but appState=\(self.appState.rawValue, privacy: .public) — NOT triggering bargeIn")
             if self.appState == .idle || self.appState == .transcribing {
                 self.setState(.listening)
             }
@@ -526,7 +546,13 @@ final class ConversationAudioPipeline: ObservableObject {
                 await toolRouter.dispatch(toolCall)
             }
         } else {
+            // Capture the current response ID as rejected BEFORE stopping audio.
+            // Late-arriving chunks with this ID will be dropped by handleAssistantAudioChunk.
+            AppLogger.audio.debug("[BARGE-IN] bargeIn vadAuto: rejecting liveResponseId=\(self.currentPlayingLiveResponseId ?? "nil", privacy: .public) reason=\(reason, privacy: .public)")
+            rejectedLiveResponseId = currentPlayingLiveResponseId
+            currentPlayingLiveResponseId = nil
             await stopRemoteAssistantAudio()
+            AppLogger.audio.debug("[BARGE-IN] bargeIn vadAuto: stopRemoteAssistantAudio completed")
         }
 
         let interruptedEvent = Event.audioOutputInterrupted(reason, sessionId: sessionId)
@@ -537,9 +563,11 @@ final class ConversationAudioPipeline: ObservableObject {
 
         if recordingMode == .vadAuto {
             setState(.listening)
+            // vadAuto: mic is already streaming to Nova Sonic, no refresh needed.
+            // Nova Sonic handles barge-in natively on the same stream.
+        } else {
+            await refreshLiveConversationState()
         }
-
-        await refreshLiveConversationState()
     }
 
     private func setState(_ state: AppState) {
@@ -549,6 +577,20 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func handleAssistantAudioChunk(_ chunk: Event.AssistantAudioChunk) async {
         guard recordingMode == .vadAuto else { return }
+
+        // Gate: drop chunks from a rejected (interrupted) response
+        if let rejected = rejectedLiveResponseId {
+            if chunk.liveResponseId == rejected {
+                AppLogger.audio.debug("[BARGE-IN] Dropped audio chunk with rejected liveResponseId=\(rejected, privacy: .public)")
+                return
+            }
+            // New response arrived — clear the gate
+            AppLogger.audio.debug("[BARGE-IN] Clearing gate: new liveResponseId=\(chunk.liveResponseId ?? "nil", privacy: .public) rejected=\(rejected, privacy: .public)")
+            rejectedLiveResponseId = nil
+        }
+
+        currentPlayingLiveResponseId = chunk.liveResponseId
+
         guard !isTTSMuted() else { return }
         guard let data = Data(base64Encoded: chunk.audio), !data.isEmpty else { return }
         do {
@@ -563,11 +605,13 @@ final class ConversationAudioPipeline: ObservableObject {
 
     func handleAssistantAudioEnd() async {
         guard recordingMode == .vadAuto else { return }
+        currentPlayingLiveResponseId = nil
         await remoteVoiceCapture.finishAssistantAudio()
     }
 
     func handleAssistantAudioInterrupted() async {
         guard recordingMode == .vadAuto else { return }
+        AppLogger.audio.debug("[BARGE-IN] handleAssistantAudioInterrupted — stopping remote assistant audio")
         await stopRemoteAssistantAudio()
     }
 
@@ -692,6 +736,7 @@ final class ConversationAudioPipeline: ObservableObject {
 @MainActor
 protocol RemoteVoiceCapturing: AnyObject {
     var isStreaming: Bool { get }
+    var isAssistantAudioPlaying: Bool { get }
     func start(
         onChunk: @escaping (String) -> Void,
         onInputLevel: @escaping (Float) -> Void
@@ -917,6 +962,11 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         )!
         self.playbackFormat = playbackFmt
         engine.connect(playerNode, to: engine.mainMixerNode, format: playbackFmt)
+        // Explicitly set the mixer→output format to the voice-processing rate.
+        // Without this, the mixer→output path defaults to 44.1kHz stereo while
+        // voice-processing input runs at 48kHz mono — the rate mismatch causes
+        // the duplex graph to silently stop delivering mic frames.
+        engine.connect(engine.mainMixerNode, to: outputNode, format: playbackFmt)
         captureDiagnosticsRemaining = captureLogLimit
         captureStartToken += 1
         captureRunState.begin(token: captureStartToken)
@@ -929,6 +979,15 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             sinkNode: sinkNode,
             stage: "pre-start"
         )
+        // Override to speaker BEFORE starting the engine so the route is
+        // settled when the graph spins up. Doing it after start can cause
+        // a transient route change that makes engine.isRunning flicker.
+        do {
+            try session.overrideOutputAudioPort(.speaker)
+        } catch {
+            AppLogger.audio.warning("Hands-free route override failed: \(error.localizedDescription, privacy: .public)")
+        }
+
         engine.prepare()
         do {
             try engine.start()
@@ -945,10 +1004,15 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
             )
             throw error
         }
-        do {
-            try session.overrideOutputAudioPort(.speaker)
-        } catch {
-            AppLogger.audio.warning("Hands-free route override failed: \(error.localizedDescription, privacy: .public)")
+
+        // The engine can take a moment to stabilize after start, especially
+        // on device with voice processing enabled. Retry briefly before
+        // declaring failure.
+        if !engine.isRunning {
+            for _ in 0..<5 {
+                try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                if engine.isRunning { break }
+            }
         }
         if !engine.isRunning {
             logSessionState(session, stage: "start-failed")
@@ -1053,6 +1117,10 @@ private final class RemoteAudioCapture: RemoteVoiceCapturing {
         } catch {
             AppLogger.audio.error("Hands-free assistant playback finish failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    var isAssistantAudioPlaying: Bool {
+        playerNode?.isPlaying ?? false
     }
 
     func stopAssistantAudio() async {

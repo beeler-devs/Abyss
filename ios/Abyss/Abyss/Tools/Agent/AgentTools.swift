@@ -26,6 +26,7 @@ struct AgentSpawnTool: Tool, @unchecked Sendable {
         let prUrl: String?
         let branchName: String?
         let createdAt: String?
+        let cardId: String?
     }
 
     private let client: CursorCloudAgentsProviding
@@ -89,7 +90,8 @@ struct AgentSpawnTool: Tool, @unchecked Sendable {
             url: launched.target?.url,
             prUrl: launched.target?.prUrl,
             branchName: launched.target?.branchName,
-            createdAt: launched.createdAt
+            createdAt: launched.createdAt,
+            cardId: nil
         )
     }
 }

@@ -63,21 +63,34 @@ All communication uses `EventEnvelope` — a strict JSON schema with `id`, `type
 3. LLM responds with tool calls → conductor emits `tool.call` events
 4. Tools execute locally (iOS handles `audio.*`, `ui.*`) or are routed to the bridge (`bridge.exec.run`, `bridge.fs.*`)
 5. Tool results are sent back as `tool.result` events → conductor resumes LLM
-6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`) execute directly on the server and return results to the LLM
+6. Server-side tools (`gmail.inbox`, `gmail.search`, `gmail.read`, `canvas.*`, `calendar.*`, `web.search`) execute directly on the server and return results to the LLM
 7. For `gmail.send`/`gmail.reply`, server emits a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS → iOS shows an **editable** draft card (To, Subject, Body are tappable text fields) → server returns immediately (non-blocking) so the user can send follow-up messages while reviewing → user edits fields and taps Send → iOS sends `gmail.send.execute` event with edited values → server sends the email and emits `gmail.send.result`
 
-### Inline Card Rendering
-When server-side tools (gmail.*, calendar.*, canvas.*) return results, `ConductorService.enrichResultWithCardIds()` injects a `cardId` (UUID) into each item in the JSON. The enriched result is sent to both iOS (for card managers) and the LLM (with a card summary instruction). The LLM references cards inline in its response via `` ```card:TYPE:CARD_ID``` `` fenced blocks. On iOS, `MarkdownTextView` parses these as `.cardReference` blocks and resolves them via `TranscriptView.resolveCard()` to render actual card views inline in the prose. Cards rendered inline are excluded from the anchored/unanchored card sections to avoid duplication. During streaming, unresolved card references show a `CardPlaceholderView` with shimmer animation.
+### Inline Card Rendering (Inline-Only Architecture)
+ALL cards render inline via `` ```card:TYPE:CARD_ID``` `` fenced blocks in assistant message text. Cards are permanently fixed in the message — they never shift position. The old anchor-based rendering system (System 2) has been removed, except for a minimal fallback for `CalendarDraftCard` (deferred from conversion).
 
-**Card types:** `email`, `calendar`, `canvas` (with future support for `agent`, `bridge`)
+**How it works:** Server-side tools inject `cardId` into their results (via `enrichResultWithCardIds()` for read-only cards, or explicit injection for agent/bridge/draft cards). The LLM references each card inline. On iOS, `MarkdownTextView` parses `.cardReference` blocks and resolves them via `TranscriptView.resolveCard()`.
+
+**Card types:** `email`, `calendar`, `canvas`, `agent`, `bridge`, `draft`
+
+**Server card injection points:**
+- Read-only cards (email, calendar, canvas): `enrichResultWithCardIds()` + `cardTypeForTool()`
+- Agent cards: `cursor.agent.spawn` result includes `cardId` + card reference instruction
+- Bridge exec cards: `bridge.exec.run`, `bridge.exec.start`, `bridge.claude.run` results include `cardId` + card reference instruction
+- Email draft cards: `gmail.send`/`gmail.reply` results include `confirmCallId` as card ID + card reference instruction
+- `injectMissingCardReferences()` catches any cards the LLM fails to reference inline
+
+**`TranscriptItem` enum:** Only `.message`, `.calendarDraftCard`, `.messageActions`. All other card types render exclusively through `resolveCard()`.
+
+**`anchorMessageID` usage:** Only exists on `CalendarDraftCard` and its manager/tools. All other card models use `serverCardId` for inline resolution.
 
 **Files:**
-- `server/src/core/conductorService.ts` — `enrichResultWithCardIds()`, `cardTypeForTool()`
+- `server/src/core/conductorService.ts` — `enrichResultWithCardIds()`, `cardTypeForTool()`, `injectMissingCardReferences()`, card injection in tool handlers
 - `ios/.../Views/MarkdownTextView.swift` — `Block.cardReference`/`.cardPlaceholder` cases, `cardResolver` closure
 - `ios/.../Views/CardPlaceholderView.swift` — Placeholder with generic/typed/unresolved states
-- `ios/.../Views/TranscriptView.swift` — `resolveCard()`, dedup logic in `transcriptItems`
-- All card models (`EmailCard`, `CalendarEventCard`, `CanvasCard`, `BridgeExecCard`, `AgentProgressCard`) — `serverCardId: String?`
-- Card managers (`ConversationEmailManager`, `ConversationCalendarManager`, `ConversationCanvasManager`) — parse `cardId` from enriched JSON
+- `ios/.../Views/TranscriptView.swift` — `resolveCard()` (primary rendering), minimal calendar draft anchor fallback
+- All card models — `serverCardId: String?` (no `anchorMessageID` except `CalendarDraftCard`)
+- Card managers — parse `cardId` from enriched JSON, no anchor tracking (except `CalendarDraftManager`)
 
 ### Chat Auto-Title
 After the first user message in a session, `ConductorService.tryGenerateTitle()` fires a lightweight LLM call to produce a 3-5 word title. The result is emitted as a `session.title` event. On iOS, `ConversationEventCoordinator.onTitleGenerated` propagates through `ConversationViewModel.onTitleGenerated` to `ContentView.syncActiveChat`, which renames the chat only if its title is still "New Chat" (preserving manual renames). `ChatListViewModel.renameChat(id:title:)` persists the change.
@@ -87,6 +100,22 @@ Each sidebar chat row (`ChatRowButton` in `ContentView.swift`) shows an ellipsis
 
 ### Context Summarization
 When conversation history exceeds `SUMMARIZE_AFTER_TURNS` (default 30 entries), `contextSummarizer.ts` uses the LLM to compress older turns into a 3-6 sentence summary. The summary is stored in `SessionState.historySummary` and prepended to the conversation as a user/assistant turn pair before each `generateResponse()` call. Summarization runs fire-and-forget after `runConductorLoop()` completes — no latency impact on the current response. Config: `SUMMARIZE_AFTER_TURNS` (threshold), `SUMMARIZE_RECENT_KEEP` (turns kept in full, default 10).
+
+### Context Graph (Neptune Analytics + Titan Embeddings)
+Graph-based knowledge persistence layer that augments the existing MemoryService with semantic retrieval. When `NEPTUNE_GRAPH_ID` is set, goals, sessions, decisions, blockers, and next-steps are stored as graph nodes with vector embeddings for hybrid search.
+
+**Flow:** On `session.start`, creates User + Session nodes. On each substantive user turn (filtered by `isSubstantiveGoal()`), creates a Goal node with embedding. On session finalization, `summarizeAndStore()` delegates to MemoryService, then `session.finalized` creates MemoryEpisode, Decision, Blocker, NextStep, Repo, and Branch nodes. If summarization returns null, a fallback summary is built from the last 3 user turns. On first user turn, `retrieveResumeContext()` performs hybrid vector+graph search (user-scoped) with MemoryService fallback.
+
+**Config env vars:** `NEPTUNE_GRAPH_ID`, `NEPTUNE_GRAPH_REGION`, `EMBEDDING_MODEL_ID` (default `amazon.titan-embed-text-v2:0`), `EMBEDDING_DIMENSIONS` (default 256), `GRAPH_VECTOR_K` (default 5), `GRAPH_NEIGHBORHOOD_LIMIT` (default 3).
+
+**Files:**
+- `server/src/contextGraph/contextGraphService.ts` — Orchestrator: `apply()`, `retrieveResumeContext()`, `summarizeAndStore()`
+- `server/src/contextGraph/store/neptuneAnalyticsStore.ts` — Neptune Analytics impl with `hybridResumeQuery()`, `healthCheck()`
+- `server/src/contextGraph/store/graphStore.ts` — `GraphStore` interface
+- `server/src/contextGraph/embedding/embeddingService.ts` — Titan Text Embeddings V2 wrapper
+- `server/src/contextGraph/types.ts` — 9 node types (User, Session, Goal, Repo, Branch, Decision, Blocker, NextStep, MemoryEpisode), `ContextGraphUpdate` union
+- `server/src/contextGraph/index.ts` — Re-exports
+- `server/src/core/conductorService.ts` — `isSubstantiveGoal()` filter, integration points (session.start, goal.started, finalization)
 
 ### User Preferences
 LLM-writable preference store that persists across sessions. iOS is source of truth.
@@ -115,13 +144,16 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 - `server/src/bridge/state.ts` — Device pairing and online/offline tracking
 - `server/src/bridge/toolRouter.ts` — Routes bridge tools to connected macOS devices
 - `server/src/providers/` — Pluggable LLM backends; factory in `index.ts`
-- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `calendarClient.ts` (Google Calendar), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents)
+- `server/src/integrations/` — External API clients: `canvasClient.ts` (Canvas LMS), `gmailClient.ts`/`gmailAuth.ts` (Gmail), `calendarClient.ts` (Google Calendar), `cursorClient.ts`/`cursorPayload.ts`/`cursorWebhook.ts` (Cursor Cloud Agents), `searchClient.ts` (Brave Web Search)
 - `server/src/voice/` — Voice providers; `bedrockNovaSonicVoiceProvider.ts` for Nova Sonic streaming
 
 ### Model Providers
 Selected via `MODEL_PROVIDER` env var:
 - `bedrock` (default) — Amazon Nova via AWS Bedrock (`bedrockNovaProvider.ts`)
 - `anthropic` — Claude via Anthropic API (`anthropicProvider.ts`)
+
+### Dynamic Model Routing (Bedrock)
+When `BEDROCK_PRO_MODEL_ID` is set, requests are routed to Nova Pro for heavy tasks and Nova Lite for everything else. Routing is deterministic based on tool availability — if any "heavy" tool (bridge.claude.run, bridge.exec.run, bridge.exec.start, bridge.nova.start, bridge.nova.act, cursor.agent.spawn, webqa.cursor.run) is in the available tools array, the request uses Pro. Title generation and context summarization always use Lite (no `modelOverride` passed). The `classifyModelTier()` method in `ConductorService` handles routing and logs `model.routing tier=pro` when Pro is selected.
 
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
@@ -145,7 +177,7 @@ Three bridge tools (`bridge.nova.start`, `bridge.nova.act`, `bridge.nova.stop`) 
 
 **Permission:** Gated by `BridgePermissions.allowNovaAct` (default false). Toggle in AbyssBridge GUI. `BridgeCapabilities.novaAct` field controls server-side tool availability. `effectiveCapabilities()` in BridgeCore.swift gates the `novaAct` capability by this permission.
 
-**Setup Sheet:** When the user toggles Nova Act ON, a `NovaActSetupSheet` appears in AbyssBridgeApp.swift that checks four prerequisites (Python 3, nova-act package, API key, Chrome) and shows pass/fail with copy-able fix commands. The API key has a dedicated section with a `SecureField` + Save/Clear buttons (stored in Keychain via `Security` framework, service `app.abyss.bridge`). The env var `NOVA_ACT_API_KEY` still works as fallback; app-provided key takes precedence. Cancel reverts the toggle; "Enable Anyway" force-enables.
+**Setup Sheet:** When the user toggles Nova Act ON, a `NovaActSetupSheet` appears in AbyssBridgeApp.swift that checks four prerequisites (Python 3, nova-act package, API key, Chrome) and shows pass/fail with copy-able fix commands. The API key has a dedicated section with a `SecureField` + Save/Clear buttons (stored in Keychain via `Security` framework, service `app.abyss.bridge`, account `nova_act_api_key`) and injected into the Python subprocess env via `NovaActSessionManager.start(apiKey:)`. App-provided key takes precedence over the `NOVA_ACT_API_KEY` env var (which still works as fallback). `BridgeConfiguration.novaActApiKey` threads the key through to `BridgeCore`. Cancel reverts the toggle; "Enable Anyway" force-enables.
 
 **Files:**
 - `mac/BridgeCore/Sources/BridgeCore/Resources/nova_act_bridge.py` — Python wrapper script
@@ -188,6 +220,8 @@ When the iOS app connects or reconnects, `connectConductorClient` gathers any wo
 **Canvas LMS Integration:** `CanvasManager` stores a personal access token + base URL in Keychain (no OAuth needed). Settings UI has a "Connections" section with a modal to enter token. `CanvasAuthenticateTool` directs users to Settings when the LLM needs Canvas access. Server-side `CanvasClient` provides 6 tools: `canvas.courses`, `canvas.assignments`, `canvas.todo`, `canvas.upcoming`, `canvas.grades`, `canvas.announcements`. Token is threaded through `SessionStart` → `WebSocketConductorClient` → `ConductorService`. Canvas tool results render as `CanvasCardView` cards in the transcript via `ConversationCanvasManager` (same pattern as Calendar). Cards use a unified `CanvasCard` model with variant enum (`.course`, `.assignment`, `.todo`, `.grade`, `.announcement`). At session start, the server pre-fetches courses via `canvasClient.courses()` and stores a summary in `session.canvasCourseContext`, which is injected into the system prompt for ambient awareness.
 
 **Gmail Integration:** Server-side `GmailClient` provides 5 tools: `gmail.inbox`, `gmail.search`, `gmail.read` (read-only, execute on server), `gmail.send`, `gmail.reply` (mutations use non-blocking confirmation via `EmailDraftManager`). The `gmail.send`/`gmail.reply` handlers store pending send details in `session.pendingGmailSends`, emit a `gmail.send.confirm`/`gmail.reply.confirm` tool call to iOS, and return immediately (non-blocking). iOS shows an editable draft card (To/Subject/Body are `TextField`/`TextEditor` when pending). The user can edit fields and send follow-up messages to the AI while reviewing. On confirm, iOS sends `gmail.send.execute` with the (potentially edited) values; on cancel, `confirmed: false`. The server handles `gmail.send.execute` in `handleEvent`, sends the email via `GmailClient`, and emits `gmail.send.result` back to iOS. `ConversationEventCoordinator` listens for `gmail.send.result` and updates draft card state (`.sent`/`.failed`). OAuth tokens from `GmailAuthManager` are threaded through `SessionStart`. If tokens aren't available, LLM calls `gmail.authenticate` to prompt iOS sign-in. **Settings auth reconnect:** `ConversationViewModel.setGmailAuthManager()` subscribes to `gmailAuthManager.$isAuthenticated` — when the user authenticates Gmail in Settings (outside the tool flow), the WebSocket automatically reconnects with fresh tokens.
+
+**Web Search Integration:** Server-side `SearchClient` (`server/src/integrations/searchClient.ts`) wraps the Brave Search API. Provides 1 tool: `web.search(query, maxResults?)`. Available when `SEARCH_API_KEY` env var is set. Results include title, URL, and snippet (truncated to 300 chars). No iOS-side config needed.
 
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
@@ -238,12 +272,14 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | `PORT` | 8080 | WebSocket server port |
 | `MODEL_PROVIDER` | `bedrock` | `bedrock` or `anthropic` |
 | `VOICE_PROVIDER` | `nova-sonic` | `local` or `nova-sonic` |
-| `BEDROCK_TEXT_MODEL_ID` | `us.amazon.nova-2-lite-v1:0` | Primary LLM |
+| `BEDROCK_TEXT_MODEL_ID` | `us.amazon.nova-2-lite-v1:0` | Primary LLM (Lite) |
+| `BEDROCK_PRO_MODEL_ID` | — | Pro model for heavy tasks (e.g. `us.amazon.nova-2-pro-v1:0`) |
 | `ANTHROPIC_API_KEY` | — | Required if using `anthropic` provider |
 | `AWS_REGION` | `us-east-1` | Required for Bedrock |
 | `CURSOR_API_KEY` | — | Optional; enables server-side Cursor agent tools |
 | `GOOGLE_CLIENT_ID` | — | Required for Gmail + Calendar OAuth |
 | `GOOGLE_CLIENT_SECRET` | — | Required for Gmail + Calendar OAuth |
+| `SEARCH_API_KEY` | — | Optional; enables `web.search` tool (Brave Search API) |
 
 AWS credentials are resolved via Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or standard SDK chain (profile, env vars, or instance role).
 
@@ -287,6 +323,9 @@ iOS reads from `Secrets.plist` (gitignored) → `Info.plist` → environment var
 Server runs on ECS Fargate in **us-east-1** (cluster `abyss`, service `abyss-server`). ALB: `abyss-alb-1705721363.us-east-1.elb.amazonaws.com`. Full deployment details (ECR, security groups, target group) are in **docs/runbook.md** under "AWS ECS Deployment".
 
 **WebSocket stickiness:** The ALB keeps existing WebSocket connections pinned to the old task even after a new deployment. The iOS app must be killed and reopened after a deploy to reconnect to the new container.
+
+### Top-Level README
+`README.md` is judge-facing and product-forward: lead with the voice-first/iPhone-native/security positioning, move directly into the top-level feature list after the architecture diagrams, and clearly label optional AWS memory/context infrastructure (for example Neptune/Titan-backed retrieval) as optional/configuration-dependent rather than always on. The top-level architecture section now embeds repo-local diagrams from `assets/abyss-architecture.png` and `assets/abyss-data-flow.png`.
 
 ## Claude Code Instructions
 

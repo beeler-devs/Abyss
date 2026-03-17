@@ -486,6 +486,27 @@ extension Event {
     static func bridgeWorkspaceSet(deviceId: String, workspacePath: String, sessionId: String? = nil) -> Event {
         Event(sessionId: sessionId, kind: .bridgeWorkspaceSet(BridgeWorkspaceSet(deviceId: deviceId, workspacePath: workspacePath)))
     }
+
+    static func gmailSendExecute(
+        callId: String,
+        confirmed: Bool,
+        to: String? = nil,
+        cc: String? = nil,
+        subject: String? = nil,
+        body: String? = nil,
+        messageId: String? = nil,
+        sessionId: String? = nil
+    ) -> Event {
+        Event(sessionId: sessionId, kind: .gmailSendExecute(GmailSendExecute(
+            callId: callId,
+            confirmed: confirmed,
+            to: to,
+            cc: cc,
+            subject: subject,
+            body: body,
+            messageId: messageId
+        )))
+    }
 }
 
 // MARK: - Display Helpers

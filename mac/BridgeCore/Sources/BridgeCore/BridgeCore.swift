@@ -577,16 +577,24 @@ public actor BridgeCore {
                     throw BridgeCoreError.internalError("nova_act_bridge.py not found in bundle")
                 }
 
+                await emitLog("[nova] starting session: url=\(args.url) headless=\(args.headless ?? false) apiKey=\(config.novaActApiKey != nil ? "present" : "MISSING")")
                 let manager = NovaActSessionManager()
-                try await manager.start(
-                    url: args.url,
-                    headless: args.headless ?? true,
-                    userDataDir: args.userDataDir,
-                    scriptPath: scriptPath,
-                    apiKey: config.novaActApiKey
-                )
+                let pageContext: String?
+                do {
+                    pageContext = try await manager.start(
+                        url: args.url,
+                        headless: args.headless ?? true,
+                        userDataDir: args.userDataDir,
+                        scriptPath: scriptPath,
+                        apiKey: config.novaActApiKey
+                    )
+                } catch {
+                    await emitLog("[nova] start failed: \(error.localizedDescription)")
+                    throw error
+                }
                 novaActManager = manager
-                resultText = encodeJSONString(BridgeNovaStartResult(started: true))
+                await emitLog("[nova] session started successfully pageContext=\(pageContext != nil)")
+                resultText = encodeJSONString(BridgeNovaStartResult(started: true, pageContext: pageContext))
 
             case "bridge.nova.act":
                 guard config.permissions.allowNovaAct else {
@@ -597,13 +605,17 @@ public actor BridgeCore {
                     throw BridgeCoreError.internalError("No active Nova Act session. Call bridge.nova.start first.")
                 }
                 let args = try decodeArguments(BridgeNovaActArguments.self, json: payload.arguments)
-                let actResult = try await manager.act(instruction: args.instruction, schema: args.schema)
-                resultText = encodeJSONString(BridgeNovaActResult(result: actResult, success: true))
+                await emitLog("[nova] act: \(args.instruction.prefix(120))")
+                let actResponse = try await manager.act(instruction: args.instruction, schema: args.schema)
+                await emitLog("[nova] act complete, result length=\(actResponse.result.count) pageContext=\(actResponse.pageContext != nil)")
+                resultText = encodeJSONString(BridgeNovaActResult(result: actResponse.result, success: true, pageContext: actResponse.pageContext))
 
             case "bridge.nova.stop":
                 if let manager = novaActManager {
+                    await emitLog("[nova] stopping session")
                     let _ = try await manager.stop()
                     novaActManager = nil
+                    await emitLog("[nova] session stopped")
                 }
                 resultText = encodeJSONString(BridgeNovaStopResult(stopped: true))
 

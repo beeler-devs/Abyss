@@ -187,6 +187,212 @@ final class ConversationAudioPipelineNovaTests: XCTestCase {
         XCTAssertFalse(nextDrain.shouldStartPlayback)
     }
 
+    // MARK: - Barge-in audio gating tests
+
+    func testBargeInDropsSubsequentChunksFromSameLiveResponseId() async {
+        let harness = makeHarness()
+        harness.pipeline.updateRecordingMode(.vadAuto)
+        harness.pipeline.setChatActive(true)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        // Move to speaking state and play a chunk
+        await harness.pipeline.applyRemoteState(.speaking)
+        let chunk1 = Event.AssistantAudioChunk(
+            audio: Data(repeating: 1, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(chunk1)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1)
+
+        // Trigger barge-in
+        harness.remoteVoiceCapture.emitInputLevel(-12.0)
+        await waitForCondition {
+            harness.remoteVoiceCapture.stopAssistantAudioCallCount == 1
+        }
+
+        // Late-arriving chunk with SAME liveResponseId should be dropped
+        let lateChunk = Event.AssistantAudioChunk(
+            audio: Data(repeating: 2, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(lateChunk)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1,
+                       "Late chunk from interrupted response should be dropped")
+    }
+
+    func testBargeInAcceptsChunksFromNewLiveResponseId() async {
+        let harness = makeHarness()
+        harness.pipeline.updateRecordingMode(.vadAuto)
+        harness.pipeline.setChatActive(true)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        await harness.pipeline.applyRemoteState(.speaking)
+        let chunk1 = Event.AssistantAudioChunk(
+            audio: Data(repeating: 1, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(chunk1)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1)
+
+        // Trigger barge-in
+        harness.remoteVoiceCapture.emitInputLevel(-12.0)
+        await waitForCondition {
+            harness.remoteVoiceCapture.stopAssistantAudioCallCount == 1
+        }
+
+        // Chunk with NEW liveResponseId should be accepted
+        let newChunk = Event.AssistantAudioChunk(
+            audio: Data(repeating: 3, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-2"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(newChunk)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 2,
+                       "Chunk from new response should be accepted")
+    }
+
+    func testBargeInDropsMultipleLateSameResponseChunks() async {
+        let harness = makeHarness()
+        harness.pipeline.updateRecordingMode(.vadAuto)
+        harness.pipeline.setChatActive(true)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        await harness.pipeline.applyRemoteState(.speaking)
+        let initial = Event.AssistantAudioChunk(
+            audio: Data(repeating: 1, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(initial)
+
+        // Trigger barge-in
+        harness.remoteVoiceCapture.emitInputLevel(-12.0)
+        await waitForCondition {
+            harness.remoteVoiceCapture.stopAssistantAudioCallCount == 1
+        }
+
+        // Send 5 late chunks — all should be dropped
+        for _ in 0..<5 {
+            let late = Event.AssistantAudioChunk(
+                audio: Data(repeating: 9, count: 320).base64EncodedString(),
+                encoding: "pcm_s16le",
+                sampleRateHertz: 24_000,
+                channelCount: 1,
+                liveResponseId: "resp-1"
+            )
+            await harness.pipeline.handleAssistantAudioChunk(late)
+        }
+
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1,
+                       "All late chunks from interrupted response should be dropped")
+    }
+
+    func testBargeInWithNoActiveResponseIsHarmless() async {
+        let harness = makeHarness()
+        harness.pipeline.updateRecordingMode(.vadAuto)
+        harness.pipeline.setChatActive(true)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        // Speaking state but no audio chunk received yet (no currentPlayingLiveResponseId)
+        await harness.pipeline.applyRemoteState(.speaking)
+        harness.remoteVoiceCapture.emitInputLevel(-12.0)
+        await waitForCondition {
+            harness.remoteVoiceCapture.stopAssistantAudioCallCount == 1
+        }
+
+        // New chunk should still be accepted (rejectedLiveResponseId is nil)
+        let chunk = Event.AssistantAudioChunk(
+            audio: Data(repeating: 1, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(chunk)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1,
+                       "Chunk should be accepted when no response was rejected")
+    }
+
+    func testRapidDoubleBargeInGatesCorrectly() async {
+        let harness = makeHarness()
+        harness.pipeline.updateRecordingMode(.vadAuto)
+        harness.pipeline.setChatActive(true)
+        await waitForCondition { harness.remoteVoiceCapture.isStreaming }
+
+        // First response
+        await harness.pipeline.applyRemoteState(.speaking)
+        let chunk1 = Event.AssistantAudioChunk(
+            audio: Data(repeating: 1, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-1"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(chunk1)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 1)
+
+        // First barge-in
+        harness.remoteVoiceCapture.emitInputLevel(-12.0)
+        await waitForCondition {
+            harness.remoteVoiceCapture.stopAssistantAudioCallCount == 1
+        }
+
+        // Second response starts
+        let chunk2 = Event.AssistantAudioChunk(
+            audio: Data(repeating: 2, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-2"
+        )
+        await harness.pipeline.applyRemoteState(.speaking)
+        await harness.pipeline.handleAssistantAudioChunk(chunk2)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 2)
+
+        // Second barge-in
+        harness.remoteVoiceCapture.emitInputLevel(-12.0)
+        await waitForCondition {
+            harness.remoteVoiceCapture.stopAssistantAudioCallCount == 2
+        }
+
+        // Late chunk from resp-2 should be dropped
+        let lateChunk2 = Event.AssistantAudioChunk(
+            audio: Data(repeating: 9, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-2"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(lateChunk2)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 2,
+                       "Late chunk from second interrupted response should be dropped")
+
+        // Third response works normally
+        let chunk3 = Event.AssistantAudioChunk(
+            audio: Data(repeating: 3, count: 320).base64EncodedString(),
+            encoding: "pcm_s16le",
+            sampleRateHertz: 24_000,
+            channelCount: 1,
+            liveResponseId: "resp-3"
+        )
+        await harness.pipeline.handleAssistantAudioChunk(chunk3)
+        XCTAssertEqual(harness.remoteVoiceCapture.appendAssistantAudioCallCount, 3,
+                       "Third response should be accepted normally")
+    }
+
     private func makeHarness() -> PipelineHarness {
         let eventBus = EventBus()
         let registry = ToolRegistry()
@@ -263,6 +469,7 @@ private struct PipelineHarness {
 @MainActor
 private final class MockRemoteVoiceCapture: RemoteVoiceCapturing {
     private(set) var isStreaming = false
+    var isAssistantAudioPlaying: Bool = false
     private(set) var appendAssistantAudioCallCount = 0
     private(set) var finishAssistantAudioCallCount = 0
     private(set) var stopAssistantAudioCallCount = 0

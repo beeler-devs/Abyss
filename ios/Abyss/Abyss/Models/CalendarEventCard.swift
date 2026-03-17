@@ -12,7 +12,6 @@ struct CalendarEventCard: Identifiable, Equatable, Sendable {
     let htmlLink: String?
     let isAllDay: Bool
     var isExpanded: Bool
-    var anchorMessageID: UUID?
     var serverCardId: String?
 
     init(
@@ -27,7 +26,6 @@ struct CalendarEventCard: Identifiable, Equatable, Sendable {
         htmlLink: String? = nil,
         isAllDay: Bool = false,
         isExpanded: Bool = false,
-        anchorMessageID: UUID? = nil,
         serverCardId: String? = nil
     ) {
         self.id = id
@@ -41,7 +39,6 @@ struct CalendarEventCard: Identifiable, Equatable, Sendable {
         self.htmlLink = htmlLink
         self.isAllDay = isAllDay
         self.isExpanded = isExpanded
-        self.anchorMessageID = anchorMessageID
         self.serverCardId = serverCardId
     }
 }

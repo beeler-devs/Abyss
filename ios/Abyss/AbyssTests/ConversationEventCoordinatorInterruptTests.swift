@@ -204,6 +204,7 @@ private struct CoordinatorHarness {
 @MainActor
 private final class CoordinatorRemoteVoiceCapture: RemoteVoiceCapturing {
     var isStreaming: Bool = false
+    var isAssistantAudioPlaying: Bool = false
 
     func start(
         onChunk: @escaping (String) -> Void,

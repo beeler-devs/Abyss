@@ -55,6 +55,8 @@ interface SonicSession {
   toolNameMap: Map<string, string>;
   /** Accumulates all FINAL assistant text sentences within a single response turn. */
   accumulatedAssistantText: string;
+  /** Accumulates SPECULATIVE text ahead of FINAL confirmation; reset when FINAL arrives. */
+  accumulatedSpeculativeText: string;
   liveResponseId: string | null;
   pendingAssistantTurnFinalizeTimer: ReturnType<typeof setTimeout> | null;
   pendingAssistantTurnFinalizeResponseId: string | null;
@@ -62,6 +64,11 @@ interface SonicSession {
   bufferedAudioChunks: string[];
   restarting: boolean;
   streamGeneration: number;
+  bargedIn: boolean;
+  /** Set after finishAssistantTurn to suppress late FINAL/SPECULATIVE events. Reset on new assistant contentStart. */
+  turnFinalized: boolean;
+  /** Tracks consecutive failures per tool name for circuit-breaking. */
+  toolFailureCounts: Map<string, number>;
 }
 
 interface SonicEventEnvelope {
@@ -185,6 +192,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       pendingToolUse: null,
       toolNameMap: new Map(),
       accumulatedAssistantText: "",
+      accumulatedSpeculativeText: "",
       liveResponseId: null,
       pendingAssistantTurnFinalizeTimer: null,
       pendingAssistantTurnFinalizeResponseId: null,
@@ -192,6 +200,9 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       bufferedAudioChunks: [],
       restarting: false,
       streamGeneration: 0,
+      bargedIn: false,
+      turnFinalized: false,
+      toolFailureCounts: new Map(),
     };
     this.sessions.set(sessionId, session);
     await this.openModelStream(session);
@@ -226,7 +237,8 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if (!session) {
       return;
     }
-    void this.restartSessionAfterInterruption(session, "user_interrupt");
+    logger.info(`[INTERRUPT] called from iOS`, { sessionId });
+    this.handleBargeIn(session, "user_interrupt");
   }
 
   async closeSession(sessionId: string): Promise<void> {
@@ -310,7 +322,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     const toolsLine = toolCount > 0
       ? ` You have access to ${toolCount} tools including code execution, file operations, git, and agent spawning. Call them one at a time.`
       : "";
-    const systemPrompt = `You are the Abyss voice-first coding assistant. Keep responses concise, practical, and voice-friendly.${toolsLine}`;
+    const systemPrompt = `You are the Abyss voice-first coding assistant.${toolsLine} VOICE OUTPUT RULES: Lead with the answer. Be concise and direct. Never say URLs, code, file paths, JSON, UUIDs, or commit hashes aloud — summarize them instead. Convert timestamps to natural language. Say names instead of email addresses. For long lists, state the top items and summarize the rest. Summarize errors to the root cause. Do not narrate what the UI already shows. Do not use markdown formatting.`;
 
     const systemContentName = `system-${crypto.randomUUID()}`;
     this.sendEvent(session, {
@@ -447,19 +459,30 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
 
   private hasOpenAssistantTurn(session: SonicSession): boolean {
     return session.accumulatedAssistantText.trim().length > 0
+      || session.accumulatedSpeculativeText.trim().length > 0
       || session.sawAssistantAudio
       || session.liveResponseId !== null;
   }
 
-  private finalizeAccumulatedAssistantText(session: SonicSession): boolean {
-    const text = session.accumulatedAssistantText.trim();
+  private finalizeAccumulatedAssistantText(
+    session: SonicSession,
+    options?: { omitLiveResponseId?: boolean },
+  ): boolean {
+    // Use speculative text if it's more complete (FINAL may not have caught up yet).
+    const finalText = session.accumulatedAssistantText.trim();
+    const specText = session.accumulatedSpeculativeText.trim();
+    const text = specText.length > finalText.length ? specText : finalText;
     if (!text) {
+      logger.info(`[FINALIZE] no text to finalize (finalText=${finalText.length}, specText=${specText.length})`, { sessionId: session.sessionId });
       session.accumulatedAssistantText = "";
+      session.accumulatedSpeculativeText = "";
       return false;
     }
 
     const liveResponseId = this.ensureLiveResponseId(session);
+    const includeLiveResponseId = !options?.omitLiveResponseId;
 
+    logger.info(`[FINALIZE] emitting isPartial:false liveResponseId=${includeLiveResponseId ? liveResponseId : "OMITTED"} text="${text.slice(0, 80)}..."`, { sessionId: session.sessionId });
     session.context.emit(makeEvent("assistant.speech.final", session.sessionId, {
       text,
       liveResponseId,
@@ -471,10 +494,14 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         role: "assistant",
         text,
         isPartial: false,
-        liveResponseId,
+        // Omit liveResponseId during barge-in so iOS doesn't match it against
+        // the already-invalidated set (local interrupt handler runs first).
+        // ConversationStore fallback finds the orphaned partial by role.
+        ...(includeLiveResponseId ? { liveResponseId } : {}),
       }),
     }));
     session.accumulatedAssistantText = "";
+    session.accumulatedSpeculativeText = "";
     session.liveResponseId = null;
     return true;
   }
@@ -492,7 +519,16 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
+    logger.info(`[FINISH_TURN] reason=${options.reason} assistText="${session.accumulatedAssistantText.slice(0, 60)}" specText="${session.accumulatedSpeculativeText.slice(0, 60)}" liveResponseId=${session.liveResponseId} contentsSize=${session.contents.size}`, { sessionId: session.sessionId });
     this.finalizeAccumulatedAssistantText(session);
+
+    // Suppress late-arriving SPECULATIVE/FINAL events from the just-finished
+    // turn. Not needed for user_turn_flush since the user speaking means
+    // Nova Sonic has moved on — the next assistant content is a new response.
+    if (options.reason !== "user_turn_flush") {
+      session.turnFinalized = true;
+    }
+    session.contents.clear();
 
     if (options.emitIdle) {
       session.context.emit(makeEvent("tool.call", session.sessionId, {
@@ -512,7 +548,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if (session.closed) {
       return;
     }
-    if (!session.accumulatedAssistantText.trim()) {
+    if (!session.accumulatedAssistantText.trim() && !session.accumulatedSpeculativeText.trim()) {
       return;
     }
     if (session.pendingToolUse || session.toolExecutionInFlight) {
@@ -583,8 +619,18 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         generationStage: asString(metadata.generationStage),
         text: "",
       });
-      if ((asString(payload.role) ?? "ASSISTANT") === "ASSISTANT") {
+      const role = asString(payload.role) ?? "ASSISTANT";
+      if (role === "ASSISTANT") {
         this.noteAssistantActivity(session);
+        // SPECULATIVE contentStart signals a new response — reset the gate.
+        // FINAL contentStart from the old response doesn't have SPECULATIVE stage.
+        if (asString(metadata.generationStage) === "SPECULATIVE") {
+          session.turnFinalized = false;
+        }
+      }
+      if (role === "USER") {
+        session.bargedIn = false;
+        session.turnFinalized = false;
       }
       return;
     }
@@ -600,6 +646,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       if (!info) {
         return;
       }
+      if (info.role === "ASSISTANT" && (session.bargedIn || session.turnFinalized)) return;
       info.text += content;
       if (info.role === "ASSISTANT") {
         this.noteAssistantActivity(session);
@@ -620,6 +667,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     }
 
     if ("audioOutput" in event) {
+      if (session.bargedIn || session.turnFinalized) return;
       const payload = asRecord(event.audioOutput);
       const audio = payload ? (asString(payload.content) ?? asString(payload.bytes)) : undefined;
       if (!audio) {
@@ -735,8 +783,42 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         }));
       }
 
-      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0) {
+      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "SPECULATIVE" && info.text.trim().length > 0 && !session.bargedIn && !session.turnFinalized) {
         const text = info.text.trim();
+        logger.info(`[SPEC contentEnd] text="${text.slice(0, 60)}" liveResponseId=${session.liveResponseId}`, { sessionId: session.sessionId });
+
+        // Skip Nova Sonic metadata responses (same guard as FINAL)
+        if (text.startsWith("{") && text.endsWith("}")) {
+          try { JSON.parse(text); return; } catch { /* treat as speech */ }
+        }
+
+        // Seed speculative accumulation from confirmed text if starting fresh,
+        // so the preview includes everything said so far.
+        if (!session.accumulatedSpeculativeText && session.accumulatedAssistantText) {
+          session.accumulatedSpeculativeText = session.accumulatedAssistantText;
+        }
+        session.accumulatedSpeculativeText = session.accumulatedSpeculativeText
+          ? session.accumulatedSpeculativeText + " " + text
+          : text;
+
+        const previewText = session.accumulatedSpeculativeText;
+
+        // Create/update the grey transcript bubble BEFORE audio plays
+        session.context.emit(makeEvent("tool.call", session.sessionId, {
+          callId: crypto.randomUUID(),
+          name: "convo.appendMessage",
+          arguments: JSON.stringify({
+            role: "assistant",
+            text: previewText,
+            isPartial: true,
+            liveResponseId: this.ensureLiveResponseId(session),
+          }),
+        }));
+      }
+
+      if (info.role === "ASSISTANT" && info.type === "TEXT" && info.generationStage === "FINAL" && info.text.trim().length > 0 && !session.bargedIn && !session.turnFinalized) {
+        const text = info.text.trim();
+        logger.info(`[FINAL contentEnd] text="${text.slice(0, 60)}" liveResponseId=${session.liveResponseId} specText="${session.accumulatedSpeculativeText.slice(0, 40)}"`, { sessionId: session.sessionId });
 
         // Skip Nova Sonic metadata responses (e.g., { "interrupted" : true })
         if (text.startsWith("{") && text.endsWith("}")) {
@@ -753,20 +835,27 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
           ? session.accumulatedAssistantText + " " + text
           : text;
 
-        // Emit a growing partial message so the UI shows one expanding bubble.
-        session.context.emit(makeEvent("tool.call", session.sessionId, {
-          callId: crypto.randomUUID(),
-          name: "convo.appendMessage",
-          arguments: JSON.stringify({
-            role: "assistant",
-            text: session.accumulatedAssistantText,
-            isPartial: true,
-            liveResponseId: this.ensureLiveResponseId(session),
-          }),
-        }));
+        // Only emit a bubble update if speculative text isn't already showing
+        // a longer preview — otherwise the bubble would regress to just the
+        // confirmed text, losing the read-ahead the user already saw.
+        // Also skip if liveResponseId is null — this means the turn was already
+        // finalized and this is a late-arriving FINAL event.
+        if (!session.accumulatedSpeculativeText && session.liveResponseId) {
+          session.context.emit(makeEvent("tool.call", session.sessionId, {
+            callId: crypto.randomUUID(),
+            name: "convo.appendMessage",
+            arguments: JSON.stringify({
+              role: "assistant",
+              text: session.accumulatedAssistantText,
+              isPartial: true,
+              liveResponseId: session.liveResponseId,
+            }),
+          }));
+        }
       }
 
-      if (info.role === "ASSISTANT" && info.type === "AUDIO") {
+      if (info.role === "ASSISTANT" && info.type === "AUDIO" && !session.bargedIn) {
+        logger.info(`[AUDIO contentEnd] liveResponseId=${session.liveResponseId}`, { sessionId: session.sessionId });
         session.context.emit(makeEvent("assistant.audio.end", session.sessionId, {
           ...(session.liveResponseId ? { liveResponseId: session.liveResponseId } : {}),
         }));
@@ -779,12 +868,15 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     if ("completionEnd" in event) {
       const payload = asRecord(event.completionEnd);
       const stopReason = payload ? asString(payload.stopReason) : undefined;
+      logger.info(`[completionEnd] stopReason=${stopReason} bargedIn=${session.bargedIn} liveResponseId=${session.liveResponseId} contentsSize=${session.contents.size}`, { sessionId: session.sessionId });
       if (stopReason === "INTERRUPTED" || stopReason === "BARGE_IN") {
-        void this.restartSessionAfterInterruption(session, stopReason.toLowerCase());
+        this.handleBargeIn(session, stopReason.toLowerCase());
+        session.bargedIn = false;
         return;
       }
 
       if (stopReason === "END_TURN") {
+        session.bargedIn = false;
         this.finishAssistantTurn(session, {
           emitIdle: true,
           reason: "completion_end",
@@ -814,6 +906,7 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     session.toolExecutionInFlight = false;
     session.contents.clear();
     session.accumulatedAssistantText = "";
+    session.accumulatedSpeculativeText = "";
     session.liveResponseId = null;
     return liveResponseId;
   }
@@ -849,7 +942,33 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
     outgoing.close();
   }
 
-  private async restartSessionAfterInterruption(
+  private handleBargeIn(session: SonicSession, reason: string): void {
+    logger.info(`[BARGE_IN] reason=${reason} closed=${session.closed} bargedIn=${session.bargedIn} liveResponseId=${session.liveResponseId} assistText="${session.accumulatedAssistantText.slice(0, 40)}" specText="${session.accumulatedSpeculativeText.slice(0, 40)}"`, { sessionId: session.sessionId });
+    if (session.closed || session.bargedIn) return;
+
+    // Capture liveResponseId before finalization clears it
+    const liveResponseId = session.liveResponseId;
+
+    // Finalize any accumulated text as a completed (white) message before
+    // clearing state. Omit liveResponseId so iOS doesn't match against the
+    // already-invalidated set (local interrupt handler runs before server events).
+    const didFinalize = this.finalizeAccumulatedAssistantText(session, { omitLiveResponseId: true });
+
+    this.resetAssistantTurnState(session);
+    session.bargedIn = true;
+
+    if (liveResponseId) {
+      session.context.emit(makeEvent("assistant.audio.interrupted", session.sessionId, {
+        reason,
+        // Omit liveResponseId when text was finalized to prevent iOS from
+        // deleting the just-finalized message via removePartialMessage race.
+        ...(didFinalize ? {} : { liveResponseId }),
+      }));
+    }
+    this.emitListeningState(session);
+  }
+
+  private async restartSessionAfterError(
     session: SonicSession,
     interruptionReason: string,
   ): Promise<void> {
@@ -941,6 +1060,23 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
       return;
     }
 
+    // Circuit breaker: if the same tool+args combo has failed too many times,
+    // return a hard stop error instead of executing again. Keyed by tool name +
+    // stable JSON of arguments so different arguments get a fresh count.
+    const MAX_CONSECUTIVE_FAILURES = 3;
+    const circuitKey = `${toolCall.name}:${JSON.stringify(toolCall.input)}`;
+    const priorFailures = session.toolFailureCounts.get(circuitKey) ?? 0;
+    if (priorFailures >= MAX_CONSECUTIVE_FAILURES) {
+      logger.warn(
+        `circuit breaker: ${toolCall.name} failed ${priorFailures} times consecutively, refusing to retry`,
+        { sessionId: session.sessionId },
+      );
+      this.sendToolResult(session, toolCall.id, JSON.stringify({
+        error: `${toolCall.name} has failed ${priorFailures} times in a row with the same arguments. Do NOT retry this tool with these arguments. Tell the user what went wrong and ask how they would like to proceed.`,
+      }));
+      return;
+    }
+
     session.toolExecutionInFlight = true;
     try {
       const result = await session.context.executeTool(session.sessionId, toolCall, session.context.emit);
@@ -948,42 +1084,52 @@ export class BedrockNovaSonicVoiceProvider implements VoiceProvider {
         return;
       }
 
-      const contentName = `tool-${crypto.randomUUID()}`;
+      // Track consecutive failures per tool+args for circuit breaking.
+      if (result.error) {
+        session.toolFailureCounts.set(circuitKey, priorFailures + 1);
+      } else {
+        session.toolFailureCounts.delete(circuitKey);
+      }
 
-      this.sendEvent(session, {
-        contentStart: {
-          promptName: session.promptName,
-          contentName,
-          interactive: false,
-          type: "TOOL",
-          role: "TOOL",
-          toolResultInputConfiguration: {
-            toolUseId: toolCall.id,
-            type: "TEXT",
-            textInputConfiguration: {
-              mediaType: "text/plain",
-            },
-          },
-        },
-      });
-      this.sendEvent(session, {
-        toolResult: {
-          promptName: session.promptName,
-          contentName,
-          content: result.error
-            ? JSON.stringify({ error: result.error })
-            : (result.result ?? "{}"),
-        },
-      });
-      this.sendEvent(session, {
-        contentEnd: {
-          promptName: session.promptName,
-          contentName,
-        },
-      });
+      this.sendToolResult(session, toolCall.id, result.error
+        ? JSON.stringify({ error: result.error })
+        : (result.result ?? "{}"));
     } finally {
       session.toolExecutionInFlight = false;
     }
+  }
+
+  private sendToolResult(session: SonicSession, toolUseId: string, content: string): void {
+    const contentName = `tool-${crypto.randomUUID()}`;
+    this.sendEvent(session, {
+      contentStart: {
+        promptName: session.promptName,
+        contentName,
+        interactive: false,
+        type: "TOOL",
+        role: "TOOL",
+        toolResultInputConfiguration: {
+          toolUseId,
+          type: "TEXT",
+          textInputConfiguration: {
+            mediaType: "text/plain",
+          },
+        },
+      },
+    });
+    this.sendEvent(session, {
+      toolResult: {
+        promptName: session.promptName,
+        contentName,
+        content,
+      },
+    });
+    this.sendEvent(session, {
+      contentEnd: {
+        promptName: session.promptName,
+        contentName,
+      },
+    });
   }
 
   private sendEvent(session: SonicSession, event: Record<string, unknown>): void {

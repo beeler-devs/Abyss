@@ -19,7 +19,6 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
     let id: UUID
     let spawnCallId: String
 
-    var anchorMessageID: UUID?
     var serverCardId: String?
     var agentId: String?
     var title: String
@@ -42,14 +41,12 @@ struct AgentProgressCard: Identifiable, Equatable, Sendable {
         spawnCallId: String,
         prompt: String,
         repository: String?,
-        autoCreatePR: Bool,
-        anchorMessageID: UUID? = nil
+        autoCreatePR: Bool
     ) -> AgentProgressCard {
         let repoTitle = shortRepositoryName(from: repository)
         return AgentProgressCard(
             id: UUID(),
             spawnCallId: spawnCallId,
-            anchorMessageID: anchorMessageID,
             agentId: nil,
             title: repoTitle ?? "Cursor Cloud Agent",
             repository: repository,

@@ -80,8 +80,6 @@ export class CursorClient {
       throw new Error("cursor_invalid_prompt");
     }
 
-    const mode = input.mode ?? normalizeMode(asString(input.metadata?.mode)) ?? "code";
-    const metadata = { ...(input.metadata ?? {}), mode };
     const source: Record<string, unknown> = {};
 
     if (input.repoUrl?.trim()) {
@@ -97,7 +95,6 @@ export class CursorClient {
     const body: Record<string, unknown> = {
       prompt: { text: prompt },
       source,
-      metadata,
     };
 
     if (this.webhookUrl && this.webhookSecret) {
@@ -210,6 +207,8 @@ export class CursorClient {
     if (!response.ok) {
       const errorPayload = parsed as CursorErrorPayload | null;
       const message = errorPayload?.error ?? errorPayload?.message ?? raw.slice(0, 240);
+      const bodyPreview = body ? JSON.stringify(body).slice(0, 500) : "(none)";
+      console.error(`[CursorClient] ${method} ${path} → ${response.status}: ${message} | request body: ${bodyPreview}`);
       throw new Error(`cursor_http_${response.status}:${message}`);
     }
 
@@ -261,6 +260,11 @@ function safeParseJSON(raw: string): unknown {
   } catch {
     return null;
   }
+}
+
+/** Strip GitHub URL prefix so "https://github.com/owner/repo" becomes "owner/repo". */
+function normalizeRepoUrl(url: string): string {
+  return url.replace(/^https?:\/\/github\.com\//, "");
 }
 
 function asString(value: unknown): string | undefined {

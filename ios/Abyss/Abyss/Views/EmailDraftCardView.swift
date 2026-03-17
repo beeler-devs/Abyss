@@ -6,7 +6,6 @@ struct EmailDraftCardView: View {
     let onCancel: () -> Void
     let onFieldEdit: (String, String, String) -> Void  // (to, subject, body)
     @Environment(\.colorScheme) private var colorScheme
-
     @State private var editTo: String
     @State private var editSubject: String
     @State private var editBody: String

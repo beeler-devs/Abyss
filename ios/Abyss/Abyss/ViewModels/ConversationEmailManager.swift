@@ -8,14 +8,9 @@ final class ConversationEmailManager: ObservableObject {
 
     private let eventBus: EventBus
     private var pendingToolCalls: [String: Event.ToolCall] = [:]
-    private var lastAssistantMessageID: UUID?
 
     init(eventBus: EventBus) {
         self.eventBus = eventBus
-    }
-
-    func updateLastAssistantMessageID(_ id: UUID) {
-        lastAssistantMessageID = id
     }
 
     func handleEventStream(_ event: Event) {
@@ -62,7 +57,6 @@ final class ConversationEmailManager: ObservableObject {
                 subject: msg.subject,
                 date: msg.date,
                 snippet: msg.snippet,
-                anchorMessageID: lastAssistantMessageID,
                 serverCardId: msg.cardId
             ))
         }
@@ -84,7 +78,6 @@ final class ConversationEmailManager: ObservableObject {
                 snippet: msg.snippet,
                 body: msg.body,
                 isExpanded: true,
-                anchorMessageID: lastAssistantMessageID,
                 serverCardId: msg.cardId
             ))
         }
