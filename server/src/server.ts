@@ -113,11 +113,10 @@ const memoryService = MEMORY_ENABLED && MEMORY_S3_BUCKET
       knowledgeBaseId: MEMORY_KB_ID || undefined,
       knowledgeBaseDataSourceId: MEMORY_KB_DATA_SOURCE_ID || undefined,
       awsRegion: process.env.AWS_REGION ?? "us-east-1",
-      summaryModelId: process.env.ANTHROPIC_MODEL_ID ?? "claude-haiku-4-5",
       retrieveTimeoutMs: MEMORY_RETRIEVE_TIMEOUT_MS,
       maxInjectedChars: MEMORY_MAX_INJECTED_CHARS,
       recentMemoryCount: MEMORY_RECENT_COUNT,
-    })
+    }, provider)
   : undefined;
 
 const GRAPH_VECTOR_K = parseInteger(process.env.GRAPH_VECTOR_K, 5);

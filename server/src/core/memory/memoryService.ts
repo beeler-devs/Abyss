@@ -1,8 +1,4 @@
 import {
-  BedrockRuntimeClient,
-  InvokeModelCommand,
-} from "@aws-sdk/client-bedrock-runtime";
-import {
   BedrockAgentRuntimeClient,
   RetrieveCommand,
 } from "@aws-sdk/client-bedrock-agent-runtime";
@@ -17,7 +13,7 @@ import {
   GetObjectCommand,
 } from "@aws-sdk/client-s3";
 
-import { ConversationTurn } from "../types.js";
+import { ConversationTurn, ModelProvider } from "../types.js";
 
 export interface MemoryServiceConfig {
   enabled: boolean;
@@ -26,7 +22,6 @@ export interface MemoryServiceConfig {
   knowledgeBaseId?: string;
   knowledgeBaseDataSourceId?: string;
   awsRegion: string;
-  summaryModelId: string;
   retrieveTimeoutMs: number;
   maxInjectedChars: number;
   recentMemoryCount: number;
@@ -102,22 +97,21 @@ async function streamToString(stream: NodeJS.ReadableStream): Promise<string> {
 
 export interface MemoryServiceClients {
   s3?: S3Client;
-  bedrock?: BedrockRuntimeClient;
   agentRuntime?: BedrockAgentRuntimeClient;
   bedrockAgent?: BedrockAgentClient;
 }
 
 export class MemoryService {
   private readonly config: MemoryServiceConfig;
+  private readonly provider: ModelProvider;
   private readonly s3: S3Client;
-  private readonly bedrock: BedrockRuntimeClient;
   private readonly agentRuntime: BedrockAgentRuntimeClient;
   private readonly bedrockAgent: BedrockAgentClient;
 
-  constructor(config: MemoryServiceConfig, clients?: MemoryServiceClients) {
+  constructor(config: MemoryServiceConfig, provider: ModelProvider, clients?: MemoryServiceClients) {
     this.config = config;
+    this.provider = provider;
     this.s3 = clients?.s3 ?? new S3Client({ region: config.awsRegion });
-    this.bedrock = clients?.bedrock ?? new BedrockRuntimeClient({ region: config.awsRegion });
     this.agentRuntime = clients?.agentRuntime ?? new BedrockAgentRuntimeClient({ region: config.awsRegion });
     this.bedrockAgent = clients?.bedrockAgent ?? new BedrockAgentClient({ region: config.awsRegion });
   }
@@ -173,29 +167,26 @@ Respond with JSON only:
     };
 
     try {
-      const response = await this.bedrock.send(
-        new InvokeModelCommand({
-          modelId: this.config.summaryModelId,
-          contentType: "application/json",
-          accept: "application/json",
-          body: JSON.stringify({
-            messages: [{ role: "user", content: prompt }],
-            inferenceConfig: { max_new_tokens: 512 },
-          }),
-        }),
+      const response = await this.provider.generateResponse(
+        [{ role: "user", content: prompt }],
+        undefined, // no tools
+        undefined, // no userPreferences
+        undefined, // no canvasCourseContext
+        undefined, // no modelOverride (uses default/lite)
+        "You are a conversation summarizer. Respond with JSON only.",
       );
 
-      const responseText = new TextDecoder().decode(response.body);
-      const responseJson = JSON.parse(responseText) as { output?: { message?: { content?: Array<{ text?: string }> } } };
-      const text = responseJson.output?.message?.content?.[0]?.text ?? "";
+      let text = "";
+      for await (const chunk of response.chunks) {
+        text += chunk;
+      }
+      if (!text.trim()) text = response.fullText;
 
-      // Parse JSON from response
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         parsedSummary = JSON.parse(jsonMatch[0]) as typeof parsedSummary;
       }
     } catch {
-      // If summarization fails, store a minimal record
       parsedSummary = { summary: "Session summary unavailable." };
     }
 

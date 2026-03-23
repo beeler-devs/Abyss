@@ -12,11 +12,22 @@ function makeConfig(overrides: Partial<MemoryServiceConfig> = {}): MemoryService
     s3Bucket: "test-bucket",
     s3Prefix: "memories/",
     awsRegion: "us-east-1",
-    summaryModelId: "us.amazon.nova-2-lite-v1:0",
     retrieveTimeoutMs: 1500,
     maxInjectedChars: 900,
     recentMemoryCount: 3,
     ...overrides,
+  };
+}
+
+function makeMockProvider(summaryJson: string): any {
+  return {
+    name: "test",
+    async generateResponse() {
+      return {
+        fullText: summaryJson,
+        chunks: (async function* () { yield summaryJson; })(),
+      };
+    },
   };
 }
 
@@ -41,7 +52,7 @@ test("summarizeAndStore skips sessions with fewer than 3 user turns and no tools
     },
   };
 
-  const service = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const service = new MemoryService(makeConfig(), makeMockProvider("{}"), { s3: mockS3 as never });
   const history: ConversationTurn[] = [
     { role: "user", content: "Hi" },
     { role: "assistant", content: "Hello" },
@@ -61,20 +72,11 @@ test("summarizeAndStore writes JSON to S3 for meaningful session", async () => {
     },
   };
 
-  // Bedrock returns a valid summary
-  const mockBedrock = {
-    send: async () => ({
-      body: new TextEncoder().encode(JSON.stringify({
-        output: {
-          message: {
-            content: [{ text: '{"summary":"Fixed auth bug","decisions":["Use JWT"],"blockers":[],"nextSteps":["Deploy"]}' }],
-          },
-        },
-      })),
-    }),
-  };
-
-  const service = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+  const service = new MemoryService(
+    makeConfig(),
+    makeMockProvider('{"summary":"Fixed auth bug","decisions":["Use JWT"],"blockers":[],"nextSteps":["Deploy"]}'),
+    { s3: mockS3 as never },
+  );
   const result = await service.summarizeAndStore("user1", "sess1", threeUserTurns());
   assert.ok(result !== null, "should return MemoryDocument");
   assert.equal(result!.memoryUserKey, "user1");
@@ -89,20 +91,14 @@ test("summarizeAndStore writes JSON to S3 for meaningful session", async () => {
 test("summarizeAndStore triggers KB ingestion when knowledgeBaseId and knowledgeBaseDataSourceId are configured", async () => {
   let ingestionTriggered = false;
   const mockS3 = { send: async () => ({}) };
-  const mockBedrock = {
-    send: async () => ({
-      body: new TextEncoder().encode(JSON.stringify({
-        output: { message: { content: [{ text: '{"summary":"test","decisions":[],"blockers":[],"nextSteps":[]}' }] } },
-      })),
-    }),
-  };
   const mockBedrockAgent = {
     send: async () => { ingestionTriggered = true; return {}; },
   };
 
   const service = new MemoryService(
     makeConfig({ knowledgeBaseId: "kb-123", knowledgeBaseDataSourceId: "ds-456" }),
-    { s3: mockS3 as never, bedrock: mockBedrock as never, bedrockAgent: mockBedrockAgent as never },
+    makeMockProvider('{"summary":"test","decisions":[],"blockers":[],"nextSteps":[]}'),
+    { s3: mockS3 as never, bedrockAgent: mockBedrockAgent as never },
   );
 
   await service.summarizeAndStore("user1", "sess1", threeUserTurns());
@@ -112,7 +108,7 @@ test("summarizeAndStore triggers KB ingestion when knowledgeBaseId and knowledge
 });
 
 test("retrieveContext returns null when disabled", async () => {
-  const service = new MemoryService(makeConfig({ enabled: false }));
+  const service = new MemoryService(makeConfig({ enabled: false }), makeMockProvider("{}"));
   const result = await service.retrieveContext({ memoryUserKey: "user1" });
   assert.equal(result, null);
 });
@@ -149,7 +145,7 @@ test("retrieveContext returns formatted context from recent S3 memories", async 
     },
   };
 
-  const service = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const service = new MemoryService(makeConfig(), makeMockProvider("{}"), { s3: mockS3 as never });
   const result = await service.retrieveContext({ memoryUserKey: "user1" });
   assert.ok(result !== null, "should return context");
   assert.ok(result!.startsWith("Prior context:"), "should start with 'Prior context:'");
@@ -183,7 +179,7 @@ test("retrieveContext truncates injected context to maxInjectedChars", async () 
     },
   };
 
-  const service = new MemoryService(makeConfig({ maxInjectedChars: 100 }), { s3: mockS3 as never });
+  const service = new MemoryService(makeConfig({ maxInjectedChars: 100 }), makeMockProvider("{}"), { s3: mockS3 as never });
   const result = await service.retrieveContext({ memoryUserKey: "user1" });
   assert.ok(result !== null);
   assert.ok(result!.length <= 100, `context should be <= 100 chars, got ${result!.length}`);
@@ -193,7 +189,7 @@ test("retrieveContext returns null when S3 list is empty", async () => {
   const mockS3 = {
     send: async () => ({ Contents: [] }),
   };
-  const service = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const service = new MemoryService(makeConfig(), makeMockProvider("{}"), { s3: mockS3 as never });
   const result = await service.retrieveContext({ memoryUserKey: "user1" });
   assert.equal(result, null);
 });
@@ -203,7 +199,7 @@ test("retrieveContext returns null when S3 list exceeds timeout", async () => {
     send: async () => new Promise<never>(() => { /* never resolves */ }),
   };
 
-  const service = new MemoryService(makeConfig({ retrieveTimeoutMs: 50 }), { s3: mockS3 as never });
+  const service = new MemoryService(makeConfig({ retrieveTimeoutMs: 50 }), makeMockProvider("{}"), { s3: mockS3 as never });
   const start = Date.now();
   const result = await service.retrieveContext({ memoryUserKey: "user1" });
   const elapsed = Date.now() - start;
@@ -213,7 +209,7 @@ test("retrieveContext returns null when S3 list exceeds timeout", async () => {
 });
 
 test("summarizeAndStore returns null for non-meaningful session", async () => {
-  const service = new MemoryService(makeConfig(), { s3: { send: async () => ({}) } as never });
+  const service = new MemoryService(makeConfig(), makeMockProvider("{}"), { s3: { send: async () => ({}) } as never });
   const result = await service.summarizeAndStore("user1", "sess1", [
     { role: "user", content: "Hi" },
     { role: "assistant", content: "Hello" },

@@ -26,11 +26,23 @@ function makeConfig(overrides: Partial<MemoryServiceConfig> = {}): MemoryService
     s3Bucket: "test-bucket",
     s3Prefix: "memories/",
     awsRegion: "us-east-1",
-    summaryModelId: "us.amazon.nova-2-lite-v1:0",
     retrieveTimeoutMs: 1500,
     maxInjectedChars: 900,
     recentMemoryCount: 3,
     ...overrides,
+  };
+}
+
+function makeSummaryProvider(summaryJson?: string): ModelProvider {
+  return {
+    name: "mock-summary",
+    async generateResponse(): Promise<ModelResponse> {
+      const text = summaryJson ?? '{"summary":"test","decisions":[],"blockers":[],"nextSteps":[]}';
+      return {
+        fullText: text,
+        chunks: (async function* () { yield text; })(),
+      };
+    },
   };
 }
 
@@ -59,7 +71,7 @@ test("on first user turn, injects memory as user turn when available", async () 
     },
   };
 
-  const memService = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const memService = new MemoryService(makeConfig(), makeSummaryProvider(), { s3: mockS3 as never });
   const contextGraphService = new ContextGraphService(
     { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
     { memoryService: memService },
@@ -119,7 +131,7 @@ test("does not inject memory twice in same session (memoryHydrated guard)", asyn
     },
   };
 
-  const memService = new MemoryService(makeConfig(), { s3: mockS3 as never });
+  const memService = new MemoryService(makeConfig(), makeSummaryProvider(), { s3: mockS3 as never });
   const contextGraphService = new ContextGraphService(
     { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
     { memoryService: memService },
@@ -141,7 +153,7 @@ test("does not inject memory twice in same session (memoryHydrated guard)", asyn
 });
 
 test("finalizeSession no-ops when session missing", async () => {
-  const memService = new MemoryService(makeConfig());
+  const memService = new MemoryService(makeConfig(), makeSummaryProvider());
   const contextGraphService = new ContextGraphService(
     { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
     { memoryService: memService },
@@ -157,9 +169,16 @@ test("finalizeSession no-ops when session missing", async () => {
 
 test("finalizeSession no-ops when session has no memoryUserKey", async () => {
   let summarizeCalled = false;
-  const mockBedrock = { send: async () => { summarizeCalled = true; return {}; } };
   const mockS3 = { send: async () => ({}) };
-  const memService = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+  const mockSummaryProvider = {
+    name: "mock-summary",
+    async generateResponse(): Promise<ModelResponse> {
+      summarizeCalled = true;
+      const text = '{"summary":"test","decisions":[],"blockers":[],"nextSteps":[]}';
+      return { fullText: text, chunks: (async function* () { yield text; })() };
+    },
+  };
+  const memService = new MemoryService(makeConfig(), mockSummaryProvider, { s3: mockS3 as never });
   const contextGraphService = new ContextGraphService(
     { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
     { memoryService: memService },
@@ -188,8 +207,7 @@ test("finalizeSession does not write to S3 for session with fewer than 3 user tu
       return {};
     },
   };
-  const mockBedrock = { send: async () => ({}) };
-  const memService = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+  const memService = new MemoryService(makeConfig(), makeSummaryProvider(), { s3: mockS3 as never });
   const contextGraphService = new ContextGraphService(
     { retrieveTimeoutMs: 1500, maxInjectedChars: 900 },
     { memoryService: memService },
@@ -211,16 +229,13 @@ test("finalizeSession does not write to S3 for session with fewer than 3 user tu
 
 test("finalizeSession calls summarizeAndStore for meaningful session", async () => {
   let summarizeCalled = false;
-  const mockBedrock = {
-    send: async () => ({
-      body: new TextEncoder().encode(JSON.stringify({
-        output: { message: { content: [{ text: '{"summary":"test","decisions":[],"blockers":[],"nextSteps":[]}' }] } },
-      })),
-    }),
-  };
   const mockS3 = { send: async () => ({}) };
 
-  const memService = new MemoryService(makeConfig(), { s3: mockS3 as never, bedrock: mockBedrock as never });
+  const memService = new MemoryService(
+    makeConfig(),
+    makeSummaryProvider('{"summary":"test","decisions":[],"blockers":[],"nextSteps":[]}'),
+    { s3: mockS3 as never },
+  );
 
   // Wrap summarizeAndStore to detect call
   const origSummarize = memService.summarizeAndStore.bind(memService);
