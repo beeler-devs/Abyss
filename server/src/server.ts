@@ -26,7 +26,6 @@ import { BedrockNovaSonicVoiceProvider } from "./voice/bedrockNovaSonicVoiceProv
 import { VoiceProvider } from "./voice/types.js";
 
 const PORT = parseInteger(process.env.PORT, 8080);
-const MODEL_PROVIDER = (process.env.MODEL_PROVIDER ?? "bedrock").toLowerCase() === "anthropic" ? "anthropic" : "bedrock";
 const VOICE_PROVIDER = (process.env.VOICE_PROVIDER ?? "nova-sonic").toLowerCase();
 const MAX_EVENT_BYTES = parseInteger(process.env.MAX_EVENT_BYTES, 65_536);
 const MAX_TURNS = parseInteger(process.env.MAX_TURNS, 20);
@@ -53,8 +52,7 @@ const MEMORY_KB_DATA_SOURCE_ID = process.env.MEMORY_KB_DATA_SOURCE_ID ?? "";
 const MEMORY_RETRIEVE_TIMEOUT_MS = parseInteger(process.env.MEMORY_RETRIEVE_TIMEOUT_MS, 1500);
 const MEMORY_MAX_INJECTED_CHARS = parseInteger(process.env.MEMORY_MAX_INJECTED_CHARS, 900);
 const MEMORY_RECENT_COUNT = parseInteger(process.env.MEMORY_RECENT_COUNT, 3);
-const MEMORY_SUMMARY_MODEL_ID = process.env.MEMORY_SUMMARY_MODEL_ID ?? "us.amazon.nova-2-lite-v1:0";
-const BEDROCK_PRO_MODEL_ID = process.env.BEDROCK_PRO_MODEL_ID ?? "";
+const ANTHROPIC_PRO_MODEL_ID = process.env.ANTHROPIC_PRO_MODEL_ID ?? "";
 const NEPTUNE_GRAPH_ID = process.env.NEPTUNE_GRAPH_ID ?? "";
 const NEPTUNE_GRAPH_ENDPOINT = process.env.NEPTUNE_GRAPH_ENDPOINT ?? "";
 const NEPTUNE_GRAPH_REGION = process.env.NEPTUNE_GRAPH_REGION ?? process.env.AWS_REGION ?? "us-east-1";
@@ -62,15 +60,10 @@ const EMBEDDING_MODEL_ID = process.env.EMBEDDING_MODEL_ID ?? "amazon.titan-embed
 const EMBEDDING_DIMENSIONS = parseInteger(process.env.EMBEDDING_DIMENSIONS, 256);
 
 const provider = buildProvider({
-  modelProvider: MODEL_PROVIDER,
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-  anthropicModel: process.env.ANTHROPIC_MODEL ?? "claude-haiku-4-5",
-  anthropicMaxTokens: parseInteger(process.env.ANTHROPIC_MAX_TOKENS, 512),
-  anthropicPartialDelayMs: parseInteger(process.env.ANTHROPIC_PARTIAL_DELAY_MS, 60),
-  bedrockTextModelId: process.env.BEDROCK_TEXT_MODEL_ID ?? "us.amazon.nova-2-lite-v1:0",
-  bedrockMaxTokens: parseInteger(process.env.BEDROCK_MAX_TOKENS, 512),
-  bedrockPartialDelayMs: parseInteger(process.env.BEDROCK_PARTIAL_DELAY_MS, 60),
-  awsRegion: process.env.AWS_REGION ?? "us-east-1",
+  anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
+  model: process.env.ANTHROPIC_MODEL_ID ?? "claude-haiku-4-5",
+  proModel: ANTHROPIC_PRO_MODEL_ID || undefined,
+  maxTokens: parseInteger(process.env.ANTHROPIC_MAX_TOKENS, 4096),
 });
 const voiceProvider: VoiceProvider | null = VOICE_PROVIDER === "nova-sonic"
   ? new BedrockNovaSonicVoiceProvider({
@@ -120,7 +113,7 @@ const memoryService = MEMORY_ENABLED && MEMORY_S3_BUCKET
       knowledgeBaseId: MEMORY_KB_ID || undefined,
       knowledgeBaseDataSourceId: MEMORY_KB_DATA_SOURCE_ID || undefined,
       awsRegion: process.env.AWS_REGION ?? "us-east-1",
-      summaryModelId: MEMORY_SUMMARY_MODEL_ID,
+      summaryModelId: process.env.ANTHROPIC_MODEL_ID ?? "claude-haiku-4-5",
       retrieveTimeoutMs: MEMORY_RETRIEVE_TIMEOUT_MS,
       maxInjectedChars: MEMORY_MAX_INJECTED_CHARS,
       recentMemoryCount: MEMORY_RECENT_COUNT,
@@ -204,7 +197,7 @@ const conductor = new ConductorService(
       summarizeAfter: SUMMARIZE_AFTER_TURNS,
       recentToKeep: SUMMARIZE_RECENT_KEEP,
     },
-    proModelId: BEDROCK_PRO_MODEL_ID || undefined,
+    proModelId: ANTHROPIC_PRO_MODEL_ID || undefined,
   },
 );
 

@@ -1,37 +1,22 @@
 import { ModelProvider } from "../core/types.js";
-import { AnthropicProvider } from "./anthropicProvider.js";
-import { BedrockNovaProvider } from "./bedrockNovaProvider.js";
+import { ClaudeProvider } from "./claudeProvider.js";
 
 export interface ProviderConfig {
-  modelProvider: "anthropic" | "bedrock";
-  anthropicApiKey?: string;
-  anthropicModel: string;
-  anthropicMaxTokens: number;
-  anthropicPartialDelayMs: number;
-  bedrockTextModelId: string;
-  bedrockMaxTokens: number;
-  bedrockPartialDelayMs: number;
-  awsRegion: string;
+  anthropicApiKey: string;
+  model: string;
+  proModel?: string;
+  maxTokens: number;
 }
 
 export function buildProvider(config: ProviderConfig): ModelProvider {
-  if (config.modelProvider === "bedrock") {
-    return new BedrockNovaProvider({
-      modelId: config.bedrockTextModelId,
-      region: config.awsRegion,
-      maxTokens: config.bedrockMaxTokens,
-      partialDelayMs: config.bedrockPartialDelayMs,
-    });
-  }
-
   if (!config.anthropicApiKey) {
-    throw new Error("ANTHROPIC_API_KEY is required when MODEL_PROVIDER=anthropic");
+    throw new Error("ANTHROPIC_API_KEY is required");
   }
 
-  return new AnthropicProvider({
+  return new ClaudeProvider({
     apiKey: config.anthropicApiKey,
-    model: config.anthropicModel,
-    maxTokens: config.anthropicMaxTokens,
-    partialDelayMs: config.anthropicPartialDelayMs,
+    model: config.model,
+    proModel: config.proModel,
+    maxTokens: config.maxTokens,
   });
 }
