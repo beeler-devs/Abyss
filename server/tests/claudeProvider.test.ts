@@ -151,7 +151,6 @@ test("model override selects pro model", () => {
   const provider = new ClaudeProvider({
     apiKey: "test-key",
     model: "claude-haiku-4-5",
-    proModel: "claude-sonnet-4-5-20250514",
     maxTokens: 4096,
   }) as any;
   assert.equal(provider.resolveModel(undefined), "claude-haiku-4-5");

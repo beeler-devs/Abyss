@@ -4,7 +4,6 @@ import { ClaudeProvider } from "./claudeProvider.js";
 export interface ProviderConfig {
   anthropicApiKey: string;
   model: string;
-  proModel?: string;
   maxTokens: number;
 }
 
@@ -16,7 +15,6 @@ export function buildProvider(config: ProviderConfig): ModelProvider {
   return new ClaudeProvider({
     apiKey: config.anthropicApiKey,
     model: config.model,
-    proModel: config.proModel,
     maxTokens: config.maxTokens,
   });
 }

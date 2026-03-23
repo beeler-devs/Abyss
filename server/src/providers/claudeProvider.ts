@@ -37,7 +37,6 @@ async function* streamFromBuffer(chunks: string[]): AsyncIterable<string> {
 export interface ClaudeConfig {
   apiKey: string;
   model: string;
-  proModel?: string;
   maxTokens: number;
 }
 
@@ -184,7 +183,7 @@ export class ClaudeProvider implements ModelProvider {
       parts.push(canvasCourseContext);
     }
 
-    return parts.join(" ");
+    return parts.join("\n\n");
   }
 
   private async fetchSSE(
@@ -220,7 +219,7 @@ export class ClaudeProvider implements ModelProvider {
 
     if (!response.ok) {
       const bodyText = await response.text();
-      throw new Error(`anthropic_http_${response.status}:${bodyText.slice(0, 200)}`);
+      throw new Error(`anthropic_http_${response.status}:${bodyText.slice(0, 500)}`);
     }
 
     if (!response.body) {
@@ -240,7 +239,7 @@ export class ClaudeProvider implements ModelProvider {
       for (const line of lines) {
         if (line.startsWith("data: ")) {
           const data = line.slice(6).trim();
-          if (data === "[DONE]") continue;
+          if (data === "[DONE]") continue; // defensive: Anthropic doesn't emit [DONE] but guard against future changes
           try {
             events.push(JSON.parse(data));
           } catch {

@@ -62,7 +62,6 @@ const EMBEDDING_DIMENSIONS = parseInteger(process.env.EMBEDDING_DIMENSIONS, 256)
 const provider = buildProvider({
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
   model: process.env.ANTHROPIC_MODEL_ID ?? "claude-haiku-4-5",
-  proModel: ANTHROPIC_PRO_MODEL_ID || undefined,
   maxTokens: parseInteger(process.env.ANTHROPIC_MAX_TOKENS, 4096),
 });
 const voiceProvider: VoiceProvider | null = VOICE_PROVIDER === "nova-sonic"
