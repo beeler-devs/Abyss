@@ -87,6 +87,65 @@ export class ClaudeProvider implements ModelProvider {
   }
 
   /** Exposed for testing. */
+  resolveModel(modelOverride?: string): string {
+    return modelOverride ?? this.config.model;
+  }
+
+  /** Exposed for testing. */
+  resolveMaxTokens(withTools: boolean): number {
+    if (!withTools) return this.config.maxTokens;
+    return Math.min(this.config.maxTokens * 4, 16384);
+  }
+
+  /** Exposed for testing. Parses pre-parsed SSE event objects into text + tool calls. */
+  parseSSEEvents(
+    events: Array<Record<string, any>>,
+    toolNameToOriginal: Map<string, string>,
+  ): { fullText: string; toolCalls: ToolCallRequest[] } {
+    const textParts: string[] = [];
+    const toolCalls: ToolCallRequest[] = [];
+
+    // Accumulators keyed by content block index
+    const toolInputBuffers = new Map<number, string>();
+    const toolMeta = new Map<number, { id: string; name: string }>();
+
+    for (const event of events) {
+      if (event.type === "content_block_start") {
+        const block = event.content_block;
+        if (block?.type === "tool_use") {
+          toolMeta.set(event.index, { id: block.id, name: block.name });
+          toolInputBuffers.set(event.index, "");
+        }
+      } else if (event.type === "content_block_delta") {
+        const delta = event.delta;
+        if (delta?.type === "text_delta" && typeof delta.text === "string") {
+          textParts.push(delta.text);
+        } else if (delta?.type === "input_json_delta" && typeof delta.partial_json === "string") {
+          const existing = toolInputBuffers.get(event.index) ?? "";
+          toolInputBuffers.set(event.index, existing + delta.partial_json);
+        }
+      } else if (event.type === "content_block_stop") {
+        const meta = toolMeta.get(event.index);
+        if (meta) {
+          const jsonStr = toolInputBuffers.get(event.index) ?? "{}";
+          let input: Record<string, unknown> = {};
+          try {
+            input = JSON.parse(jsonStr);
+          } catch {
+            // Malformed tool input — use empty object
+          }
+          const originalName = toolNameToOriginal.get(meta.name) ?? meta.name;
+          toolCalls.push({ id: meta.id, name: originalName, input });
+          toolMeta.delete(event.index);
+          toolInputBuffers.delete(event.index);
+        }
+      }
+    }
+
+    return { fullText: textParts.join("").trim(), toolCalls };
+  }
+
+  /** Exposed for testing. */
   buildMessages(conversation: ConversationTurn[]): AnthropicRequestMessage[] {
     // Collect all resolved tool_use IDs from tool result turns.
     const resolvedToolUseIds = new Set<string>();

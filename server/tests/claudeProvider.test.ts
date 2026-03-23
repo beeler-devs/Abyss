@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { ClaudeProvider } from "../src/providers/claudeProvider.js";
 import { ConversationTurn, ToolDefinition } from "../src/core/types.js";
 
+
 // Helper to access private methods for unit testing.
 // We test through the public interface where possible, but buildMessages
 // and tool name logic are internal and need direct testing.
@@ -96,4 +97,89 @@ test("tool names: dots replaced with underscores", () => {
   assert.equal(safeTools[1].name, "bridge_exec_run");
   assert.equal(toolNameToOriginal.get("gmail_inbox"), "gmail.inbox");
   assert.equal(toolNameToOriginal.get("bridge_exec_run"), "bridge.exec.run");
+});
+
+test("parseSSEEvents assembles text from text_delta events", async () => {
+  const provider = createProvider() as any;
+  const events = [
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello " } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "world" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_stop" },
+  ];
+  const result = provider.parseSSEEvents(events, new Map());
+  assert.equal(result.fullText, "Hello world");
+  assert.equal(result.toolCalls.length, 0);
+});
+
+test("parseSSEEvents extracts tool calls from tool_use events", async () => {
+  const provider = createProvider() as any;
+  const toolNameToOriginal = new Map([["gmail_inbox", "gmail.inbox"]]);
+  const events = [
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu_1", name: "gmail_inbox" } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: '{"max' } },
+    { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: 'Results":5}' } },
+    { type: "content_block_stop", index: 0 },
+    { type: "message_stop" },
+  ];
+  const result = provider.parseSSEEvents(events, toolNameToOriginal);
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].id, "tu_1");
+  assert.equal(result.toolCalls[0].name, "gmail.inbox");
+  assert.deepEqual(result.toolCalls[0].input, { maxResults: 5 });
+});
+
+test("parseSSEEvents handles mixed text + tool_use response", async () => {
+  const provider = createProvider() as any;
+  const events = [
+    { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Let me check." } },
+    { type: "content_block_stop", index: 0 },
+    { type: "content_block_start", index: 1, content_block: { type: "tool_use", id: "tu_2", name: "web_search" } },
+    { type: "content_block_delta", index: 1, delta: { type: "input_json_delta", partial_json: '{"query":"test"}' } },
+    { type: "content_block_stop", index: 1 },
+    { type: "message_stop" },
+  ];
+  const result = provider.parseSSEEvents(events, new Map());
+  assert.equal(result.fullText, "Let me check.");
+  assert.equal(result.toolCalls.length, 1);
+  assert.equal(result.toolCalls[0].name, "web_search");
+});
+
+test("model override selects pro model", () => {
+  const provider = new ClaudeProvider({
+    apiKey: "test-key",
+    model: "claude-haiku-4-5",
+    proModel: "claude-sonnet-4-5-20250514",
+    maxTokens: 4096,
+  }) as any;
+  assert.equal(provider.resolveModel(undefined), "claude-haiku-4-5");
+  assert.equal(provider.resolveModel("claude-sonnet-4-5-20250514"), "claude-sonnet-4-5-20250514");
+});
+
+test("parseSSEEvents handles empty tool input JSON", async () => {
+  const provider = createProvider() as any;
+  const events = [
+    { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "tu_3", name: "test_tool" } },
+    // No input_json_delta events — empty input
+    { type: "content_block_stop", index: 0 },
+    { type: "message_stop" },
+  ];
+  const result = provider.parseSSEEvents(events, new Map());
+  assert.equal(result.toolCalls.length, 1);
+  assert.deepEqual(result.toolCalls[0].input, {});
+});
+
+test("max tokens multiplied by 4 when tools present, capped at 16384", () => {
+  const provider = createProvider() as any;
+  assert.equal(provider.resolveMaxTokens(false), 4096);
+  assert.equal(provider.resolveMaxTokens(true), 16384);
+  // Provider with small maxTokens
+  const smallProvider = new ClaudeProvider({
+    apiKey: "test-key",
+    model: "claude-haiku-4-5",
+    maxTokens: 1024,
+  }) as any;
+  assert.equal(smallProvider.resolveMaxTokens(true), 4096);
 });
