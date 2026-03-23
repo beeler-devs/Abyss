@@ -86,6 +86,25 @@ test("buildMessages ensures first message is user role", () => {
   assert.equal(messages[0].role, "user");
 });
 
+test("buildMessages translates dotted tool names in assistant history to underscores", () => {
+  const provider = createProvider() as any;
+  const turns: ConversationTurn[] = [
+    { role: "user", content: "Check my email" },
+    {
+      role: "assistant",
+      content: [
+        { id: "tc1", name: "gmail.inbox", input: {} },
+      ],
+    },
+    { role: "tool", content: "3 emails", tool_use_id: "tc1", tool_name: "gmail.inbox" },
+    { role: "user", content: "Thanks" },
+  ];
+  const messages = provider.buildMessages(turns);
+  const assistantMsg = messages[1];
+  assert.ok(Array.isArray(assistantMsg.content));
+  assert.equal(assistantMsg.content[0].name, "gmail_inbox");
+});
+
 test("tool names: dots replaced with underscores", () => {
   const provider = createProvider() as any;
   const tools: ToolDefinition[] = [

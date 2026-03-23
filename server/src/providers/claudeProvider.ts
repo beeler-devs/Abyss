@@ -109,11 +109,12 @@ export class ClaudeProvider implements ModelProvider {
 
     const { fullText, toolCalls } = this.parseSSEEvents(sseEvents, toolNameToOriginal);
 
-    // Build chunks from buffered text for conductor's assistant.speech.partial emission.
-    const textChunks = chunkBufferedText(fullText);
+    // Compute fallback before chunking so chunks and fullText stay consistent.
+    const resolvedText = fullText || (toolCalls.length > 0 ? "" : "I heard you, but the model returned an empty response. Could you try again?");
+    const textChunks = chunkBufferedText(resolvedText);
 
     const response: ModelResponse = {
-      fullText: fullText || (toolCalls.length > 0 ? "" : "I heard you, but the model returned an empty response. Could you try again?"),
+      fullText: resolvedText,
       chunks: streamFromBuffer(textChunks),
     };
 
@@ -391,7 +392,7 @@ export class ClaudeProvider implements ModelProvider {
           content: resolved.map((tc) => ({
             type: "tool_use" as const,
             id: tc.id,
-            name: tc.name,
+            name: tc.name.replace(/\./g, "_"),
             input: tc.input,
           })),
         });
