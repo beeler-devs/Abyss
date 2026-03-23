@@ -152,5 +152,6 @@ export interface ModelProvider {
     userPreferences?: Record<string, string>,
     canvasCourseContext?: string,
     modelOverride?: string,
+    systemPrompt?: string,
   ): Promise<ModelResponse>;
 }
