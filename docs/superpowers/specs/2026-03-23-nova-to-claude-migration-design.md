@@ -32,7 +32,7 @@ Switch the conversational AI backbone from Amazon Nova to Claude for improved re
 - Returns `ModelResponse` with `fullText`, `chunks`, and `toolCalls` populated from the stream
 - SSE event parsing: `content_block_start` (type `tool_use` creates a new tool call), `content_block_delta` (type `text_delta` for text tokens, `input_json_delta` for tool input JSON fragments), `content_block_stop` (finalize and JSON-parse accumulated tool input), `message_stop` (end of response)
 - Tool call JSON arrives as incremental string fragments that must be accumulated per content block index and parsed after `content_block_stop`
-- **Timeout strategy:** Use a 10-second timeout for initial connection (`AbortSignal.timeout`). No timeout on the stream itself — SSE keep-alive events prevent stale connections.
+- **Timeout strategy:** Use a 120-second `AbortSignal.timeout` on the full fetch+stream operation. This covers both connection establishment and the entire SSE stream. 120s is generous enough for long tool-using responses from Claude while still catching stuck connections. `AbortSignal.timeout` applies to the whole operation (not just connection), so this is the effective ceiling for any single LLM call.
 
 **Streaming + tool call interaction with the conductor:**
 
