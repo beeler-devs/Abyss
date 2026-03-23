@@ -122,7 +122,7 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 
 **Flow:** LLM calls `preferences.set(key, value)` → `UserPreferencesStore` writes to UserDefaults → `PreferencesSetTool.onUpdate` sends `preferences.sync` event to server → `ConductorService` updates `session.userPreferences`. On connect/reconnect, preferences are sent via `session.start` payload.
 
-**Dynamic system prompt:** Both providers (`bedrockNovaProvider.ts`, `anthropicProvider.ts`) accept `userPreferences` in `generateResponse()` and append them to the system prompt as `"User preferences (apply throughout): - key: value"`.
+**Dynamic system prompt:** `claudeProvider.ts` accepts `userPreferences` in `generateResponse()` and appends them to the system prompt as `"User preferences (apply throughout): - key: value"`.
 
 **Key convention:** `user.name`, `user.timezone`, `communication.style`, `communication.verbosity`, `email.style`, `email.signoff`, `bridge.claude.allowedTools` (comma-separated Claude Code tools: Bash, Read, Edit, Write, MultiEdit, Glob, Grep, LS, Agent, WebFetch, WebSearch, NotebookEdit, TodoRead, TodoWrite), `custom.*` for free-form.
 
@@ -148,12 +148,10 @@ LLM-writable preference store that persists across sessions. iOS is source of tr
 - `server/src/voice/` — Voice providers; `bedrockNovaSonicVoiceProvider.ts` for Nova Sonic streaming
 
 ### Model Providers
-Selected via `MODEL_PROVIDER` env var:
-- `bedrock` (default) — Amazon Nova via AWS Bedrock (`bedrockNovaProvider.ts`)
-- `anthropic` — Claude via Anthropic API (`anthropicProvider.ts`)
+Claude via Anthropic API (`claudeProvider.ts`). Selected model via `ANTHROPIC_MODEL_ID` env var (default: `claude-haiku-4-5`).
 
-### Dynamic Model Routing (Bedrock)
-When `BEDROCK_PRO_MODEL_ID` is set, requests are routed to Nova Pro for heavy tasks and Nova Lite for everything else. Routing is deterministic based on tool availability — if any "heavy" tool (bridge.claude.run, bridge.exec.run, bridge.exec.start, bridge.nova.start, bridge.nova.act, cursor.agent.spawn, webqa.cursor.run) is in the available tools array, the request uses Pro. Title generation and context summarization always use Lite (no `modelOverride` passed). The `classifyModelTier()` method in `ConductorService` handles routing and logs `model.routing tier=pro` when Pro is selected.
+### Dynamic Model Routing
+When `ANTHROPIC_PRO_MODEL_ID` is set, requests are routed to the pro model (e.g. Sonnet) for heavy tasks and the default model (e.g. Haiku) for everything else. Routing is deterministic based on tool availability — if any "heavy" tool (bridge.claude.run, bridge.exec.run, bridge.exec.start, bridge.nova.start, bridge.nova.act, cursor.agent.spawn, webqa.cursor.run) is in the available tools array, the request uses Pro. Title generation and context summarization always use the default model (no `modelOverride` passed). The `classifyModelTier()` method in `ConductorService` handles routing and logs `model.routing tier=pro` when Pro is selected.
 
 ### Bridge Pairing
 macOS bridge connects to `/ws` with a `bridge.pair` event. Server tracks `deviceId → WebSocket`. When a bridge tool call arrives, `toolRouter` finds the paired device and forwards it; the bridge executes and returns a `tool.result`.
@@ -270,18 +268,18 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | Variable | Default | Notes |
 |---|---|---|
 | `PORT` | 8080 | WebSocket server port |
-| `MODEL_PROVIDER` | `bedrock` | `bedrock` or `anthropic` |
 | `VOICE_PROVIDER` | `nova-sonic` | `local` or `nova-sonic` |
-| `BEDROCK_TEXT_MODEL_ID` | `us.amazon.nova-2-lite-v1:0` | Primary LLM (Lite) |
-| `BEDROCK_PRO_MODEL_ID` | — | Pro model for heavy tasks (e.g. `us.amazon.nova-2-pro-v1:0`) |
-| `ANTHROPIC_API_KEY` | — | Required if using `anthropic` provider |
-| `AWS_REGION` | `us-east-1` | Required for Bedrock |
+| `ANTHROPIC_API_KEY` | — | Required; Anthropic API key for Claude |
+| `ANTHROPIC_MODEL_ID` | `claude-haiku-4-5` | Primary LLM (default/lite) |
+| `ANTHROPIC_PRO_MODEL_ID` | — | Pro model for heavy tasks (e.g. `claude-sonnet-4-5-20250514`) |
+| `ANTHROPIC_MAX_TOKENS` | `4096` | Max tokens per response |
+| `AWS_REGION` | `us-east-1` | Required for Nova Sonic voice |
 | `CURSOR_API_KEY` | — | Optional; enables server-side Cursor agent tools |
 | `GOOGLE_CLIENT_ID` | — | Required for Gmail + Calendar OAuth |
 | `GOOGLE_CLIENT_SECRET` | — | Required for Gmail + Calendar OAuth |
 | `SEARCH_API_KEY` | — | Optional; enables `web.search` tool (Brave Search API) |
 
-AWS credentials are resolved via Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or standard SDK chain (profile, env vars, or instance role).
+AWS credentials are resolved via Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or standard SDK chain (profile, env vars, or instance role). AWS is only required for Nova Sonic voice; the text LLM uses Anthropic directly.
 
 ## AWS Infrastructure
 
