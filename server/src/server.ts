@@ -17,6 +17,7 @@ import { GmailClient } from "./integrations/gmailClient.js";
 import { exchangeGoogleCode } from "./integrations/gmailAuth.js";
 import { GitHubClient } from "./integrations/githubClient.js";
 import { SearchClient } from "./integrations/searchClient.js";
+import { OpenClawClient } from "./integrations/openclawClient.js";
 import { buildProvider } from "./providers/index.js";
 import { MemoryService } from "./core/memory/memoryService.js";
 import { ContextGraphService } from "./contextGraph/contextGraphService.js";
@@ -40,6 +41,11 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 const CURSOR_API_KEY = process.env.CURSOR_API_KEY ?? "";
 const SEARCH_API_KEY = process.env.SEARCH_API_KEY ?? "";
+// OpenClaw: local gateway running on this machine (loopback-only by default).
+// Set OPENCLAW_GATEWAY_URL to enable openclaw.* tools; leave blank on ECS.
+const OPENCLAW_GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL ?? "";
+const OPENCLAW_GATEWAY_TOKEN = process.env.OPENCLAW_GATEWAY_TOKEN ?? "";
+const OPENCLAW_CLI_BIN = process.env.OPENCLAW_CLI_BIN ?? "openclaw";
 const CURSOR_WEBHOOK_URL = process.env.CURSOR_WEBHOOK_URL ?? "";
 const CURSOR_WEBHOOK_SECRET = process.env.CURSOR_WEBHOOK_SECRET ?? "";
 const MAX_WEBHOOK_BYTES = parseInteger(process.env.CURSOR_WEBHOOK_MAX_BYTES, 512_000);
@@ -176,6 +182,11 @@ const conductor = new ConductorService(
     canvasClient: new CanvasClient(),
     githubClient: new GitHubClient(),
     searchClient: new SearchClient({ apiKey: SEARCH_API_KEY }),
+    openclawClient: new OpenClawClient({
+      gatewayUrl: OPENCLAW_GATEWAY_URL,
+      gatewayToken: OPENCLAW_GATEWAY_TOKEN || undefined,
+      cliBin: OPENCLAW_CLI_BIN,
+    }),
     bridgeToolExecutor: async (request) => bridgeRouter.execute(request),
     bridgeToolAvailability: (sessionId, toolName) => {
       let devices = bridgeState

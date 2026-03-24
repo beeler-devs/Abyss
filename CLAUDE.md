@@ -221,6 +221,8 @@ When the iOS app connects or reconnects, `connectConductorClient` gathers any wo
 
 **Web Search Integration:** Server-side `SearchClient` (`server/src/integrations/searchClient.ts`) wraps the Brave Search API. Provides 1 tool: `web.search(query, maxResults?)`. Available when `SEARCH_API_KEY` env var is set. Results include title, URL, and snippet (truncated to 300 chars). No iOS-side config needed.
 
+**OpenClaw Integration:** `OpenClawClient` (`server/src/integrations/openclawClient.ts`) connects to the **local** OpenClaw AI gateway (systemd service on this machine, `ws://127.0.0.1:18789`). OpenClaw manages persistent agent sessions (GPT-5.4 with long-term memory) and routes messages through Telegram/Discord channels. Provides 4 tools: `openclaw.status` (health probe), `openclaw.agent` (run an agent turn with persistent memory), `openclaw.message.send` (send Telegram/Discord notification), `openclaw.system.event` (enqueue background task for next heartbeat). Enabled when `OPENCLAW_GATEWAY_URL` is set — automatically disabled on ECS deployments. Client uses HTTP for health probes and `openclaw` CLI subprocess for all other operations. **Topology:** OpenClaw is loopback-only; Babel (CMU HPC cluster) is a separate remote system — do not confuse them. Env vars: `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_CLI_BIN`. Full reference: `docs/openclaw.md`.
+
 **Audio Pipeline:** `ConversationAudioPipeline` manages two recording modes: VAD auto-detection (`vadAuto`) and push-to-talk (`pushToTalk`). STT via `WhisperKitSpeechTranscriber` (on-device) or streamed to backend (`novaSonic`). TTS via `ElevenLabsTTS` with system voice fallback.
 
 **Tool System:** `ToolProtocol` with `AnyTool` type erasure → `ToolRegistry` for registration → `ToolRouter` for event dispatch. Categories: Audio (`STTStart/Stop`, `TTSSpeak/Stop`), Conversation (`ConvoAppendMessage`, `ConvoSetState`), Agent (6 tools above), Gmail (`GmailAuthenticateTool`, `GmailSendConfirmTool`, `GmailReplyConfirmTool`), Calendar (`CalendarCreateConfirmTool`, `CalendarUpdateConfirmTool`, `CalendarDeleteConfirmTool`), Canvas (`CanvasAuthenticateTool`), Preferences (`PreferencesSetTool`, `PreferencesGetTool`).
@@ -278,6 +280,9 @@ Copy `server/.env.example` to `server/.env`. Key variables:
 | `GOOGLE_CLIENT_ID` | — | Required for Gmail + Calendar OAuth |
 | `GOOGLE_CLIENT_SECRET` | — | Required for Gmail + Calendar OAuth |
 | `SEARCH_API_KEY` | — | Optional; enables `web.search` tool (Brave Search API) |
+| `OPENCLAW_GATEWAY_URL` | — | Optional; enables `openclaw.*` tools (local gateway, e.g. `ws://127.0.0.1:18789`). Leave blank on ECS. |
+| `OPENCLAW_GATEWAY_TOKEN` | — | Optional; gateway auth token (fallback: `~/.openclaw/openclaw.json`) |
+| `OPENCLAW_CLI_BIN` | `openclaw` | Optional; full path to `openclaw` binary if not on PATH |
 
 AWS credentials are resolved via Bedrock API key (`AWS_BEARER_TOKEN_BEDROCK`) or standard SDK chain (profile, env vars, or instance role). AWS is only required for Nova Sonic voice; the text LLM uses Anthropic directly.
 

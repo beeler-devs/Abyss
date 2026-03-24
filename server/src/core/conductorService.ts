@@ -6,6 +6,7 @@ import { CursorClient } from "../integrations/cursorClient.js";
 import { GmailClient } from "../integrations/gmailClient.js";
 import { GitHubClient } from "../integrations/githubClient.js";
 import { SearchClient } from "../integrations/searchClient.js";
+import { OpenClawClient } from "../integrations/openclawClient.js";
 import {
   isTerminalAgentStatus,
   normalizeMode,
@@ -47,6 +48,7 @@ export interface ConductorServiceDependencies {
   calendarClient?: CalendarClient;
   githubClient?: GitHubClient;
   searchClient?: SearchClient;
+  openclawClient?: OpenClawClient;
   webhookPendingTtlMs?: number;
   now?: () => Date;
   bridgeToolExecutor?: BridgeToolExecutor;
@@ -764,6 +766,96 @@ const SERVER_SEARCH_TOOLS: ToolDefinition[] = [
   },
 ];
 
+/**
+ * OpenClaw tools — only available when the local OpenClaw gateway is
+ * configured (OPENCLAW_GATEWAY_URL is set).  The gateway runs on the same
+ * machine as the Abyss server; these tools are NOT available on ECS
+ * deployments unless the gateway is explicitly reachable.
+ */
+const SERVER_OPENCLAW_TOOLS: ToolDefinition[] = [
+  {
+    name: "openclaw.status",
+    description:
+      "Check whether the local OpenClaw gateway is running and healthy. Returns ok/status and round-trip latency. Use before other openclaw.* tools if unsure whether the gateway is up.",
+    input_schema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "openclaw.agent",
+    description:
+      "Run a message through the OpenClaw AI agent (GPT-5.4 with persistent memory). The agent has its own long-term context — use this to delegate background tasks, ask it to summarise recent activity, or check what it has been working on. The reply is the agent's raw response text. " +
+      "NOTE: this calls a separate AI model; the turn is NOT part of the Abyss conversation history.",
+    input_schema: {
+      type: "object",
+      properties: {
+        message: {
+          type: "string",
+          description: "Natural-language message to send to the agent.",
+        },
+        agentId: {
+          type: "string",
+          description:
+            'Agent id to target. Omit to use the gateway default (usually "main").',
+        },
+        sessionKey: {
+          type: "string",
+          description:
+            'Explicit session key for context continuity (e.g. "agent:main:abyss-bridge"). Omit to use the agent\'s default session.',
+        },
+      },
+      required: ["message"],
+    },
+  },
+  {
+    name: "openclaw.message.send",
+    description:
+      "Send a message through an OpenClaw channel (Telegram or Discord). Use this to proactively notify Aarush on his preferred chat channels — e.g. when a long task finishes, a reminder fires, or an alert needs human attention.",
+    input_schema: {
+      type: "object",
+      properties: {
+        channel: {
+          type: "string",
+          enum: ["telegram", "discord"],
+          description: 'Chat channel to send through: "telegram" or "discord".',
+        },
+        target: {
+          type: "string",
+          description:
+            "Channel-specific recipient: Telegram chat id / @username, or Discord channel/user id.",
+        },
+        message: {
+          type: "string",
+          description: "Message body (plain text; Telegram supports basic Markdown).",
+        },
+      },
+      required: ["channel", "target", "message"],
+    },
+  },
+  {
+    name: "openclaw.system.event",
+    description:
+      'Enqueue a system event on the OpenClaw gateway. The agent will process it on the next heartbeat, or immediately if mode="now". Use this to schedule background tasks — e.g. "check my email and summarise", "remind me about X at next heartbeat".',
+    input_schema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "Event text — a natural-language instruction for the agent.",
+        },
+        mode: {
+          type: "string",
+          enum: ["now", "next-heartbeat"],
+          description:
+            '"now" triggers an immediate heartbeat (agent runs right away). "next-heartbeat" queues it for the regular interval (default 15 min). Default: "next-heartbeat".',
+        },
+      },
+      required: ["text"],
+    },
+  },
+];
+
 const SERVER_GITHUB_TOOLS: ToolDefinition[] = [
   {
     name: "github.repos.list",
@@ -930,6 +1022,7 @@ export class ConductorService {
   private readonly calendarClient?: CalendarClient;
   private readonly githubClient?: GitHubClient;
   private readonly searchClient?: SearchClient;
+  private readonly openclawClient?: OpenClawClient;
   private readonly webhookPendingTtlMs: number;
   private readonly now: () => Date;
   private readonly bridgeToolExecutor?: BridgeToolExecutor;
@@ -954,6 +1047,7 @@ export class ConductorService {
     this.calendarClient = dependencies.calendarClient;
     this.githubClient = dependencies.githubClient;
     this.searchClient = dependencies.searchClient;
+    this.openclawClient = dependencies.openclawClient;
     this.webhookPendingTtlMs = dependencies.webhookPendingTtlMs ?? WEBHOOK_PENDING_TTL_MS;
     this.now = dependencies.now ?? (() => new Date());
     this.bridgeToolExecutor = dependencies.bridgeToolExecutor;
@@ -1596,6 +1690,10 @@ export class ConductorService {
 
     if (this.searchClient?.isConfigured()) {
       tools.push(...SERVER_SEARCH_TOOLS);
+    }
+
+    if (this.openclawClient?.isConfigured()) {
+      tools.push(...SERVER_OPENCLAW_TOOLS);
     }
 
     return tools;
@@ -3178,6 +3276,59 @@ export class ConductorService {
           const maxResults = typeof args.maxResults === "number" ? args.maxResults : undefined;
           const searchResponse = await this.searchClient.search(query, maxResults);
           return { result: stableJSONStringify(searchResponse), error: null };
+        }
+
+        // ---------------------------------------------------------------
+        // OpenClaw — local AI gateway (runs on the same machine as Abyss)
+        // ---------------------------------------------------------------
+
+        case "openclaw.status": {
+          if (!this.openclawClient?.isConfigured()) {
+            return { result: null, error: "openclaw_not_configured: OPENCLAW_GATEWAY_URL is not set." };
+          }
+          const health = await this.openclawClient.health();
+          return { result: stableJSONStringify(health), error: null };
+        }
+
+        case "openclaw.agent": {
+          if (!this.openclawClient?.isConfigured()) {
+            return { result: null, error: "openclaw_not_configured: OPENCLAW_GATEWAY_URL is not set." };
+          }
+          const message = asString(args.message);
+          if (!message) {
+            return { result: null, error: "openclaw_agent_missing_message" };
+          }
+          const agentId = asString(args.agentId) || undefined;
+          const sessionKey = asString(args.sessionKey) || undefined;
+          const agentResult = await this.openclawClient.runAgent(message, agentId, sessionKey);
+          return { result: stableJSONStringify(agentResult), error: null };
+        }
+
+        case "openclaw.message.send": {
+          if (!this.openclawClient?.isConfigured()) {
+            return { result: null, error: "openclaw_not_configured: OPENCLAW_GATEWAY_URL is not set." };
+          }
+          const channel = asString(args.channel);
+          const target = asString(args.target);
+          const message = asString(args.message);
+          if (!channel || !target || !message) {
+            return { result: null, error: "openclaw_send_missing_args: channel, target, and message are required." };
+          }
+          const sendResult = await this.openclawClient.sendMessage(channel, target, message);
+          return { result: stableJSONStringify(sendResult), error: null };
+        }
+
+        case "openclaw.system.event": {
+          if (!this.openclawClient?.isConfigured()) {
+            return { result: null, error: "openclaw_not_configured: OPENCLAW_GATEWAY_URL is not set." };
+          }
+          const text = asString(args.text);
+          if (!text) {
+            return { result: null, error: "openclaw_event_missing_text" };
+          }
+          const mode = args.mode === "now" ? "now" : "next-heartbeat";
+          const eventResult = await this.openclawClient.systemEvent(text, mode);
+          return { result: stableJSONStringify(eventResult), error: null };
         }
 
         default:
